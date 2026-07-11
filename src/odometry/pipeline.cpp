@@ -13,6 +13,7 @@ namespace sapphire {
 OdometryPipeline::OdometryPipeline(const Config& config)
     : config_(config)
     , imu_initializer_(config.imu.init)
+    , submap_manager_(config.odometry.submap)
     , registration_(config.registration.gicp)
 {
     latest_result_.T_world_lidar = Isometry3d::Identity();
@@ -37,9 +38,13 @@ OdometryPipeline::OdometryPipeline(const Config& config)
     spdlog::info("[pipeline]   crop_box: [{:.2f},{:.2f},{:.2f}] → [{:.2f},{:.2f},{:.2f}]",
         box.min_x, box.min_y, box.min_z,
         box.max_x, box.max_y, box.max_z);
-    spdlog::info("[pipeline]   submap: distance={}m, rotation={}rad",
+    spdlog::info(
+        "[pipeline]   submap: distance={}m, rotation={}rad, keyframes={}, "
+        "voxel={}m",
         config.odometry.submap.splitting_distance,
-        config.odometry.submap.splitting_rotation);
+        config.odometry.submap.splitting_rotation,
+        config.odometry.submap.max_keyframes,
+        config.odometry.submap.voxel_size);
     spdlog::info("[pipeline]   observer: velocity_gain={}",
         config.odometry.observer.velocity_gain);
     spdlog::info("[pipeline]   registration: {}", config.registration.type);
@@ -136,7 +141,7 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
     // DLIO first-valid-scan path: do not integrate from the calibration
     // timestamp. Assume no motion, apply the gravity-aligned initial pose,
     // and establish this scan as the first registration target.
-    if (!has_prev_scan_) {
+    if (!has_first_scan_) {
         {
             std::lock_guard<std::mutex> lock(imu_mutex_);
             if (imu_buffer_.empty() || imu_buffer_.front().stamp > stamp) {
@@ -151,15 +156,21 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
             *preprocessed, *world_scan, T_world_lidar.matrix());
 
         latest_deskewed_ = world_scan;
-        prev_scan_ = world_scan;
-        registration_.setTarget(prev_scan_);
+        submap_manager_.addKeyframe(T_world_lidar, world_scan, stamp);
+        registration_.setTarget(submap_manager_.target());
+        spdlog::info(
+            "[pipeline] submap target rebuilt: keyframes={}, points={}, "
+            "revision={}",
+            submap_manager_.keyframeCount(),
+            submap_manager_.target()->size(),
+            submap_manager_.targetRevision());
 
         latest_result_.T_world_lidar = T_world_lidar;
         latest_result_.stamp = stamp;
         latest_result_.converged = true;
 
         imu_state_.stamp = stamp;
-        has_prev_scan_ = true;
+        has_first_scan_ = true;
 
         spdlog::info(
             "[pipeline] first LiDAR target initialized: stamp={:.6f}, "
@@ -244,12 +255,23 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
     imu_state_.T_world_imu = T_world_imu_corrected;
     imu_state_.v_world = corrected_velocity;
 
-    // A rejected source must never replace the stable registration target.
-    // DLIO keeps its keyframe submap unchanged on rejection; scan-to-scan
-    // mode follows the same rule until the submap manager is implemented.
-    if (registration.accepted) {
-        prev_scan_ = corrected_scan;
-        registration_.setTarget(prev_scan_);
+    // Rejected scans never enter the keyframe history. Accepted scans only
+    // update GICP's target when they cross a keyframe threshold and change
+    // the active nearest-keyframe set.
+    if (registration.accepted
+        && submap_manager_.shouldAddKeyframe(
+            registration.T_world_lidar)
+        && submap_manager_.addKeyframe(
+            registration.T_world_lidar,
+            corrected_scan,
+            deskewed.reference_stamp)) {
+        registration_.setTarget(submap_manager_.target());
+        spdlog::info(
+            "[pipeline] submap target rebuilt: keyframes={}, points={}, "
+            "revision={}",
+            submap_manager_.keyframeCount(),
+            submap_manager_.target()->size(),
+            submap_manager_.targetRevision());
     }
 }
 

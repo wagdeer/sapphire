@@ -148,8 +148,10 @@ struct Config {
             double max_z =  1.0;
         } crop_box;
         struct Submap {
-            double splitting_distance = 100.0;
-            double splitting_rotation = 1.57;  // 90 degrees
+            double splitting_distance = 4.0;
+            double splitting_rotation = 0.7853981633974483;  // 45 degrees
+            int max_keyframes = 10;
+            double voxel_size = 0.25;
         } submap;
         struct Observer {
             // DLIO geometric-observer Kv: position innovation → velocity.

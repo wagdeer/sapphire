@@ -106,6 +106,22 @@ Config loadConfig(const std::filesystem::path& path) {
             root["odometry"]["observer"]["velocity_gain"].value<double>()) {
         config.odometry.observer.velocity_gain = *velocity_gain;
     }
+    if (const auto splitting_distance =
+            root["odometry"]["submap"]["splitting_distance"].value<double>()) {
+        config.odometry.submap.splitting_distance = *splitting_distance;
+    }
+    if (const auto splitting_rotation =
+            root["odometry"]["submap"]["splitting_rotation"].value<double>()) {
+        config.odometry.submap.splitting_rotation = *splitting_rotation;
+    }
+    if (const auto max_keyframes =
+            root["odometry"]["submap"]["max_keyframes"].value<int>()) {
+        config.odometry.submap.max_keyframes = *max_keyframes;
+    }
+    if (const auto voxel_size =
+            root["odometry"]["submap"]["voxel_size"].value<double>()) {
+        config.odometry.submap.voxel_size = *voxel_size;
+    }
 
     const auto time_offset = root["deskew"]["time_offset"].value<bool>();
     if (!time_offset.has_value()) {
@@ -150,6 +166,25 @@ void validateConfig(const Config& config) {
     requireFiniteNonnegative(
         config.odometry.observer.velocity_gain,
         "odometry.observer.velocity_gain");
+    if (!std::isfinite(config.odometry.submap.splitting_distance)
+        || config.odometry.submap.splitting_distance <= 0.0) {
+        throw std::invalid_argument(
+            "odometry.submap.splitting_distance must be finite and positive");
+    }
+    if (!std::isfinite(config.odometry.submap.splitting_rotation)
+        || config.odometry.submap.splitting_rotation <= 0.0) {
+        throw std::invalid_argument(
+            "odometry.submap.splitting_rotation must be finite and positive");
+    }
+    if (config.odometry.submap.max_keyframes <= 0) {
+        throw std::invalid_argument(
+            "odometry.submap.max_keyframes must be positive");
+    }
+    if (!std::isfinite(config.odometry.submap.voxel_size)
+        || config.odometry.submap.voxel_size <= 0.0) {
+        throw std::invalid_argument(
+            "odometry.submap.voxel_size must be finite and positive");
+    }
 
     const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;
     if (!extrinsic.matrix().allFinite()) {

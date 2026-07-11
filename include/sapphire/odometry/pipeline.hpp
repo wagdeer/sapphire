@@ -5,6 +5,7 @@
 #include <sapphire/imu_init.hpp>
 #include <sapphire/odometry/registration.hpp>
 #include <sapphire/odometry/deskew.hpp>
+#include <sapphire/odometry/submap.hpp>
 #include <pcl/filters/crop_box.h>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -53,6 +54,12 @@ public:
     /// Retrieve the most recent deskewed point cloud in the world frame.
     PointCloudConstPtr latestDeskewed() const { return latest_deskewed_; }
 
+    /// Submap diagnostics, primarily useful for deterministic verification.
+    size_t keyframeCount() const { return submap_manager_.keyframeCount(); }
+    size_t submapTargetRevision() const {
+        return submap_manager_.targetRevision();
+    }
+
 private:
     /// IMU navigation state at the most recent LiDAR reference timestamp.
     /// This is the corrected baseline used by the next deskew integration,
@@ -98,11 +105,9 @@ private:
     ImuState imu_state_;
     Eigen::Vector3d gravity_world_ = Eigen::Vector3d::Zero();
 
-    // ── Previous scan state ───────────────────────────────────────
-    bool has_prev_scan_ = false;
-
-    // ── Previous scan for scan-to-scan registration ────────────────
-    PointCloudConstPtr prev_scan_;
+    // ── First scan / synchronous local submap state ───────────────
+    bool has_first_scan_ = false;
+    SubmapManager submap_manager_;
 
     // ── GICP Registration ─────────────────────────────────────────
     Registration registration_;
@@ -112,7 +117,6 @@ private:
 
     // TODO v0.1:
     //   std::unique_ptr<VoxelMap> voxel_map_;
-    //   std::unique_ptr<SubmapManager> submap_manager_;
     //   std::unique_ptr<RegistrationBackend> registration_;
 };
 

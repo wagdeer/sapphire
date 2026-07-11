@@ -14,6 +14,12 @@ gyro_random_walk = 0.0000655
 # Matches the validated DLIO geometric-observer Kv.
 velocity_gain = 11.25
 
+[odometry.submap]
+splitting_distance = 2.0
+splitting_rotation = 0.7853981633974483
+max_keyframes = 10
+voxel_size = 0.25
+
 [deskew]
 # Mid-360 offset_time is already relative to the message reference timestamp.
 time_offset = false

@@ -31,6 +31,7 @@ add_library(sapphire STATIC
     src/odometry/pipeline.cpp
     src/odometry/deskew.cpp
     src/odometry/registration.cpp
+    src/odometry/submap.cpp
     src/imu_init.cpp
 )
 target_include_directories(sapphire PUBLIC
@@ -69,6 +70,12 @@ if(BUILD_TESTING)
     )
     target_link_libraries(sapphire_pipeline_test PRIVATE sapphire)
     add_test(NAME sapphire_pipeline_test COMMAND sapphire_pipeline_test)
+
+    add_executable(sapphire_submap_test
+        tests/submap_test.cpp
+    )
+    target_link_libraries(sapphire_submap_test PRIVATE sapphire)
+    add_test(NAME sapphire_submap_test COMMAND sapphire_submap_test)
 endif()
 
 # TODO: add as modules are implemented:

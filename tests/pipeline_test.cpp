@@ -148,6 +148,9 @@ void testFirstLidarScanInitializesDeskewedTarget() {
     expect(result.T_world_lidar.matrix().isApprox(
                Eigen::Matrix4d::Identity(), 1e-9),
            "stationary first-frame pose must remain identity");
+    expect(pipeline.keyframeCount() == 1,
+           "first valid scan must initialize one keyframe");
+    const size_t initial_target_revision = pipeline.submapTargetRevision();
 
     // A sensor translated +0.2 m along world X observes static geometry
     // shifted -0.2 m in its local frame. GICP should recover +0.2 m.
@@ -179,6 +182,10 @@ void testFirstLidarScanInitializesDeskewedTarget() {
     expect(second_result.T_world_lidar.rotation().isApprox(
                Eigen::Matrix3d::Identity(), 1e-5),
            "pure translation must not introduce a rotation");
+    expect(pipeline.keyframeCount() == 1,
+           "sub-threshold accepted motion must not add a keyframe");
+    expect(pipeline.submapTargetRevision() == initial_target_revision,
+           "sub-threshold accepted motion must keep the target stable");
 
     for (int i = 27; i <= 36; ++i) {
         pipeline.pushImu({
@@ -190,6 +197,10 @@ void testFirstLidarScanInitializesDeskewedTarget() {
     pipeline.pushLidar(0.30, makeStructuredScan(5.0f));
     expect(!pipeline.latestResult().converged,
            "a scan outside the correspondence gate must be rejected");
+    expect(pipeline.keyframeCount() == 1,
+           "a rejected scan must not enter the submap");
+    expect(pipeline.submapTargetRevision() == initial_target_revision,
+           "a rejected scan must not rebuild the target");
 
     for (int i = 37; i <= 46; ++i) {
         pipeline.pushImu({
