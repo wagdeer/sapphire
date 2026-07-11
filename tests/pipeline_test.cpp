@@ -163,6 +163,14 @@ void testFirstLidarScanInitializesDeskewedTarget() {
     expect(pipeline.keyframeCount() == 1,
            "first valid scan must initialize one keyframe");
     const size_t initial_target_revision = pipeline.submapTargetRevision();
+    const auto first_propagated = pipeline.latestPropagatedResult();
+    expect(first_propagated.has_value(),
+           "first LiDAR scan must initialize IMU-rate propagation");
+    expectNear(first_propagated->stamp, 0.16, 1e-12,
+               "propagation must replay buffered IMU beyond the first scan");
+    expect(first_propagated->T_world_lidar.matrix().isApprox(
+               Eigen::Matrix4d::Identity(), 1e-9),
+           "stationary IMU propagation must preserve the initial pose");
 
     // A sensor translated +0.2 m along world X observes static geometry
     // shifted -0.2 m in its local frame. GICP should recover +0.2 m.
@@ -198,6 +206,11 @@ void testFirstLidarScanInitializesDeskewedTarget() {
            "sub-threshold accepted motion must not add a keyframe");
     expect(pipeline.submapTargetRevision() == initial_target_revision,
            "sub-threshold accepted motion must keep the target stable");
+    const auto second_propagated = pipeline.latestPropagatedResult();
+    expect(second_propagated.has_value(),
+           "accepted GICP update must retain propagated state");
+    expectNear(second_propagated->stamp, 0.26, 1e-12,
+               "GICP correction must replay IMU samples newer than its reference");
 
     for (int i = 27; i <= 36; ++i) {
         pipeline.pushImu({
@@ -233,11 +246,50 @@ void testFirstLidarScanInitializesDeskewedTarget() {
         "recovery after rejection must preserve the accepted trajectory");
 }
 
+void testImuStatePropagatesBetweenLidarScans() {
+    sapphire::Config config;
+    config.imu.init.min_samples = 5;
+    config.imu.init.check_interval_sec = 0.05;
+    config.imu.init.timeout_sec = 1.0;
+    config.registration.gicp.min_num_points = 50;
+    config.odometry.voxel_size = 0.01;
+
+    sapphire::OdometryPipeline pipeline(config);
+    const Eigen::Vector3d stationary_accel(
+        0.0, 0.0, config.imu.init.gravity_mag);
+    for (int i = 0; i <= 16; ++i) {
+        pipeline.pushImu({
+            static_cast<double>(i) * 0.01,
+            stationary_accel,
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    pipeline.pushLidar(0.10, makeStructuredScan());
+
+    pipeline.pushImu({
+        0.20,
+        Eigen::Vector3d(1.0, 0.0, config.imu.init.gravity_mag),
+        Eigen::Vector3d::Zero(),
+    });
+
+    const auto propagated = pipeline.latestPropagatedResult();
+    expect(propagated.has_value(),
+           "new IMU samples must produce a propagated odometry state");
+    expectNear(propagated->stamp, 0.20, 1e-12,
+               "propagated state must use the latest IMU timestamp");
+    expectNear(
+        propagated->T_world_lidar.translation().x(),
+        0.5 * 1.0 * 0.04 * 0.04,
+        1e-9,
+        "constant acceleration must propagate position between LiDAR scans");
+}
+
 }  // namespace
 
 int main() {
     testImuInitializationCreatesGravityAlignedState();
     testFirstLidarScanInitializesDeskewedTarget();
+    testImuStatePropagatesBetweenLidarScans();
     std::cout << "All pipeline tests passed\n";
     return EXIT_SUCCESS;
 }

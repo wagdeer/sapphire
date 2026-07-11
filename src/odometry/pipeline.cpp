@@ -12,6 +12,17 @@ namespace sapphire {
 OdometryPipeline::OdometryPipeline(const Config& config)
     : config_(config)
     , imu_initializer_(config.imu.init)
+    , propagation_pim_(std::make_unique<PropagationPim>(
+          std::make_shared<PropagationPim::Params>(
+              Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag),
+              config.imu.noise.gyro_noise_density,
+              config.imu.noise.accel_noise_density,
+              0.0,
+              0.0,
+              config.imu.noise.gyro_random_walk,
+              config.imu.noise.accel_random_walk,
+              0.0,
+              0.0)))
     , submap_manager_(config.odometry.submap)
     , registration_(config.registration.gicp)
 {
@@ -52,6 +63,22 @@ OdometryPipeline::OdometryPipeline(const Config& config)
         config.imu.init.convergence_gyro_std,
         config.imu.init.convergence_accel_std,
         config.imu.init.timeout_sec);
+}
+
+std::optional<OdometryResult>
+OdometryPipeline::latestPropagatedResult() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!has_first_scan_.load(std::memory_order_acquire)
+        || !propagated_state_.valid) {
+        return std::nullopt;
+    }
+
+    OdometryResult result;
+    result.T_world_lidar =
+        propagated_state_.T_world_imu * config_.extrinsics.T_imu_lidar;
+    result.stamp = propagated_state_.stamp;
+    result.converged = true;
+    return result;
 }
 
 // ── IMU bias correction ─────────────────────────────────────────────
@@ -116,22 +143,76 @@ PointCloudConstPtr OdometryPipeline::downsamplePoints(
 DeskewResult OdometryPipeline::deskewPointcloud(
     double stamp, const PointCloudConstPtr& points)
 {
-    if (!imu_state_.valid) {
-        throw std::logic_error(
-            "OdometryPipeline::deskewPointcloud called without a valid IMU state");
+    ImuState baseline;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (!imu_state_.valid) {
+            throw std::logic_error(
+                "OdometryPipeline::deskewPointcloud called without a valid IMU state");
+        }
+        baseline = imu_state_;
     }
+
     std::lock_guard<std::mutex> lock(imu_mutex_);
     return deskew(
         points,
         stamp,
         imu_buffer_,
-        imu_state_.stamp,
-        imu_state_.T_world_imu,
-        imu_state_.v_world,
+        baseline.stamp,
+        baseline.T_world_imu,
+        baseline.v_world,
         config_.extrinsics.T_imu_lidar,
         gravity_world_,
         config_.imu.noise,
         config_.deskew.time_offset);
+}
+
+void OdometryPipeline::recoverPropagatedStateLocked(double stamp) {
+    using Gal3 = PropagationPim::Gal3;
+    Gal3::IsometriesType initial_isometries{
+        imu_state_.v_world,
+        imu_state_.T_world_imu.translation(),
+    };
+    const Gal3 initial_state(
+        imu_state_.T_world_imu.rotation(), initial_isometries, 0.0);
+    const Gal3 propagated =
+        propagation_pim_->Gamma_ij()
+        * initial_state
+        * propagation_pim_->Upsilon();
+
+    propagated_state_.stamp = stamp;
+    propagated_state_.T_world_imu = Isometry3d::Identity();
+    propagated_state_.T_world_imu.linear() = propagated.R();
+    propagated_state_.T_world_imu.translation() = propagated.p();
+    propagated_state_.v_world = propagated.v();
+    propagated_state_.valid = true;
+}
+
+void OdometryPipeline::propagateStateLocked(const ImuData& imu) {
+    if (!has_first_scan_.load(std::memory_order_acquire)
+        || !imu_state_.valid || !propagated_state_.valid
+        || imu.stamp <= propagated_state_.stamp) {
+        return;
+    }
+
+    const double dt = imu.stamp - propagated_state_.stamp;
+    propagation_pim_->integrateMeasurement(imu.accel, imu.gyro, dt);
+    recoverPropagatedStateLocked(imu.stamp);
+}
+
+void OdometryPipeline::rebasePropagation(
+    const ImuState& corrected_state)
+{
+    std::scoped_lock lock(imu_mutex_, state_mutex_);
+    imu_state_ = corrected_state;
+    propagated_state_ = corrected_state;
+    propagation_pim_->resetIntegrationAndSetBias(
+        PropagationPim::Vec10::Zero());
+    has_first_scan_.store(true, std::memory_order_release);
+
+    for (const ImuData& imu : imu_buffer_) {
+        propagateStateLocked(imu);
+    }
 }
 
 bool OdometryPipeline::waitForImuCoverage(double end_stamp) {
@@ -165,7 +246,7 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
     // DLIO first-valid-scan path: do not integrate from the calibration
     // timestamp. Assume no motion, apply the gravity-aligned initial pose,
     // and establish this scan as the first registration target.
-    if (!has_first_scan_) {
+    if (!has_first_scan_.load(std::memory_order_acquire)) {
         {
             std::lock_guard<std::mutex> lock(imu_mutex_);
             if (imu_buffer_.empty() || imu_buffer_.front().stamp > stamp) {
@@ -173,8 +254,14 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
             }
         }
 
+        ImuState corrected_state;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            corrected_state = imu_state_;
+        }
+        corrected_state.stamp = stamp;
         const Isometry3d T_world_lidar =
-            imu_state_.T_world_imu * config_.extrinsics.T_imu_lidar;
+            corrected_state.T_world_imu * config_.extrinsics.T_imu_lidar;
         auto world_scan = std::make_shared<PointCloud>();
         pcl::transformPointCloud(
             *preprocessed, *world_scan, T_world_lidar.matrix());
@@ -193,8 +280,7 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
         latest_result_.stamp = stamp;
         latest_result_.converged = true;
 
-        imu_state_.stamp = stamp;
-        has_first_scan_ = true;
+        rebasePropagation(corrected_state);
 
         spdlog::info(
             "[pipeline] first LiDAR target initialized: stamp={:.6f}, "
@@ -287,8 +373,13 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
         registration.T_world_lidar
         * config_.extrinsics.T_imu_lidar.inverse();
     Eigen::Vector3d corrected_velocity = deskewed.v_world_ref;
+    double previous_state_stamp = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        previous_state_stamp = imu_state_.stamp;
+    }
     const double state_dt =
-        deskewed.reference_stamp - imu_state_.stamp;
+        deskewed.reference_stamp - previous_state_stamp;
     if (registration.accepted && state_dt > 0.0) {
         // DLIO geometric observer: feed the GICP position innovation back
         // into velocity so the next IMU prior does not retain a drift mode.
@@ -301,9 +392,12 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
             * position_error;
     }
 
-    imu_state_.stamp = deskewed.reference_stamp;
-    imu_state_.T_world_imu = T_world_imu_corrected;
-    imu_state_.v_world = corrected_velocity;
+    ImuState corrected_state;
+    corrected_state.stamp = deskewed.reference_stamp;
+    corrected_state.T_world_imu = T_world_imu_corrected;
+    corrected_state.v_world = corrected_velocity;
+    corrected_state.valid = true;
+    rebasePropagation(corrected_state);
 
     // Rejected scans never enter the keyframe history. Accepted scans only
     // update GICP's target when they cross a keyframe threshold and change
@@ -335,12 +429,15 @@ void OdometryPipeline::pushImu(const ImuData& imu) {
 
             // DLIO propagation starts from a gravity-aligned, stationary state.
             // q_gravity maps vectors from the IMU frame into the world frame.
-            imu_state_.stamp = imu.stamp;
-            imu_state_.T_world_imu = Isometry3d::Identity();
-            imu_state_.T_world_imu.linear() =
-                imu_init_result_->q_gravity.toRotationMatrix();
-            imu_state_.v_world.setZero();
-            imu_state_.valid = true;
+            {
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                imu_state_.stamp = imu.stamp;
+                imu_state_.T_world_imu = Isometry3d::Identity();
+                imu_state_.T_world_imu.linear() =
+                    imu_init_result_->q_gravity.toRotationMatrix();
+                imu_state_.v_world.setZero();
+                imu_state_.valid = true;
+            }
 
             // Calibration samples are raw. Start the deskew buffer at the
             // corrected-state timestamp with bias-corrected measurements only.
@@ -364,6 +461,10 @@ void OdometryPipeline::pushImu(const ImuData& imu) {
             return;
         }
         imu_buffer_.push_back(corrected);
+    }
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        propagateStateLocked(corrected);
     }
     imu_cv_.notify_all();
 }

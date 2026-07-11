@@ -6,6 +6,7 @@
 #include <sapphire/odometry/registration.hpp>
 #include <sapphire/odometry/deskew.hpp>
 #include <sapphire/odometry/submap.hpp>
+#include <preintegration.hpp>
 #include <pcl/filters/crop_box.h>
 #include <pcl/filters/voxel_grid.h>
 #include <Eigen/Core>
@@ -57,6 +58,10 @@ public:
     /// Retrieve the most recent odometry result
     const OdometryResult& latestResult() const { return latest_result_; }
 
+    /// Retrieve the IMU-rate state propagated from the latest LiDAR correction.
+    /// Empty until the first LiDAR target has initialized the propagation base.
+    std::optional<OdometryResult> latestPropagatedResult() const;
+
     /// Shorthand for latest pose
     Isometry3d latestPose() const { return latest_result_.T_world_lidar; }
 
@@ -96,6 +101,17 @@ private:
     /// Wait until buffered IMU measurements cover the requested scan end.
     bool waitForImuCoverage(double end_stamp);
 
+    /// Integrate one new IMU sample from the current corrected LiDAR baseline.
+    /// state_mutex_ must be held by the caller.
+    void propagateStateLocked(const ImuData& imu);
+
+    /// Replace the corrected LiDAR baseline and replay newer buffered IMU data.
+    void rebasePropagation(const ImuState& corrected_state);
+
+    /// Recover propagated_state_ from propagation_pim_ and imu_state_.
+    /// state_mutex_ must be held by the caller.
+    void recoverPropagatedStateLocked(double stamp);
+
     Config config_;
 
     // ── Initialization ──────────────────────────────────────────
@@ -114,11 +130,16 @@ private:
     std::condition_variable imu_cv_;
 
     // ── Corrected IMU state used as the next integration baseline ──
+    using PropagationPim =
+        preintegration::EquivariantPreintegration<double>;
     ImuState imu_state_;
+    ImuState propagated_state_;
+    std::unique_ptr<PropagationPim> propagation_pim_;
+    mutable std::mutex state_mutex_;
     Eigen::Vector3d gravity_world_ = Eigen::Vector3d::Zero();
 
     // ── First scan / synchronous local submap state ───────────────
-    bool has_first_scan_ = false;
+    std::atomic<bool> has_first_scan_{false};
     SubmapManager submap_manager_;
 
     // ── GICP Registration ─────────────────────────────────────────
