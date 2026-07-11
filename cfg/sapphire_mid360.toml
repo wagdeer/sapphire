@@ -1,0 +1,28 @@
+# Sapphire configuration for Livox Mid-360.
+# Point offset_time must be converted from nanoseconds to seconds by the ROS adapter.
+
+[imu]
+gravity = 9.80665
+
+[imu.noise]
+accel_noise_density = 0.000196
+gyro_noise_density = 0.000152
+accel_random_walk = 0.000165
+gyro_random_walk = 0.0000655
+
+[odometry.observer]
+# Matches the validated DLIO geometric-observer Kv.
+velocity_gain = 11.25
+
+[deskew]
+# Mid-360 offset_time is already relative to the message reference timestamp.
+time_offset = false
+
+[extrinsics.T_imu_lidar]
+# T_imu_lidar maps LiDAR-frame points into the IMU frame:
+# p_imu = R_imu_lidar * p_lidar + translation
+#
+# In the referenced dlio_mid360.yaml, baselink2imu and baselink2lidar
+# are identical, so their relative transform is identity.
+translation = [0.0, 0.0, 0.0]
+rotation_xyzw = [0.0, 0.0, 0.0, 1.0]
