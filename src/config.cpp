@@ -73,6 +73,13 @@ void requireFiniteNonnegative(double value, const char* name) {
     }
 }
 
+void requireFinitePositive(double value, const char* name) {
+    if (!std::isfinite(value) || value <= 0.0) {
+        throw std::invalid_argument(
+            std::string(name) + " must be finite and positive");
+    }
+}
+
 }  // namespace
 
 Config loadConfig(const std::filesystem::path& path) {
@@ -88,6 +95,26 @@ Config loadConfig(const std::filesystem::path& path) {
     Config config;
     config.imu.init.gravity_mag = requiredNumber(
         root["imu"]["gravity"].value<double>(), "imu.gravity");
+    if (const auto value =
+            root["imu"]["init"]["convergence_gyro_std"].value<double>()) {
+        config.imu.init.convergence_gyro_std = *value;
+    }
+    if (const auto value =
+            root["imu"]["init"]["convergence_accel_std"].value<double>()) {
+        config.imu.init.convergence_accel_std = *value;
+    }
+    if (const auto value =
+            root["imu"]["init"]["timeout_sec"].value<double>()) {
+        config.imu.init.timeout_sec = *value;
+    }
+    if (const auto value =
+            root["imu"]["init"]["check_interval_sec"].value<double>()) {
+        config.imu.init.check_interval_sec = *value;
+    }
+    if (const auto value =
+            root["imu"]["init"]["min_samples"].value<int>()) {
+        config.imu.init.min_samples = *value;
+    }
 
     config.imu.noise.accel_noise_density = requiredNumber(
         root["imu"]["noise"]["accel_noise_density"].value<double>(),
@@ -105,6 +132,30 @@ Config loadConfig(const std::filesystem::path& path) {
     if (const auto voxel_size =
             root["odometry"]["voxel_size"].value<double>()) {
         config.odometry.voxel_size = *voxel_size;
+    }
+    if (const auto value =
+            root["odometry"]["crop_box"]["min_x"].value<double>()) {
+        config.odometry.crop_box.min_x = *value;
+    }
+    if (const auto value =
+            root["odometry"]["crop_box"]["min_y"].value<double>()) {
+        config.odometry.crop_box.min_y = *value;
+    }
+    if (const auto value =
+            root["odometry"]["crop_box"]["min_z"].value<double>()) {
+        config.odometry.crop_box.min_z = *value;
+    }
+    if (const auto value =
+            root["odometry"]["crop_box"]["max_x"].value<double>()) {
+        config.odometry.crop_box.max_x = *value;
+    }
+    if (const auto value =
+            root["odometry"]["crop_box"]["max_y"].value<double>()) {
+        config.odometry.crop_box.max_y = *value;
+    }
+    if (const auto value =
+            root["odometry"]["crop_box"]["max_z"].value<double>()) {
+        config.odometry.crop_box.max_z = *value;
     }
     if (const auto velocity_gain =
             root["odometry"]["observer"]["velocity_gain"].value<double>()) {
@@ -151,6 +202,45 @@ Config loadConfig(const std::filesystem::path& path) {
         config.odometry.submap.voxel_size = *voxel_size;
     }
 
+    if (const auto value = root["registration"]["type"].value<std::string>()) {
+        config.registration.type = *value;
+    }
+    if (const auto value =
+            root["registration"]["gicp"]["max_iterations"].value<int>()) {
+        config.registration.gicp.max_iterations = *value;
+    }
+    if (const auto value =
+            root["registration"]["gicp"]["transformation_epsilon"].value<double>()) {
+        config.registration.gicp.transformation_epsilon = *value;
+    }
+    if (const auto value =
+            root["registration"]["gicp"]["rotation_epsilon"].value<double>()) {
+        config.registration.gicp.rotation_epsilon = *value;
+    }
+    if (const auto value =
+            root["registration"]["gicp"]["max_correspondence_dist"].value<double>()) {
+        config.registration.gicp.max_correspondence_dist = *value;
+    }
+    if (const auto value =
+            root["registration"]["gicp"]["k_correspondences"].value<int>()) {
+        config.registration.gicp.k_correspondences = *value;
+    }
+    if (const auto value =
+            root["registration"]["gicp"]["min_num_points"].value<int>()) {
+        config.registration.gicp.min_num_points = *value;
+    }
+    if (const auto value =
+            root["registration"]["gicp"]["max_correction_trans"].value<double>()) {
+        config.registration.gicp.max_correction_trans = *value;
+    }
+    if (const auto value =
+            root["registration"]["gicp"]["max_correction_rot_deg"].value<double>()) {
+        config.registration.gicp.max_correction_rot_deg = *value;
+    }
+    if (const auto value = root["cuda"]["enabled"].value<bool>()) {
+        config.cuda.enabled = *value;
+    }
+
     const auto time_offset = root["deskew"]["time_offset"].value<bool>();
     if (!time_offset.has_value()) {
         throw std::runtime_error(
@@ -179,18 +269,33 @@ void validateConfig(const Config& config) {
         throw std::invalid_argument("imu.gravity must be finite and positive");
     }
 
-    requireFiniteNonnegative(
+    requireFinitePositive(
         config.imu.noise.accel_noise_density,
         "imu.noise.accel_noise_density");
-    requireFiniteNonnegative(
+    requireFinitePositive(
         config.imu.noise.gyro_noise_density,
         "imu.noise.gyro_noise_density");
-    requireFiniteNonnegative(
+    requireFinitePositive(
         config.imu.noise.accel_random_walk,
         "imu.noise.accel_random_walk");
-    requireFiniteNonnegative(
+    requireFinitePositive(
         config.imu.noise.gyro_random_walk,
         "imu.noise.gyro_random_walk");
+    requireFinitePositive(
+        config.imu.init.convergence_gyro_std,
+        "imu.init.convergence_gyro_std");
+    requireFinitePositive(
+        config.imu.init.convergence_accel_std,
+        "imu.init.convergence_accel_std");
+    requireFinitePositive(
+        config.imu.init.timeout_sec,
+        "imu.init.timeout_sec");
+    requireFinitePositive(
+        config.imu.init.check_interval_sec,
+        "imu.init.check_interval_sec");
+    if (config.imu.init.min_samples <= 0) {
+        throw std::invalid_argument("imu.init.min_samples must be positive");
+    }
     requireFiniteNonnegative(
         config.odometry.observer.position_gain,
         "odometry.observer.position_gain");
@@ -217,6 +322,15 @@ void validateConfig(const Config& config) {
         throw std::invalid_argument(
             "odometry.voxel_size must be finite and positive");
     }
+    const auto& crop = config.odometry.crop_box;
+    if (!std::isfinite(crop.min_x) || !std::isfinite(crop.min_y)
+        || !std::isfinite(crop.min_z) || !std::isfinite(crop.max_x)
+        || !std::isfinite(crop.max_y) || !std::isfinite(crop.max_z)
+        || crop.min_x >= crop.max_x || crop.min_y >= crop.max_y
+        || crop.min_z >= crop.max_z) {
+        throw std::invalid_argument(
+            "odometry.crop_box bounds must be finite and ordered");
+    }
     if (!std::isfinite(config.odometry.submap.splitting_distance)
         || config.odometry.submap.splitting_distance <= 0.0) {
         throw std::invalid_argument(
@@ -235,6 +349,35 @@ void validateConfig(const Config& config) {
         || config.odometry.submap.voxel_size <= 0.0) {
         throw std::invalid_argument(
             "odometry.submap.voxel_size must be finite and positive");
+    }
+    if (config.registration.type != "GICP") {
+        throw std::invalid_argument(
+            "registration.type must be GICP in this build");
+    }
+    const auto& gicp = config.registration.gicp;
+    if (gicp.max_iterations <= 0 || gicp.k_correspondences <= 0
+        || gicp.min_num_points <= 0) {
+        throw std::invalid_argument(
+            "registration.gicp integer limits must be positive");
+    }
+    requireFinitePositive(
+        gicp.transformation_epsilon,
+        "registration.gicp.transformation_epsilon");
+    requireFinitePositive(
+        gicp.rotation_epsilon,
+        "registration.gicp.rotation_epsilon");
+    requireFinitePositive(
+        gicp.max_correspondence_dist,
+        "registration.gicp.max_correspondence_dist");
+    requireFinitePositive(
+        gicp.max_correction_trans,
+        "registration.gicp.max_correction_trans");
+    requireFinitePositive(
+        gicp.max_correction_rot_deg,
+        "registration.gicp.max_correction_rot_deg");
+    if (config.cuda.enabled) {
+        throw std::invalid_argument(
+            "cuda.enabled=true is unsupported in this build");
     }
 
     const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;

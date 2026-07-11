@@ -94,6 +94,8 @@ void testNearestSelectionAndStableTarget() {
            "submap must contain the ten keyframes nearest the current pose");
     expect(manager.target()->size() == 10,
            "target must merge only active keyframe clouds");
+    expect(manager.storedPointCount() == 12,
+           "stored point count must include all retained keyframes");
 
     const size_t revision = manager.targetRevision();
     expect(!manager.shouldAddKeyframe(makePose(56.0)),
@@ -114,6 +116,8 @@ void testVoxelDownsampling() {
 
     expect(manager.target()->size() == 1,
            "points in one 0.25 m voxel must be downsampled");
+    expect(manager.storedPointCount() == 2,
+           "stored point count must report keyframe memory, not target size");
     expect(std::abs(manager.target()->front().data[3] - 1.0f) < 1e-6f,
            "downsampled points must retain homogeneous coordinate w=1");
 }

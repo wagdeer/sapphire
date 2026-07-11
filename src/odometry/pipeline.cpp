@@ -105,15 +105,18 @@ PointCloudConstPtr OdometryPipeline::latestDeskewed() const {
 
 std::optional<OdometryResult>
 OdometryPipeline::latestPropagatedResult() const {
-    std::lock_guard<std::mutex> lock(state_mutex_);
+    std::scoped_lock lock(state_mutex_, output_mutex_);
     if (!has_first_scan_.load(std::memory_order_acquire)
         || !propagated_state_.valid) {
         return std::nullopt;
     }
 
-    OdometryResult result;
+    OdometryResult result = latest_result_;
     result.T_world_lidar =
         propagated_state_.T_world_imu * config_.extrinsics.T_imu_lidar;
+    result.v_world = propagated_state_.v_world;
+    result.diagnostics.accel_bias = accel_bias_;
+    result.diagnostics.gyro_bias = gyro_bias_;
     result.stamp = propagated_state_.stamp;
     result.converged = true;
     return result;
@@ -301,7 +304,7 @@ bool OdometryPipeline::initializeFirstLidarTarget(
         *preprocessed, *world_scan, T_world_lidar.matrix());
     const PointCloudConstPtr output_scan = downsamplePoints(world_scan);
 
-    submap_manager_.addKeyframe(T_world_lidar, world_scan, stamp);
+    submap_manager_.addKeyframe(T_world_lidar, output_scan, stamp);
     registration_.setTarget(submap_manager_.target());
     spdlog::info(
         "[pipeline] submap target rebuilt: keyframes={}, points={}, "
@@ -314,6 +317,15 @@ bool OdometryPipeline::initializeFirstLidarTarget(
         std::lock_guard<std::mutex> lock(output_mutex_);
         latest_deskewed_ = output_scan;
         latest_result_.T_world_lidar = T_world_lidar;
+        latest_result_.v_world = corrected_state.v_world;
+        latest_result_.diagnostics.keyframe_count =
+            submap_manager_.keyframeCount();
+        latest_result_.diagnostics.stored_keyframe_points =
+            submap_manager_.storedPointCount();
+        latest_result_.diagnostics.target_points =
+            submap_manager_.target()->size();
+        latest_result_.diagnostics.accel_bias = accel_bias;
+        latest_result_.diagnostics.gyro_bias = gyro_bias;
         latest_result_.stamp = stamp;
         latest_result_.converged = true;
     }
@@ -349,19 +361,13 @@ OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
 
     registration_.setSource(registration_source);
     RegistrationArtifacts artifacts;
+    artifacts.source_points = registration_source->size();
+    artifacts.target_points = submap_manager_.target()->size();
     artifacts.result =
         registration_.align(deskewed.T_world_lidar_ref);
-    artifacts.corrected_full = deskewed.cloud;
     artifacts.corrected_source = registration_source;
 
     if (artifacts.result.accepted) {
-        auto transformed_full = std::make_shared<PointCloud>();
-        pcl::transformPointCloud(
-            *deskewed.cloud,
-            *transformed_full,
-            artifacts.result.T_correction.matrix());
-        artifacts.corrected_full = transformed_full;
-
         auto transformed_source = std::make_shared<PointCloud>();
         pcl::transformPointCloud(
             *registration_source,
@@ -374,11 +380,35 @@ OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
 
 void OdometryPipeline::commitLidarOutputs(
     const DeskewResult& deskewed,
-    const RegistrationArtifacts& artifacts)
+    const RegistrationArtifacts& artifacts,
+    const ObserverUpdate& observer_update)
 {
     std::lock_guard<std::mutex> lock(output_mutex_);
     latest_deskewed_ = artifacts.corrected_source;
     latest_result_.T_world_lidar = artifacts.result.T_world_lidar;
+    latest_result_.v_world = observer_update.state.v_world;
+    latest_result_.diagnostics.registration_ms =
+        artifacts.result.elapsed_ms;
+    latest_result_.diagnostics.fitness_score =
+        artifacts.result.fitness_score;
+    latest_result_.diagnostics.num_inliers =
+        artifacts.result.num_inliers;
+    latest_result_.diagnostics.iterations =
+        artifacts.result.iterations;
+    latest_result_.diagnostics.source_points =
+        artifacts.source_points;
+    latest_result_.diagnostics.target_points =
+        artifacts.target_points;
+    latest_result_.diagnostics.keyframe_count =
+        submap_manager_.keyframeCount();
+    latest_result_.diagnostics.stored_keyframe_points =
+        submap_manager_.storedPointCount();
+    latest_result_.diagnostics.registration_accepted =
+        artifacts.result.accepted;
+    latest_result_.diagnostics.accel_bias =
+        observer_update.accel_bias;
+    latest_result_.diagnostics.gyro_bias =
+        observer_update.gyro_bias;
     latest_result_.stamp = deskewed.reference_stamp;
     latest_result_.converged = artifacts.result.accepted;
 }
@@ -392,7 +422,7 @@ void OdometryPipeline::maybeUpdateSubmapTarget(
             artifacts.result.T_world_lidar)
         || !submap_manager_.addKeyframe(
             artifacts.result.T_world_lidar,
-            artifacts.corrected_full,
+            artifacts.corrected_source,
             deskewed.reference_stamp)) {
         return;
     }
@@ -431,8 +461,6 @@ void OdometryPipeline::processLidarScan(
     if (!artifacts.has_value()) {
         return;
     }
-    commitLidarOutputs(deskewed, *artifacts);
-
     const Isometry3d T_world_imu_prior =
         deskewed.T_world_lidar_ref
         * config_.extrinsics.T_imu_lidar.inverse();
@@ -480,6 +508,7 @@ void OdometryPipeline::processLidarScan(
         observer_update.accel_bias,
         observer_update.gyro_bias);
     maybeUpdateSubmapTarget(deskewed, *artifacts);
+    commitLidarOutputs(deskewed, *artifacts, observer_update);
 }
 
 void OdometryPipeline::pushLidar(

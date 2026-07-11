@@ -38,6 +38,7 @@ public:
     }
     PointCloudConstPtr target() const { return target_; }
     size_t targetRevision() const { return target_revision_; }
+    size_t storedPointCount() const { return stored_point_count_; }
 
 private:
     std::vector<size_t> selectNearest(
@@ -49,6 +50,7 @@ private:
     std::vector<size_t> active_indices_;
     PointCloudConstPtr target_;
     size_t target_revision_ = 0;
+    size_t stored_point_count_ = 0;
 };
 
 }  // namespace sapphire

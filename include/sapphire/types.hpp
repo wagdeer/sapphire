@@ -61,9 +61,26 @@ struct NavigationState {
     bool valid = false;
 };
 
+/// Per-LiDAR-frame health and performance diagnostics.
+struct OdometryDiagnostics {
+    double registration_ms = 0.0;
+    double fitness_score = 0.0;
+    size_t num_inliers = 0;
+    size_t iterations = 0;
+    size_t source_points = 0;
+    size_t target_points = 0;
+    size_t keyframe_count = 0;
+    size_t stored_keyframe_points = 0;
+    bool registration_accepted = false;
+    Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
+    Eigen::Vector3d gyro_bias = Eigen::Vector3d::Zero();
+};
+
 /// Odometry pipeline output per LiDAR scan
 struct OdometryResult {
     Isometry3d T_world_lidar;        // current pose in world frame
+    Eigen::Vector3d v_world = Eigen::Vector3d::Zero();
+    OdometryDiagnostics diagnostics;
     double stamp = 0.0;
     bool converged = false;
 };
@@ -124,6 +141,7 @@ struct RegistrationResult {
     Eigen::Isometry3d T_world_lidar; // world-frame pose after correction
     bool    converged      = false;
     double  fitness_score  = 0.0;
+    double  elapsed_ms     = 0.0;
     size_t  num_inliers    = 0;
     size_t  iterations     = 0;
     bool    accepted       = false;   // false if correction was rejected

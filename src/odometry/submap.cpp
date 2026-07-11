@@ -46,6 +46,7 @@ bool SubmapManager::addKeyframe(
     }
 
     keyframes_.push_back({T_world_lidar, cloud_world, stamp});
+    stored_point_count_ += cloud_world->size();
     const std::vector<size_t> selected =
         selectNearest(T_world_lidar.translation());
     if (selected == active_indices_) {

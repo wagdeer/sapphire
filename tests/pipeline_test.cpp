@@ -166,6 +166,8 @@ void testFirstLidarScanInitializesDeskewedTarget() {
            "stationary first-frame pose must remain identity");
     expect(pipeline.keyframeCount() == 1,
            "first valid scan must initialize one keyframe");
+    expect(result.diagnostics.stored_keyframe_points == deskewed->size(),
+           "first keyframe must retain the downsampled output cloud");
     const size_t initial_target_revision = pipeline.submapTargetRevision();
     const auto first_propagated = pipeline.latestPropagatedResult();
     expect(first_propagated.has_value(),
@@ -212,6 +214,16 @@ void testFirstLidarScanInitializesDeskewedTarget() {
     expect(second_result.T_world_lidar.rotation().isApprox(
                Eigen::Matrix3d::Identity(), 1e-5),
            "pure translation must not introduce a rotation");
+    expect(second_result.diagnostics.registration_accepted,
+           "accepted GICP result must be visible in diagnostics");
+    expect(second_result.diagnostics.registration_ms >= 0.0,
+           "registration duration must be nonnegative");
+    expect(second_result.diagnostics.source_points == second_scan->size(),
+           "diagnostics must expose the downsampled source point count");
+    expect(second_result.diagnostics.target_points == deskewed->size(),
+           "diagnostics must expose the registration target point count");
+    expect(second_result.v_world.allFinite(),
+           "LiDAR-rate velocity output must remain finite");
     expect(pipeline.keyframeCount() == 1,
            "sub-threshold accepted motion must not add a keyframe");
     expect(pipeline.submapTargetRevision() == initial_target_revision,

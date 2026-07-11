@@ -62,6 +62,8 @@ void testProjectConfig() {
         / "cfg" / "sapphire_mid360.toml");
 
     expectNear(config.imu.init.gravity_mag, 9.80665, "gravity value");
+    expect(config.imu.init.min_samples == 100, "IMU init sample count");
+    expectNear(config.imu.init.timeout_sec, 5.0, "IMU init timeout");
     expectNear(
         config.imu.noise.gyro_noise_density, 0.000152,
         "gyro noise value");
@@ -84,6 +86,9 @@ void testProjectConfig() {
         config.odometry.voxel_size, 0.25,
         "GICP source voxel size");
     expectNear(
+        config.odometry.crop_box.min_x, -1.0,
+        "crop box minimum X");
+    expectNear(
         config.odometry.submap.splitting_distance, 1.5,
         "submap keyframe translation threshold");
     expectNear(
@@ -95,6 +100,13 @@ void testProjectConfig() {
     expectNear(
         config.odometry.submap.voxel_size, 0.25,
         "submap target voxel size");
+    expect(config.registration.type == "GICP", "registration backend");
+    expect(config.registration.gicp.max_iterations == 32,
+           "GICP maximum iterations");
+    expectNear(
+        config.registration.gicp.max_correspondence_dist, 0.5,
+        "GICP correspondence distance");
+    expect(!config.cuda.enabled, "CUDA must be disabled in CPU profile");
     expect(!config.deskew.time_offset, "Mid-360 time offset must be disabled");
     expect(config.extrinsics.T_imu_lidar.matrix().isApprox(
                Eigen::Matrix4d::Identity(), 1e-12),

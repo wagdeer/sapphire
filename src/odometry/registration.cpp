@@ -114,6 +114,7 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
 
     result.converged     = converged;
     result.fitness_score = reg_result.error;
+    result.elapsed_ms    = elapsed_ms;
     result.num_inliers   = reg_result.num_inliers;
     result.iterations    = reg_result.iterations;
     result.accepted      = accepted;

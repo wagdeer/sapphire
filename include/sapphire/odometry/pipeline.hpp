@@ -83,8 +83,9 @@ public:
 private:
     struct RegistrationArtifacts {
         RegistrationResult result;
-        PointCloudConstPtr corrected_full;
         PointCloudConstPtr corrected_source;
+        size_t source_points = 0;
+        size_t target_points = 0;
     };
 
     bool initializeFirstLidarTarget(
@@ -95,7 +96,8 @@ private:
         const DeskewResult& deskewed);
     void commitLidarOutputs(
         const DeskewResult& deskewed,
-        const RegistrationArtifacts& artifacts);
+        const RegistrationArtifacts& artifacts,
+        const ObserverUpdate& observer_update);
     void maybeUpdateSubmapTarget(
         const DeskewResult& deskewed,
         const RegistrationArtifacts& artifacts);
