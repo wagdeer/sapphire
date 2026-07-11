@@ -216,6 +216,13 @@ void testFirstLidarScanInitializesDeskewedTarget() {
            "pure translation must not introduce a rotation");
     expect(second_result.diagnostics.registration_accepted,
            "accepted GICP result must be visible in diagnostics");
+    expect(second_result.diagnostics.deskew_timestamp_groups == 5,
+           "pipeline diagnostics must expose deskew timestamp groups");
+    expect(second_result.diagnostics.deskew_pim_copies
+               <= second_result.diagnostics.deskew_imu_intervals,
+           "pipeline diagnostics must expose bounded partial PIM copies");
+    expect(second_result.diagnostics.deskew_total_ms >= 0.0,
+           "pipeline diagnostics must expose deskew duration");
     expect(second_result.diagnostics.registration_ms >= 0.0,
            "registration duration must be nonnegative");
     expect(second_result.diagnostics.source_points == second_scan->size(),
@@ -279,6 +286,42 @@ void testFirstLidarScanInitializesDeskewedTarget() {
         "recovery after rejection must preserve the accepted trajectory");
 }
 
+void testFirstKeyframeStoresDownsampledCloud() {
+    sapphire::Config config;
+    config.imu.init.min_samples = 5;
+    config.imu.init.check_interval_sec = 0.05;
+    config.imu.init.timeout_sec = 1.0;
+    config.odometry.voxel_size = 0.25;
+
+    sapphire::OdometryPipeline pipeline(config);
+    for (int i = 0; i <= 16; ++i) {
+        pipeline.pushImu({
+            static_cast<double>(i) * 0.01,
+            Eigen::Vector3d(0.0, 0.0, config.imu.init.gravity_mag),
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    expect(pipeline.initialized(),
+           "stationary IMU must initialize downsampling test");
+
+    auto scan = std::make_shared<sapphire::PointCloud>();
+    for (size_t i = 0; i < 100; ++i) {
+        const float offset = static_cast<float>(i % 10) * 0.001f;
+        scan->push_back(makePoint(
+            2.01f + offset, 2.01f + offset, 2.01f + offset, 0.0));
+    }
+    pipeline.pushLidar(0.10, scan);
+
+    const auto output = pipeline.latestDeskewed();
+    const auto result = pipeline.latestResult();
+    expect(output != nullptr && output->size() < scan->size(),
+           "production voxel size must reduce a clustered first scan");
+    expect(result.diagnostics.stored_keyframe_points == output->size(),
+           "keyframe memory metric must equal the downsampled cloud size");
+    expect(result.diagnostics.target_points == output->size(),
+           "first submap target must be built from the downsampled keyframe");
+}
+
 void testImuStatePropagatesBetweenLidarScans() {
     sapphire::Config config;
     config.imu.init.min_samples = 5;
@@ -322,6 +365,7 @@ void testImuStatePropagatesBetweenLidarScans() {
 int main() {
     testImuInitializationCreatesGravityAlignedState();
     testFirstLidarScanInitializesDeskewedTarget();
+    testFirstKeyframeStoresDownsampledCloud();
     testImuStatePropagatesBetweenLidarScans();
     std::cout << "All pipeline tests passed\n";
     return EXIT_SUCCESS;

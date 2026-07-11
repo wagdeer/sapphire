@@ -387,6 +387,20 @@ void OdometryPipeline::commitLidarOutputs(
     latest_deskewed_ = artifacts.corrected_source;
     latest_result_.T_world_lidar = artifacts.result.T_world_lidar;
     latest_result_.v_world = observer_update.state.v_world;
+    latest_result_.diagnostics.deskew_timeline_ms =
+        deskewed.metrics.timeline_ms;
+    latest_result_.diagnostics.deskew_integration_ms =
+        deskewed.metrics.integration_ms;
+    latest_result_.diagnostics.deskew_transform_ms =
+        deskewed.metrics.transform_ms;
+    latest_result_.diagnostics.deskew_total_ms =
+        deskewed.metrics.total_ms;
+    latest_result_.diagnostics.deskew_timestamp_groups =
+        deskewed.metrics.timestamp_groups;
+    latest_result_.diagnostics.deskew_imu_intervals =
+        deskewed.metrics.imu_intervals;
+    latest_result_.diagnostics.deskew_pim_copies =
+        deskewed.metrics.pim_copies;
     latest_result_.diagnostics.registration_ms =
         artifacts.result.elapsed_ms;
     latest_result_.diagnostics.fitness_score =

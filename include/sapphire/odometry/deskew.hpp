@@ -18,12 +18,23 @@ enum class DeskewStatus {
     InsufficientImuCoverage,
 };
 
+struct DeskewMetrics {
+    double timeline_ms = 0.0;
+    double integration_ms = 0.0;
+    double transform_ms = 0.0;
+    double total_ms = 0.0;
+    size_t timestamp_groups = 0;
+    size_t imu_intervals = 0;
+    size_t pim_copies = 0;
+};
+
 /// Result of per-point motion compensation
 struct DeskewResult {
     PointCloudPtr cloud;                    // motion-corrected points in world frame
     Isometry3d T_world_lidar_ref = Isometry3d::Identity();
     Eigen::Vector3d v_world_ref = Eigen::Vector3d::Zero();
     double reference_stamp = 0.0;
+    DeskewMetrics metrics;
     DeskewStatus status = DeskewStatus::EmptyScan;
     bool converged = false;                 // true only when per-point deskew succeeded
 };

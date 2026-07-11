@@ -119,6 +119,10 @@ void testStaticGravityCancellation() {
         expectNear(result.cloud->points[i].z, cloud->points[i].z, "gravity cancellation z");
     }
     expectNear(result.v_world_ref.norm(), 0.0, "static reference velocity");
+    expect(result.metrics.timestamp_groups == cloud->size(),
+           "deskew metrics must expose exact timestamp group count");
+    expect(result.metrics.pim_copies <= result.metrics.imu_intervals,
+           "partial PIM copies must be bounded by IMU intervals");
 }
 
 void testConstantVelocity() {
@@ -235,6 +239,49 @@ void testInsufficientImuCoverage() {
     expect(!result.converged, "insufficient IMU must not be converged");
 }
 
+void testDenseTimestampsReusePartialPreintegration() {
+    constexpr double yaw_rate = 1.2;
+    constexpr double velocity = 2.0;
+    auto cloud = std::make_shared<PointCloud>();
+    for (size_t i = 0; i < 200; ++i) {
+        const double stamp = 0.0005 + static_cast<double>(i) * 0.0005;
+        cloud->push_back(makePoint(1.0f, 0.0f, 0.0f, stamp));
+    }
+    auto imu = makeImuBuffer(
+        0.0, 0.11, 0.01, Eigen::Vector3d(0.0, 0.0, yaw_rate));
+
+    const DeskewResult result = runDeskew(
+        cloud, imu, 0.0, 0.0, Isometry3d::Identity(),
+        Eigen::Vector3d(velocity, 0.0, 0.0));
+    expect(result.status == DeskewStatus::Success,
+           "dense timestamp scan must deskew successfully");
+    expect(result.metrics.timestamp_groups == cloud->size(),
+           "all dense timestamps must remain exact groups");
+    expect(result.metrics.pim_copies <= result.metrics.imu_intervals,
+           "dense scan must copy at most once per IMU interval");
+    expect(result.metrics.pim_copies * 10
+               < result.metrics.timestamp_groups,
+           "dense scan must avoid per-timestamp PIM copies");
+    expect(result.metrics.timeline_ms >= 0.0
+               && result.metrics.integration_ms >= 0.0
+               && result.metrics.transform_ms >= 0.0
+               && result.metrics.total_ms >= 0.0,
+           "deskew stage timings must be nonnegative");
+
+    for (size_t i = 0; i < cloud->size(); ++i) {
+        const double stamp = cloud->points[i].timestamp;
+        const double angle = yaw_rate * stamp;
+        expectNear(
+            result.cloud->points[i].x,
+            velocity * stamp + std::cos(angle),
+            "dense timestamp translation and yaw X");
+        expectNear(
+            result.cloud->points[i].y,
+            std::sin(angle),
+            "dense timestamp yaw Y");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -245,6 +292,7 @@ int main() {
     testTimeOffsetAlignment();
     testNoTimestampFallbackUsesWorldTransform();
     testInsufficientImuCoverage();
+    testDenseTimestampsReusePartialPreintegration();
     std::cout << "All deskew tests passed\n";
     return EXIT_SUCCESS;
 }

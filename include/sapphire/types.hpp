@@ -63,6 +63,10 @@ struct NavigationState {
 
 /// Per-LiDAR-frame health and performance diagnostics.
 struct OdometryDiagnostics {
+    double deskew_timeline_ms = 0.0;
+    double deskew_integration_ms = 0.0;
+    double deskew_transform_ms = 0.0;
+    double deskew_total_ms = 0.0;
     double registration_ms = 0.0;
     double fitness_score = 0.0;
     size_t num_inliers = 0;
@@ -71,6 +75,9 @@ struct OdometryDiagnostics {
     size_t target_points = 0;
     size_t keyframe_count = 0;
     size_t stored_keyframe_points = 0;
+    size_t deskew_timestamp_groups = 0;
+    size_t deskew_imu_intervals = 0;
+    size_t deskew_pim_copies = 0;
     bool registration_accepted = false;
     Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
     Eigen::Vector3d gyro_bias = Eigen::Vector3d::Zero();
