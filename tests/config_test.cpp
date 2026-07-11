@@ -106,6 +106,18 @@ void testProjectConfig() {
     expectNear(
         config.registration.gicp.max_correspondence_dist, 0.5,
         "GICP correspondence distance");
+    expect(config.pgo.enabled, "PGO must be enabled in the Mid-360 profile");
+    expectNear(
+        config.pgo.keyframe_distance, 0.5,
+        "PGO keyframe translation threshold");
+    expectNear(
+        config.pgo.loop_search_radius, 15.0,
+        "PGO loop search radius");
+    expect(config.pgo.map_frame_stride == 3,
+           "PGO sparse-map frame stride");
+    expectNear(
+        config.pgo.map_voxel_size, 0.8,
+        "PGO sparse-map voxel size");
     expect(!config.cuda.enabled, "CUDA must be disabled in CPU profile");
     expect(!config.deskew.time_offset, "Mid-360 time offset must be disabled");
     expect(config.extrinsics.T_imu_lidar.matrix().isApprox(

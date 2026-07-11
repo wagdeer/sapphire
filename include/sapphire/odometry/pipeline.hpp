@@ -1,6 +1,7 @@
 #pragma once
 
 #include <sapphire/types.hpp>
+#include <sapphire/backend/pose_graph.hpp>
 #include <sapphire/ring_buffer.hpp>
 #include <sapphire/imu_init.hpp>
 #include <sapphire/odometry/registration.hpp>
@@ -56,7 +57,8 @@ public:
     /// After initialization, bias-corrected and buffered for deskew.
     void pushImu(const ImuData& imu);
 
-    /// Retrieve a consistent snapshot of the most recent LiDAR result.
+    /// Retrieve the most recent LiDAR result in the map frame. When PGO is
+    /// disabled, map and odom are identical.
     OdometryResult latestResult() const;
 
     /// Retrieve the IMU-rate state propagated from the latest LiDAR correction.
@@ -78,6 +80,14 @@ public:
     size_t keyframeCount() const { return submap_manager_.keyframeCount(); }
     size_t submapTargetRevision() const {
         return submap_manager_.targetRevision();
+    }
+    PoseGraphStats poseGraphStats() const { return pgo_backend_.stats(); }
+    PoseGraphSnapshot poseGraphSnapshot() const {
+        return pgo_backend_.snapshot();
+    }
+    void requestPoseGraphMap() { pgo_backend_.requestGlobalMap(); }
+    PointCloudConstPtr latestPoseGraphMap() const {
+        return pgo_backend_.latestGlobalMap();
     }
 
 private:
@@ -163,6 +173,7 @@ private:
     // ── First scan / synchronous local submap state ───────────────
     std::atomic<bool> has_first_scan_{false};
     SubmapManager submap_manager_;
+    PoseGraphBackend pgo_backend_;
 
     // ── GICP Registration ─────────────────────────────────────────
     Registration registration_;

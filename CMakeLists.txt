@@ -9,6 +9,8 @@ find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(PCL REQUIRED)
 find_package(absl REQUIRED)
+find_package(GTSAM REQUIRED)
+find_package(Threads REQUIRED)
 
 find_package(small_gicp REQUIRED)
 
@@ -28,6 +30,7 @@ endif()
 # Library
 add_library(sapphire STATIC
     src/config.cpp
+    src/backend/pose_graph.cpp
     src/odometry/pipeline.cpp
     src/odometry/deskew.cpp
     src/odometry/observer.cpp
@@ -45,7 +48,9 @@ target_link_libraries(sapphire PUBLIC
     spdlog::spdlog
     ${PCL_LIBRARIES}
     absl::flat_hash_map
+    gtsam
     small_gicp::small_gicp
+    Threads::Threads
     tomlplusplus::tomlplusplus
 )
 
@@ -81,6 +86,12 @@ if(BUILD_TESTING)
     target_link_libraries(sapphire_pipeline_test PRIVATE sapphire)
     add_test(NAME sapphire_pipeline_test COMMAND sapphire_pipeline_test)
 
+    add_executable(sapphire_pose_graph_test
+        tests/pose_graph_test.cpp
+    )
+    target_link_libraries(sapphire_pose_graph_test PRIVATE sapphire)
+    add_test(NAME sapphire_pose_graph_test COMMAND sapphire_pose_graph_test)
+
     add_executable(sapphire_observer_test
         tests/observer_test.cpp
     )
@@ -102,7 +113,6 @@ endif()
 
 # TODO: add as modules are implemented:
 #   find_package(TBB)        → submap/odometry parallelism
-#   find_package(GTSAM)      → PoseGraph ISAM2
 # Install
 install(TARGETS sapphire EXPORT sapphireTargets)
 install(DIRECTORY include/ DESTINATION include)

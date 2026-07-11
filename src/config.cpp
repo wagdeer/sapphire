@@ -237,6 +237,53 @@ Config loadConfig(const std::filesystem::path& path) {
             root["registration"]["gicp"]["max_correction_rot_deg"].value<double>()) {
         config.registration.gicp.max_correction_rot_deg = *value;
     }
+    if (const auto value = root["pgo"]["enabled"].value<bool>()) {
+        config.pgo.enabled = *value;
+    }
+    if (const auto value = root["pgo"]["keyframe_distance"].value<double>()) {
+        config.pgo.keyframe_distance = *value;
+    }
+    if (const auto value = root["pgo"]["keyframe_rotation"].value<double>()) {
+        config.pgo.keyframe_rotation = *value;
+    }
+    if (const auto value =
+            root["pgo"]["loop_min_time_separation"].value<double>()) {
+        config.pgo.loop_min_time_separation = *value;
+    }
+    if (const auto value =
+            root["pgo"]["loop_min_travel_distance"].value<double>()) {
+        config.pgo.loop_min_travel_distance = *value;
+    }
+    if (const auto value = root["pgo"]["loop_max_rotation"].value<double>()) {
+        config.pgo.loop_max_rotation = *value;
+    }
+    if (const auto value = root["pgo"]["loop_search_radius"].value<double>()) {
+        config.pgo.loop_search_radius = *value;
+    }
+    if (const auto value = root["pgo"]["loop_search_stride"].value<int>()) {
+        config.pgo.loop_search_stride = *value;
+    }
+    if (const auto value = root["pgo"]["target_frame_count"].value<int>()) {
+        config.pgo.target_frame_count = *value;
+    }
+    if (const auto value = root["pgo"]["source_voxel_size"].value<double>()) {
+        config.pgo.source_voxel_size = *value;
+    }
+    if (const auto value = root["pgo"]["target_voxel_size"].value<double>()) {
+        config.pgo.target_voxel_size = *value;
+    }
+    if (const auto value = root["pgo"]["fitness_threshold"].value<double>()) {
+        config.pgo.fitness_threshold = *value;
+    }
+    if (const auto value = root["pgo"]["update_period_sec"].value<double>()) {
+        config.pgo.update_period_sec = *value;
+    }
+    if (const auto value = root["pgo"]["map_frame_stride"].value<int>()) {
+        config.pgo.map_frame_stride = *value;
+    }
+    if (const auto value = root["pgo"]["map_voxel_size"].value<double>()) {
+        config.pgo.map_voxel_size = *value;
+    }
     if (const auto value = root["cuda"]["enabled"].value<bool>()) {
         config.cuda.enabled = *value;
     }
@@ -375,6 +422,49 @@ void validateConfig(const Config& config) {
     requireFinitePositive(
         gicp.max_correction_rot_deg,
         "registration.gicp.max_correction_rot_deg");
+    requireFinitePositive(
+        config.pgo.keyframe_distance,
+        "pgo.keyframe_distance");
+    requireFinitePositive(
+        config.pgo.keyframe_rotation,
+        "pgo.keyframe_rotation");
+    requireFiniteNonnegative(
+        config.pgo.loop_min_time_separation,
+        "pgo.loop_min_time_separation");
+    requireFiniteNonnegative(
+        config.pgo.loop_min_travel_distance,
+        "pgo.loop_min_travel_distance");
+    requireFinitePositive(
+        config.pgo.loop_max_rotation,
+        "pgo.loop_max_rotation");
+    requireFinitePositive(
+        config.pgo.loop_search_radius,
+        "pgo.loop_search_radius");
+    if (config.pgo.loop_search_stride <= 0
+        || config.pgo.target_frame_count < 0) {
+        throw std::invalid_argument(
+            "pgo loop_search_stride must be positive and "
+            "target_frame_count must be nonnegative");
+    }
+    requireFinitePositive(
+        config.pgo.source_voxel_size,
+        "pgo.source_voxel_size");
+    requireFinitePositive(
+        config.pgo.target_voxel_size,
+        "pgo.target_voxel_size");
+    requireFinitePositive(
+        config.pgo.fitness_threshold,
+        "pgo.fitness_threshold");
+    requireFinitePositive(
+        config.pgo.update_period_sec,
+        "pgo.update_period_sec");
+    if (config.pgo.map_frame_stride <= 0) {
+        throw std::invalid_argument(
+            "pgo.map_frame_stride must be positive");
+    }
+    requireFinitePositive(
+        config.pgo.map_voxel_size,
+        "pgo.map_voxel_size");
     if (config.cuda.enabled) {
         throw std::invalid_argument(
             "cuda.enabled=true is unsupported in this build");

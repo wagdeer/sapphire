@@ -24,6 +24,8 @@ sapphire/          (STATIC lib, C++17 + PCL + Eigen)
   │   ├── config.hpp             TOML 配置加载 + 验证
   │   ├── ring_buffer.hpp        定长环形缓冲区
   │   ├── imu_init.hpp           ImuInitializer
+  │   ├── backend/
+  │   │   └── pose_graph.hpp     异步 ISAM2 PGO + map←odom 快照
   │   └── odometry/
   │       ├── pipeline.hpp       OdometryPipeline (pushLidar/pushImu → OdometryResult)
   │       ├── deskew.hpp         Gal3 预积分去畸变
@@ -362,6 +364,10 @@ colcon build --symlink-install --packages-select sapphire_ros2
 - **RegistrationBackend::setTarget(raw PointCloud)**: 后端自预处理（KD-tree/GaussianVoxelMap/NDT grid）
 - **KD-tree 回环**: 用 geometric_centroid 而非 origin（大 submap 必漏检）
 - **v0.1 不需要 ISAM2Ext**: GPU 因子只在前端，不入因子图
+- **PGO 前后端隔离**: 前端始终在连续 odom 系运行；PGO 独立门控关键帧并在后台维护 ISAM2，只通过线程安全的 `T_map_odom` 快照修正最终输出，不回写 deskew、GICP、observer 或 IMU propagation。独立门控有意对齐 DLIO/SimpleLoopClosure：PGO 默认以 0.5 m/0.3 rad 采样，而 Mid-360 前端 submap 以 1.5 m/45° 采样；前者需要更密的图节点和回环查询，不能直接等同于局部地图关键帧。
+- **PGO 回环配准**: 候选在 `loop_search_radius` 内经时间、累计行程和姿态差过滤，随后用单帧 source 对目标帧邻域地图做 PCL ICP。为容纳大圈轨迹末端的累计里程计漂移，最大对应距离与 DLIO 一致设为 `2 * loop_search_radius`；diagnostics 提供候选数、ICP 拒绝数、最近 fitness 和当前 `T_map_odom` 平移/旋转修正量。
+- **统一对外里程计**: PGO 关闭时 `T_map_odom=I`；开启时对外结果为 `T_map_lidar=T_map_odom*T_odom_lidar`，ROS topic 和消息类型不变。
+- **按需 PGO 可视化**: `/sapphire/pgo/graph` 发布优化节点、里程计边和回环边，并已在默认 `display.rviz` 中以 Reliable + Transient Local QoS 启用；`/sapphire/pgo/map` 发布优化关键帧拼接的稀疏地图。无订阅者时不构建地图，地图拼接在 PGO worker 中异步完成。
 - **alignment_risk**: SuperLoc 启发的退化预测
 
 ## ROS2 QoS 陷阱

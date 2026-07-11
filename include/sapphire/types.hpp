@@ -203,6 +203,24 @@ struct Config {
         RegistrationConfig gicp;
     } registration;
 
+    struct Pgo {
+        bool enabled = false;
+        double keyframe_distance = 0.5;
+        double keyframe_rotation = 0.3;
+        double loop_min_time_separation = 30.0;
+        double loop_min_travel_distance = 30.0;
+        double loop_max_rotation = 3.14;
+        double loop_search_radius = 15.0;
+        int loop_search_stride = 2;
+        int target_frame_count = 50;
+        double source_voxel_size = 0.4;
+        double target_voxel_size = 0.4;
+        double fitness_threshold = 0.3;
+        double update_period_sec = 1.0;
+        int map_frame_stride = 3;
+        double map_voxel_size = 0.8;
+    } pgo;
+
     struct Cuda {
         bool enabled = false;
     } cuda;
