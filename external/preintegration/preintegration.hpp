@@ -277,6 +277,23 @@ namespace preintegration {
       Jxi_ = Phi_b * Jxi_;
     }
 
+    /**
+     * @brief Integrates only the preintegrated mean.
+     * @details Produces the same Upsilon as integrateMeasurement(), while
+     * skipping covariance and bias-Jacobian propagation. Cov() and Jxi()
+     * therefore remain unchanged.
+     *
+     * @param accMeas Measured specific force (accelerometer reading).
+     * @param gyroMeas Measured angular velocity (gyroscope reading).
+     * @param dt Time step duration.
+     */
+    void integrateMeasurementMeanOnly(
+        const Vec3 &accMeas, const Vec3 &gyroMeas, const FPType dt)
+    {
+      Input u(gyroMeas, accMeas);
+      X_ = X_ * Lambda(phi(X_, xi0_), u, dt);
+    }
+
   private:
     std::shared_ptr<Params> p_;
 

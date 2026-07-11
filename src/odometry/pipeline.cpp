@@ -178,6 +178,7 @@ PointCloudConstPtr OdometryPipeline::downsamplePoints(
 DeskewResult OdometryPipeline::deskewPointcloud(
     double stamp, const PointCloudConstPtr& points)
 {
+    const auto started_at = std::chrono::steady_clock::now();
     NavigationState baseline;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
@@ -188,18 +189,38 @@ DeskewResult OdometryPipeline::deskewPointcloud(
         baseline = imu_state_;
     }
 
-    std::lock_guard<std::mutex> lock(imu_mutex_);
-    return deskew(
-        points,
-        stamp,
-        imu_buffer_,
-        baseline.stamp,
-        baseline.T_world_imu,
-        baseline.v_world,
-        config_.extrinsics.T_imu_lidar,
-        gravity_world_,
-        config_.imu.noise,
-        config_.deskew.time_offset);
+    DeskewResult result;
+    {
+        std::lock_guard<std::mutex> lock(imu_mutex_);
+        result = deskew(
+            points,
+            stamp,
+            imu_buffer_,
+            baseline.stamp,
+            baseline.T_world_imu,
+            baseline.v_world,
+            config_.extrinsics.T_imu_lidar,
+            gravity_world_,
+            config_.imu.noise,
+            config_.deskew.time_offset);
+    }
+    const double wall_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started_at).count();
+    spdlog::info(
+        "[deskew] {:.2f}ms wall | timeline={:.2f}ms "
+        "integration={:.2f}ms transform={:.2f}ms | "
+        "points={} groups={} imu_intervals={} pim_copies={} status={}",
+        wall_ms,
+        result.metrics.timeline_ms,
+        result.metrics.integration_ms,
+        result.metrics.transform_ms,
+        points ? points->size() : 0,
+        result.metrics.timestamp_groups,
+        result.metrics.imu_intervals,
+        result.metrics.pim_copies,
+        static_cast<int>(result.status));
+    return result;
 }
 
 void OdometryPipeline::recoverPropagatedStateLocked(double stamp) {
@@ -231,7 +252,8 @@ void OdometryPipeline::propagateStateLocked(const ImuData& imu) {
     }
 
     const double dt = imu.stamp - propagated_state_.stamp;
-    propagation_pim_->integrateMeasurement(imu.accel, imu.gyro, dt);
+    propagation_pim_->integrateMeasurementMeanOnly(
+        imu.accel, imu.gyro, dt);
     recoverPropagatedStateLocked(imu.stamp);
 }
 

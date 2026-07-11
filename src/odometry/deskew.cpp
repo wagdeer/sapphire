@@ -220,7 +220,7 @@ std::vector<TimedState> integrateTimeline(
                 const double target_stamp = target_stamps[target_idx];
                 const double partial_dt = target_stamp - partial_until;
                 if (partial_dt > 0.0) {
-                    partial.integrateMeasurement(
+                    partial.integrateMeasurementMeanOnly(
                         measurement.accel, measurement.gyro, partial_dt);
                 }
                 states.push_back({
@@ -235,7 +235,7 @@ std::vector<TimedState> integrateTimeline(
 
         const double interval_dt = interval_end - integrated_until;
         if (interval_dt > 0.0) {
-            pim.integrateMeasurement(
+            pim.integrateMeasurementMeanOnly(
                 measurement.accel, measurement.gyro, interval_dt);
         }
         integrated_until = interval_end;
