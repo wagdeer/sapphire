@@ -10,6 +10,10 @@ gyro_noise_density = 0.000152
 accel_random_walk = 0.000165
 gyro_random_walk = 0.0000655
 
+[odometry]
+# Downsample each deskewed scan before GICP. Matches the validated DLIO profile.
+voxel_size = 0.25
+
 [odometry.observer]
 # Matches the validated DLIO geometric-observer Kv.
 velocity_gain = 11.25

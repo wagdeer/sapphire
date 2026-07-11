@@ -113,6 +113,9 @@ void testFirstLidarScanInitializesDeskewedTarget() {
     config.imu.init.timeout_sec = 1.0;
     config.registration.gicp.min_num_points = 50;
     config.registration.gicp.k_correspondences = 10;
+    // Keep this small synthetic lattice effectively unchanged; production
+    // downsampling at 0.25 m is covered by the loaded Mid-360 configuration.
+    config.odometry.voxel_size = 0.01;
 
     sapphire::OdometryPipeline pipeline(config);
     const Eigen::Vector3d stationary_accel(
@@ -134,11 +137,20 @@ void testFirstLidarScanInitializesDeskewedTarget() {
     const auto deskewed = pipeline.latestDeskewed();
     expect(deskewed != nullptr, "first valid scan must produce deskewed output");
     expect(deskewed->size() == scan->size(),
-           "first deskewed scan must retain all valid points");
-    for (size_t i = 0; i < scan->size(); ++i) {
-        expectNear(
-            deskewed->points[i].x, scan->points[i].x, 2e-5,
-            "stationary deskew must preserve point position");
+           "fine voxel filtering must retain all synthetic points");
+    for (const auto& expected_point : scan->points) {
+        bool found = false;
+        for (const auto& actual_point : deskewed->points) {
+            const Eigen::Vector3f delta =
+                actual_point.getVector3fMap()
+                - expected_point.getVector3fMap();
+            if (delta.norm() <= 2e-5f) {
+                found = true;
+                break;
+            }
+        }
+        expect(found,
+               "stationary downsampled output must preserve point positions");
     }
 
     const auto& result = pipeline.latestResult();

@@ -136,8 +136,8 @@ struct Config {
     } extrinsics;
 
     struct Odometry {
-        double voxel_size = 1.0;
-        int max_points_per_voxel = 20;
+        /// Leaf size used to downsample each deskewed scan before GICP.
+        double voxel_size = 0.25;
         /// Axis-aligned box in LiDAR frame; points inside are removed (robot body).
         struct CropBox {
             double min_x = -1.0;

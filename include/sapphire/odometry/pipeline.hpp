@@ -7,6 +7,7 @@
 #include <sapphire/odometry/deskew.hpp>
 #include <sapphire/odometry/submap.hpp>
 #include <pcl/filters/crop_box.h>
+#include <pcl/filters/voxel_grid.h>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <atomic>
@@ -85,6 +86,9 @@ private:
 
     /// Filter and normalize raw LiDAR points before deskew/registration.
     PointCloudConstPtr preprocessPoints(const PointCloudConstPtr& points) const;
+
+    /// Uniformly downsample a world-frame deskewed scan for registration.
+    PointCloudConstPtr downsamplePoints(const PointCloudConstPtr& points) const;
 
     /// Motion-compensate a preprocessed scan using buffered IMU data.
     DeskewResult deskewPointcloud(double stamp, const PointCloudConstPtr& points);

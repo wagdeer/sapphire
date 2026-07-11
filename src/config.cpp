@@ -102,6 +102,10 @@ Config loadConfig(const std::filesystem::path& path) {
         root["imu"]["noise"]["gyro_random_walk"].value<double>(),
         "imu.noise.gyro_random_walk");
 
+    if (const auto voxel_size =
+            root["odometry"]["voxel_size"].value<double>()) {
+        config.odometry.voxel_size = *voxel_size;
+    }
     if (const auto velocity_gain =
             root["odometry"]["observer"]["velocity_gain"].value<double>()) {
         config.odometry.observer.velocity_gain = *velocity_gain;
@@ -166,6 +170,11 @@ void validateConfig(const Config& config) {
     requireFiniteNonnegative(
         config.odometry.observer.velocity_gain,
         "odometry.observer.velocity_gain");
+    if (!std::isfinite(config.odometry.voxel_size)
+        || config.odometry.voxel_size <= 0.0) {
+        throw std::invalid_argument(
+            "odometry.voxel_size must be finite and positive");
+    }
     if (!std::isfinite(config.odometry.submap.splitting_distance)
         || config.odometry.submap.splitting_distance <= 0.0) {
         throw std::invalid_argument(

@@ -31,9 +31,8 @@ OdometryPipeline::OdometryPipeline(const Config& config)
     crop_filter_.setNegative(true);
 
     spdlog::info("[pipeline] OdometryPipeline created");
-    spdlog::info("[pipeline]   voxel_size={}, max_points_per_voxel={}",
-        config.odometry.voxel_size,
-        config.odometry.max_points_per_voxel);
+    spdlog::info("[pipeline]   scan_voxel_size={}m",
+        config.odometry.voxel_size);
     spdlog::info("[pipeline]   crop_box: [{:.2f},{:.2f},{:.2f}] → [{:.2f},{:.2f},{:.2f}]",
         box.min_x, box.min_y, box.min_z,
         box.max_x, box.max_y, box.max_z);
@@ -93,6 +92,25 @@ PointCloudConstPtr OdometryPipeline::preprocessPoints(const PointCloudConstPtr& 
     crop_filter_.filter(*out);
 
     return out;
+}
+
+PointCloudConstPtr OdometryPipeline::downsamplePoints(
+    const PointCloudConstPtr& points) const
+{
+    auto downsampled = std::make_shared<PointCloud>();
+    pcl::VoxelGrid<Point> voxel_filter;
+    const float leaf_size =
+        static_cast<float>(config_.odometry.voxel_size);
+    voxel_filter.setLeafSize(leaf_size, leaf_size, leaf_size);
+    voxel_filter.setInputCloud(points);
+    voxel_filter.filter(*downsampled);
+    // PCL's centroid path does not guarantee the homogeneous padding member
+    // for custom point types. small_gicp consumes getVector4fMap(), so every
+    // point must retain w=1 for covariance estimation and transformations.
+    for (auto& point : downsampled->points) {
+        point.data[3] = 1.0f;
+    }
+    return downsampled;
 }
 
 DeskewResult OdometryPipeline::deskewPointcloud(
@@ -161,7 +179,7 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
         pcl::transformPointCloud(
             *preprocessed, *world_scan, T_world_lidar.matrix());
 
-        latest_deskewed_ = world_scan;
+        latest_deskewed_ = downsamplePoints(world_scan);
         submap_manager_.addKeyframe(T_world_lidar, world_scan, stamp);
         registration_.setTarget(submap_manager_.target());
         spdlog::info(
@@ -217,11 +235,28 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
 
     // DLIO correction flow: the source already contains the IMU world prior,
     // so GICP estimates a global left-multiplicative correction.
-    registration_.setSource(deskewed.cloud);
+    const PointCloudConstPtr registration_source =
+        downsamplePoints(deskewed.cloud);
+    if (registration_source->size()
+        < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
+        spdlog::warn(
+            "[pipeline] skipping LiDAR scan: {} points after voxel "
+            "downsampling (minimum {}, input {})",
+            registration_source->size(),
+            config_.registration.gicp.min_num_points,
+            deskewed.cloud->size());
+        return;
+    }
+    spdlog::debug(
+        "[pipeline] GICP source downsampled: {} -> {} points",
+        deskewed.cloud->size(),
+        registration_source->size());
+    registration_.setSource(registration_source);
     const RegistrationResult registration =
         registration_.align(deskewed.T_world_lidar_ref);
 
     PointCloudConstPtr corrected_scan = deskewed.cloud;
+    PointCloudConstPtr corrected_registration_source = registration_source;
     if (registration.accepted) {
         auto transformed = std::make_shared<PointCloud>();
         pcl::transformPointCloud(
@@ -229,9 +264,18 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
             *transformed,
             registration.T_correction.matrix());
         corrected_scan = transformed;
+
+        auto transformed_source = std::make_shared<PointCloud>();
+        pcl::transformPointCloud(
+            *registration_source,
+            *transformed_source,
+            registration.T_correction.matrix());
+        corrected_registration_source = transformed_source;
     }
 
-    latest_deskewed_ = corrected_scan;
+    // Publish the same uniformly sampled geometry that GICP consumed, with
+    // its accepted correction applied. Keep the full cloud for keyframes.
+    latest_deskewed_ = corrected_registration_source;
     latest_result_.T_world_lidar = registration.T_world_lidar;
     latest_result_.stamp = deskewed.reference_stamp;
     latest_result_.converged = registration.accepted;
