@@ -15,7 +15,7 @@ gyro_random_walk = 0.0000655
 velocity_gain = 11.25
 
 [odometry.submap]
-splitting_distance = 2.0
+splitting_distance = 1.5
 splitting_rotation = 0.7853981633974483
 max_keyframes = 10
 voxel_size = 0.25

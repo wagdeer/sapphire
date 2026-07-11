@@ -51,14 +51,14 @@ void testKeyframeThresholds() {
                makePose(0.0), makeCloud(0.0f), 1.0),
            "the first keyframe must build the target");
 
-    expect(!translation_manager.shouldAddKeyframe(makePose(4.0)),
+    expect(!translation_manager.shouldAddKeyframe(makePose(2.0)),
            "the translation threshold is strict");
-    expect(translation_manager.shouldAddKeyframe(makePose(4.01)),
-           "crossing 4 m must add a keyframe");
+    expect(translation_manager.shouldAddKeyframe(makePose(2.01)),
+           "crossing 2 m must add a keyframe");
     translation_manager.addKeyframe(
-        makePose(4.01), makeCloud(4.01f), 2.0);
+        makePose(2.01), makeCloud(2.01f), 2.0);
     expect(translation_manager.keyframeCount() == 2,
-           "a scan crossing 4 m must be retained");
+           "a scan crossing 2 m must be retained");
 
     sapphire::SubmapManager rotation_manager(config.odometry.submap);
     rotation_manager.addKeyframe(makePose(0.0), makeCloud(0.0f), 1.0);
@@ -96,8 +96,8 @@ void testNearestSelectionAndStableTarget() {
            "target must merge only active keyframe clouds");
 
     const size_t revision = manager.targetRevision();
-    expect(!manager.shouldAddKeyframe(makePose(58.0)),
-           "motion below 4 m must not create a keyframe");
+    expect(!manager.shouldAddKeyframe(makePose(56.0)),
+           "motion below 2 m must not create a keyframe");
     expect(manager.targetRevision() == revision,
            "continuous sub-threshold motion must keep the target stable");
 }

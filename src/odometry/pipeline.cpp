@@ -4,7 +4,6 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <cassert>
 #include <chrono>
 #include <cmath>
 
@@ -59,8 +58,12 @@ OdometryPipeline::OdometryPipeline(const Config& config)
 // ── IMU bias correction ─────────────────────────────────────────────
 
 ImuData OdometryPipeline::correctImu(const ImuData& raw) const {
-    // correctImu is only called after IMU init completes (caller ensures initialized_)
-    assert(imu_init_result_.has_value() && "correctImu called before IMU initialization");
+    // correctImu is only called after IMU init completes (caller ensures initialized_).
+    // Throw instead of silently returning — this is an internal lifecycle violation.
+    if (!imu_init_result_.has_value()) {
+        throw std::logic_error(
+            "OdometryPipeline::correctImu called before IMU initialization");
+    }
     ImuData corrected;
     corrected.stamp = raw.stamp;
     corrected.gyro  = raw.gyro  - imu_init_result_->gyro_bias;
@@ -95,7 +98,10 @@ PointCloudConstPtr OdometryPipeline::preprocessPoints(const PointCloudConstPtr& 
 DeskewResult OdometryPipeline::deskewPointcloud(
     double stamp, const PointCloudConstPtr& points)
 {
-    assert(imu_state_.valid && "deskewPointcloud called without an IMU state");
+    if (!imu_state_.valid) {
+        throw std::logic_error(
+            "OdometryPipeline::deskewPointcloud called without a valid IMU state");
+    }
     std::lock_guard<std::mutex> lock(imu_mutex_);
     return deskew(
         points,

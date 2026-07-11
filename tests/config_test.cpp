@@ -69,7 +69,7 @@ void testProjectConfig() {
         config.odometry.observer.velocity_gain, 11.25,
         "observer velocity gain");
     expectNear(
-        config.odometry.submap.splitting_distance, 4.0,
+        config.odometry.submap.splitting_distance, 2.0,
         "submap keyframe translation threshold");
     expectNear(
         config.odometry.submap.splitting_rotation,

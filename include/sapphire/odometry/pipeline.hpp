@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 
 namespace sapphire {
 
@@ -36,7 +37,14 @@ public:
     }
 
     /// Access the IMU initialization result (valid after initialized()).
-    const ImuInitializer::Result& imuInitResult() const { return *imu_init_result_; }
+    /// Throws std::logic_error if called before initialization completes.
+    const ImuInitializer::Result& imuInitResult() const {
+        if (!imu_init_result_.has_value()) {
+            throw std::logic_error(
+                "imuInitResult() called before IMU initialization completes");
+        }
+        return *imu_init_result_;
+    }
 
     /// Feed a LiDAR scan. Silently skipped until IMU is initialized.
     void pushLidar(double stamp, const PointCloudConstPtr& points);
