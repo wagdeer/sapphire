@@ -15,8 +15,14 @@ gyro_random_walk = 0.0000655
 voxel_size = 0.25
 
 [odometry.observer]
-# Matches the validated DLIO geometric-observer Kv.
+# Matches the validated DLIO Mid-360 geometric observer.
+position_gain = 4.5
 velocity_gain = 11.25
+orientation_gain = 4.0
+accel_bias_gain = 2.25
+gyro_bias_gain = 1.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
 
 [odometry.submap]
 splitting_distance = 1.5

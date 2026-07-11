@@ -104,6 +104,10 @@ void testImuInitializationCreatesGravityAlignedState() {
            "stationary gyro mean must initialize gyro bias");
     expect(result.accel_bias.isZero(1e-9),
            "gravity-only acceleration must not become accelerometer bias");
+    expect(pipeline.gyroBias().isApprox(gyro_bias, 1e-12),
+           "online bias state must start from stationary gyro calibration");
+    expect(pipeline.accelBias().isApprox(result.accel_bias, 1e-12),
+           "online bias state must start from stationary accel calibration");
 }
 
 void testFirstLidarScanInitializesDeskewedTarget() {
@@ -186,6 +190,12 @@ void testFirstLidarScanInitializesDeskewedTarget() {
             stationary_accel,
             Eigen::Vector3d::Zero(),
         });
+        const auto output_snapshot = pipeline.latestResult();
+        expect(output_snapshot.T_world_lidar.matrix().allFinite(),
+               "concurrent output snapshots must remain finite");
+        const auto cloud_snapshot = pipeline.latestDeskewed();
+        expect(cloud_snapshot != nullptr,
+               "concurrent cloud snapshots must remain valid");
     }
     lidar_thread.join();
 
@@ -211,6 +221,14 @@ void testFirstLidarScanInitializesDeskewedTarget() {
            "accepted GICP update must retain propagated state");
     expectNear(second_propagated->stamp, 0.26, 1e-12,
                "GICP correction must replay IMU samples newer than its reference");
+    expect(
+        pipeline.accelBias().x() < -0.05,
+        "accepted position innovation must update accelerometer bias");
+    expect(
+        pipeline.gyroBias().isZero(1e-5),
+        "pure translation must not update gyroscope bias");
+    const Eigen::Vector3d accepted_accel_bias = pipeline.accelBias();
+    const Eigen::Vector3d accepted_gyro_bias = pipeline.gyroBias();
 
     for (int i = 27; i <= 36; ++i) {
         pipeline.pushImu({
@@ -226,6 +244,9 @@ void testFirstLidarScanInitializesDeskewedTarget() {
            "a rejected scan must not enter the submap");
     expect(pipeline.submapTargetRevision() == initial_target_revision,
            "a rejected scan must not rebuild the target");
+    expect(pipeline.accelBias().isApprox(accepted_accel_bias, 1e-12)
+           && pipeline.gyroBias().isApprox(accepted_gyro_bias, 1e-12),
+           "a rejected scan must not change online biases");
 
     for (int i = 37; i <= 46; ++i) {
         pipeline.pushImu({

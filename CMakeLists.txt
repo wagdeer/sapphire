@@ -30,6 +30,7 @@ add_library(sapphire STATIC
     src/config.cpp
     src/odometry/pipeline.cpp
     src/odometry/deskew.cpp
+    src/odometry/observer.cpp
     src/odometry/registration.cpp
     src/odometry/submap.cpp
     src/imu_init.cpp
@@ -70,6 +71,18 @@ if(BUILD_TESTING)
     )
     target_link_libraries(sapphire_pipeline_test PRIVATE sapphire)
     add_test(NAME sapphire_pipeline_test COMMAND sapphire_pipeline_test)
+
+    add_executable(sapphire_observer_test
+        tests/observer_test.cpp
+    )
+    target_link_libraries(sapphire_observer_test PRIVATE sapphire)
+    add_test(NAME sapphire_observer_test COMMAND sapphire_observer_test)
+
+    add_executable(sapphire_registration_test
+        tests/registration_test.cpp
+    )
+    target_link_libraries(sapphire_registration_test PRIVATE sapphire)
+    add_test(NAME sapphire_registration_test COMMAND sapphire_registration_test)
 
     add_executable(sapphire_submap_test
         tests/submap_test.cpp

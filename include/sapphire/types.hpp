@@ -53,6 +53,14 @@ struct ImuData {
     Eigen::Vector3d gyro;            // rad/s, in IMU frame
 };
 
+/// IMU navigation state at a specific timestamp.
+struct NavigationState {
+    double stamp = 0.0;
+    Isometry3d T_world_imu = Isometry3d::Identity();
+    Eigen::Vector3d v_world = Eigen::Vector3d::Zero();
+    bool valid = false;
+};
+
 /// Odometry pipeline output per LiDAR scan
 struct OdometryResult {
     Isometry3d T_world_lidar;        // current pose in world frame
@@ -154,8 +162,14 @@ struct Config {
             double voxel_size = 0.25;
         } submap;
         struct Observer {
-            // DLIO geometric-observer Kv: position innovation → velocity.
+            // DLIO geometric-observer gains.
+            double position_gain = 4.5;
             double velocity_gain = 11.25;
+            double orientation_gain = 4.0;
+            double accel_bias_gain = 2.25;
+            double gyro_bias_gain = 1.0;
+            double accel_bias_max = 10.0;  // m/s², absolute total bias
+            double gyro_bias_max = 0.5;    // rad/s, absolute total bias
         } observer;
     } odometry;
 

@@ -66,8 +66,20 @@ void testProjectConfig() {
         config.imu.noise.gyro_noise_density, 0.000152,
         "gyro noise value");
     expectNear(
+        config.odometry.observer.position_gain, 4.5,
+        "observer position gain");
+    expectNear(
         config.odometry.observer.velocity_gain, 11.25,
         "observer velocity gain");
+    expectNear(
+        config.odometry.observer.orientation_gain, 4.0,
+        "observer orientation gain");
+    expectNear(
+        config.odometry.observer.accel_bias_gain, 2.25,
+        "observer accelerometer bias gain");
+    expectNear(
+        config.odometry.observer.gyro_bias_gain, 1.0,
+        "observer gyroscope bias gain");
     expectNear(
         config.odometry.voxel_size, 0.25,
         "GICP source voxel size");

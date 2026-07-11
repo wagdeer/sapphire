@@ -110,6 +110,30 @@ Config loadConfig(const std::filesystem::path& path) {
             root["odometry"]["observer"]["velocity_gain"].value<double>()) {
         config.odometry.observer.velocity_gain = *velocity_gain;
     }
+    if (const auto position_gain =
+            root["odometry"]["observer"]["position_gain"].value<double>()) {
+        config.odometry.observer.position_gain = *position_gain;
+    }
+    if (const auto orientation_gain =
+            root["odometry"]["observer"]["orientation_gain"].value<double>()) {
+        config.odometry.observer.orientation_gain = *orientation_gain;
+    }
+    if (const auto accel_bias_gain =
+            root["odometry"]["observer"]["accel_bias_gain"].value<double>()) {
+        config.odometry.observer.accel_bias_gain = *accel_bias_gain;
+    }
+    if (const auto gyro_bias_gain =
+            root["odometry"]["observer"]["gyro_bias_gain"].value<double>()) {
+        config.odometry.observer.gyro_bias_gain = *gyro_bias_gain;
+    }
+    if (const auto accel_bias_max =
+            root["odometry"]["observer"]["accel_bias_max"].value<double>()) {
+        config.odometry.observer.accel_bias_max = *accel_bias_max;
+    }
+    if (const auto gyro_bias_max =
+            root["odometry"]["observer"]["gyro_bias_max"].value<double>()) {
+        config.odometry.observer.gyro_bias_max = *gyro_bias_max;
+    }
     if (const auto splitting_distance =
             root["odometry"]["submap"]["splitting_distance"].value<double>()) {
         config.odometry.submap.splitting_distance = *splitting_distance;
@@ -168,8 +192,26 @@ void validateConfig(const Config& config) {
         config.imu.noise.gyro_random_walk,
         "imu.noise.gyro_random_walk");
     requireFiniteNonnegative(
+        config.odometry.observer.position_gain,
+        "odometry.observer.position_gain");
+    requireFiniteNonnegative(
         config.odometry.observer.velocity_gain,
         "odometry.observer.velocity_gain");
+    requireFiniteNonnegative(
+        config.odometry.observer.orientation_gain,
+        "odometry.observer.orientation_gain");
+    requireFiniteNonnegative(
+        config.odometry.observer.accel_bias_gain,
+        "odometry.observer.accel_bias_gain");
+    requireFiniteNonnegative(
+        config.odometry.observer.gyro_bias_gain,
+        "odometry.observer.gyro_bias_gain");
+    requireFiniteNonnegative(
+        config.odometry.observer.accel_bias_max,
+        "odometry.observer.accel_bias_max");
+    requireFiniteNonnegative(
+        config.odometry.observer.gyro_bias_max,
+        "odometry.observer.gyro_bias_max");
     if (!std::isfinite(config.odometry.voxel_size)
         || config.odometry.voxel_size <= 0.0) {
         throw std::invalid_argument(

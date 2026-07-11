@@ -9,6 +9,25 @@
 
 namespace sapphire {
 
+namespace {
+
+double computeScanEndStamp(
+    double stamp,
+    const PointCloud& points,
+    bool time_offset)
+{
+    const auto [min_time_it, max_time_it] = std::minmax_element(
+        points.points.begin(),
+        points.points.end(),
+        [](const Point& lhs, const Point& rhs) {
+            return lhs.timestamp < rhs.timestamp;
+        });
+    return stamp + max_time_it->timestamp
+        - (time_offset ? min_time_it->timestamp : 0.0);
+}
+
+}  // namespace
+
 OdometryPipeline::OdometryPipeline(const Config& config)
     : config_(config)
     , imu_initializer_(config.imu.init)
@@ -54,8 +73,13 @@ OdometryPipeline::OdometryPipeline(const Config& config)
         config.odometry.submap.splitting_rotation,
         config.odometry.submap.max_keyframes,
         config.odometry.submap.voxel_size);
-    spdlog::info("[pipeline]   observer: velocity_gain={}",
-        config.odometry.observer.velocity_gain);
+    spdlog::info(
+        "[pipeline]   observer: Kp={} Kv={} Kq={} Kab={} Kgb={}",
+        config.odometry.observer.position_gain,
+        config.odometry.observer.velocity_gain,
+        config.odometry.observer.orientation_gain,
+        config.odometry.observer.accel_bias_gain,
+        config.odometry.observer.gyro_bias_gain);
     spdlog::info("[pipeline]   registration: {}", config.registration.type);
     spdlog::info("[pipeline]   cuda: {}", config.cuda.enabled ? "ON" : "OFF");
     spdlog::info("[pipeline]   imu_init: gyro_std<{:.4f}, accel_std<{:.3f}, "
@@ -63,6 +87,20 @@ OdometryPipeline::OdometryPipeline(const Config& config)
         config.imu.init.convergence_gyro_std,
         config.imu.init.convergence_accel_std,
         config.imu.init.timeout_sec);
+}
+
+OdometryResult OdometryPipeline::latestResult() const {
+    std::lock_guard<std::mutex> lock(output_mutex_);
+    return latest_result_;
+}
+
+Isometry3d OdometryPipeline::latestPose() const {
+    return latestResult().T_world_lidar;
+}
+
+PointCloudConstPtr OdometryPipeline::latestDeskewed() const {
+    std::lock_guard<std::mutex> lock(output_mutex_);
+    return latest_deskewed_;
 }
 
 std::optional<OdometryResult>
@@ -81,20 +119,14 @@ OdometryPipeline::latestPropagatedResult() const {
     return result;
 }
 
-// ── IMU bias correction ─────────────────────────────────────────────
+Eigen::Vector3d OdometryPipeline::accelBias() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return accel_bias_;
+}
 
-ImuData OdometryPipeline::correctImu(const ImuData& raw) const {
-    // correctImu is only called after IMU init completes (caller ensures initialized_).
-    // Throw instead of silently returning — this is an internal lifecycle violation.
-    if (!imu_init_result_.has_value()) {
-        throw std::logic_error(
-            "OdometryPipeline::correctImu called before IMU initialization");
-    }
-    ImuData corrected;
-    corrected.stamp = raw.stamp;
-    corrected.gyro  = raw.gyro  - imu_init_result_->gyro_bias;
-    corrected.accel = raw.accel - imu_init_result_->accel_bias;
-    return corrected;
+Eigen::Vector3d OdometryPipeline::gyroBias() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return gyro_bias_;
 }
 
 // ── LiDAR preprocessing ─────────────────────────────────────────────
@@ -143,7 +175,7 @@ PointCloudConstPtr OdometryPipeline::downsamplePoints(
 DeskewResult OdometryPipeline::deskewPointcloud(
     double stamp, const PointCloudConstPtr& points)
 {
-    ImuState baseline;
+    NavigationState baseline;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
         if (!imu_state_.valid) {
@@ -201,9 +233,22 @@ void OdometryPipeline::propagateStateLocked(const ImuData& imu) {
 }
 
 void OdometryPipeline::rebasePropagation(
-    const ImuState& corrected_state)
+    const NavigationState& corrected_state,
+    const Eigen::Vector3d& accel_bias,
+    const Eigen::Vector3d& gyro_bias)
 {
     std::scoped_lock lock(imu_mutex_, state_mutex_);
+    // Buffered samples were corrected with the previous bias. Shift them to
+    // the new linearization before replaying from the LiDAR reference time.
+    const Eigen::Vector3d accel_correction = accel_bias_ - accel_bias;
+    const Eigen::Vector3d gyro_correction = gyro_bias_ - gyro_bias;
+    for (ImuData& imu : imu_buffer_) {
+        imu.accel += accel_correction;
+        imu.gyro += gyro_correction;
+    }
+    accel_bias_ = accel_bias;
+    gyro_bias_ = gyro_bias;
+
     imu_state_ = corrected_state;
     propagated_state_ = corrected_state;
     propagation_pim_->resetIntegrationAndSetBias(
@@ -226,83 +271,146 @@ bool OdometryPipeline::waitForImuCoverage(double end_stamp) {
 
 // ── LiDAR callback ──────────────────────────────────────────────────
 
-void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points) {
-    if (!initialized_.load(std::memory_order_acquire)
-        || !points || points->empty()) {
-        return;
-    }
-
-    auto preprocessed = preprocessPoints(points);
-    if (preprocessed->size()
-        < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
-        spdlog::warn(
-            "[pipeline] skipping LiDAR scan: {} points after preprocessing "
-            "(minimum {})",
-            preprocessed->size(),
-            config_.registration.gicp.min_num_points);
-        return;
-    }
-
+bool OdometryPipeline::initializeFirstLidarTarget(
+    double stamp, const PointCloudConstPtr& preprocessed)
+{
     // DLIO first-valid-scan path: do not integrate from the calibration
     // timestamp. Assume no motion, apply the gravity-aligned initial pose,
     // and establish this scan as the first registration target.
-    if (!has_first_scan_.load(std::memory_order_acquire)) {
-        {
-            std::lock_guard<std::mutex> lock(imu_mutex_);
-            if (imu_buffer_.empty() || imu_buffer_.front().stamp > stamp) {
-                return;
-            }
+    {
+        std::lock_guard<std::mutex> lock(imu_mutex_);
+        if (imu_buffer_.empty() || imu_buffer_.front().stamp > stamp) {
+            return false;
         }
+    }
 
-        ImuState corrected_state;
-        {
-            std::lock_guard<std::mutex> lock(state_mutex_);
-            corrected_state = imu_state_;
-        }
-        corrected_state.stamp = stamp;
-        const Isometry3d T_world_lidar =
-            corrected_state.T_world_imu * config_.extrinsics.T_imu_lidar;
-        auto world_scan = std::make_shared<PointCloud>();
-        pcl::transformPointCloud(
-            *preprocessed, *world_scan, T_world_lidar.matrix());
+    NavigationState corrected_state;
+    Eigen::Vector3d accel_bias;
+    Eigen::Vector3d gyro_bias;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        corrected_state = imu_state_;
+        accel_bias = accel_bias_;
+        gyro_bias = gyro_bias_;
+    }
+    corrected_state.stamp = stamp;
+    const Isometry3d T_world_lidar =
+        corrected_state.T_world_imu * config_.extrinsics.T_imu_lidar;
+    auto world_scan = std::make_shared<PointCloud>();
+    pcl::transformPointCloud(
+        *preprocessed, *world_scan, T_world_lidar.matrix());
+    const PointCloudConstPtr output_scan = downsamplePoints(world_scan);
 
-        latest_deskewed_ = downsamplePoints(world_scan);
-        submap_manager_.addKeyframe(T_world_lidar, world_scan, stamp);
-        registration_.setTarget(submap_manager_.target());
-        spdlog::info(
-            "[pipeline] submap target rebuilt: keyframes={}, points={}, "
-            "revision={}",
-            submap_manager_.keyframeCount(),
-            submap_manager_.target()->size(),
-            submap_manager_.targetRevision());
+    submap_manager_.addKeyframe(T_world_lidar, world_scan, stamp);
+    registration_.setTarget(submap_manager_.target());
+    spdlog::info(
+        "[pipeline] submap target rebuilt: keyframes={}, points={}, "
+        "revision={}",
+        submap_manager_.keyframeCount(),
+        submap_manager_.target()->size(),
+        submap_manager_.targetRevision());
 
+    {
+        std::lock_guard<std::mutex> lock(output_mutex_);
+        latest_deskewed_ = output_scan;
         latest_result_.T_world_lidar = T_world_lidar;
         latest_result_.stamp = stamp;
         latest_result_.converged = true;
+    }
 
-        rebasePropagation(corrected_state);
+    rebasePropagation(corrected_state, accel_bias, gyro_bias);
 
-        spdlog::info(
-            "[pipeline] first LiDAR target initialized: stamp={:.6f}, "
-            "points={}",
-            latest_result_.stamp,
-            latest_deskewed_->size());
+    spdlog::info(
+        "[pipeline] first LiDAR target initialized: stamp={:.6f}, "
+        "points={}",
+        stamp,
+        output_scan->size());
+    return true;
+}
+
+std::optional<OdometryPipeline::RegistrationArtifacts>
+OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
+    const PointCloudConstPtr registration_source =
+        downsamplePoints(deskewed.cloud);
+    if (registration_source->size()
+        < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
+        spdlog::warn(
+            "[pipeline] skipping LiDAR scan: {} points after voxel "
+            "downsampling (minimum {}, input {})",
+            registration_source->size(),
+            config_.registration.gicp.min_num_points,
+            deskewed.cloud->size());
+        return std::nullopt;
+    }
+    spdlog::debug(
+        "[pipeline] GICP source downsampled: {} -> {} points",
+        deskewed.cloud->size(),
+        registration_source->size());
+
+    registration_.setSource(registration_source);
+    RegistrationArtifacts artifacts;
+    artifacts.result =
+        registration_.align(deskewed.T_world_lidar_ref);
+    artifacts.corrected_full = deskewed.cloud;
+    artifacts.corrected_source = registration_source;
+
+    if (artifacts.result.accepted) {
+        auto transformed_full = std::make_shared<PointCloud>();
+        pcl::transformPointCloud(
+            *deskewed.cloud,
+            *transformed_full,
+            artifacts.result.T_correction.matrix());
+        artifacts.corrected_full = transformed_full;
+
+        auto transformed_source = std::make_shared<PointCloud>();
+        pcl::transformPointCloud(
+            *registration_source,
+            *transformed_source,
+            artifacts.result.T_correction.matrix());
+        artifacts.corrected_source = transformed_source;
+    }
+    return artifacts;
+}
+
+void OdometryPipeline::commitLidarOutputs(
+    const DeskewResult& deskewed,
+    const RegistrationArtifacts& artifacts)
+{
+    std::lock_guard<std::mutex> lock(output_mutex_);
+    latest_deskewed_ = artifacts.corrected_source;
+    latest_result_.T_world_lidar = artifacts.result.T_world_lidar;
+    latest_result_.stamp = deskewed.reference_stamp;
+    latest_result_.converged = artifacts.result.accepted;
+}
+
+void OdometryPipeline::maybeUpdateSubmapTarget(
+    const DeskewResult& deskewed,
+    const RegistrationArtifacts& artifacts)
+{
+    if (!artifacts.result.accepted
+        || !submap_manager_.shouldAddKeyframe(
+            artifacts.result.T_world_lidar)
+        || !submap_manager_.addKeyframe(
+            artifacts.result.T_world_lidar,
+            artifacts.corrected_full,
+            deskewed.reference_stamp)) {
         return;
     }
 
-    const auto [min_time_it, max_time_it] = std::minmax_element(
-        preprocessed->points.begin(),
-        preprocessed->points.end(),
-        [](const Point& lhs, const Point& rhs) {
-            return lhs.timestamp < rhs.timestamp;
-        });
-    const double scan_end =
-        stamp + max_time_it->timestamp
-        - (config_.deskew.time_offset ? min_time_it->timestamp : 0.0);
+    registration_.setTarget(submap_manager_.target());
+    spdlog::info(
+        "[pipeline] submap target rebuilt: keyframes={}, points={}, "
+        "revision={}",
+        submap_manager_.keyframeCount(),
+        submap_manager_.target()->size(),
+        submap_manager_.targetRevision());
+}
 
-    // DLIO waits until IMU data reaches the end of the sweep. The ROS wrapper
-    // runs IMU and LiDAR in separate callback groups so this wait cannot block
-    // incoming IMU messages.
+void OdometryPipeline::processLidarScan(
+    double stamp, const PointCloudConstPtr& preprocessed)
+{
+    const double scan_end = computeScanEndStamp(
+        stamp, *preprocessed, config_.deskew.time_offset);
     if (!waitForImuCoverage(scan_end)) {
         spdlog::warn(
             "[pipeline] skipping LiDAR scan: timed out waiting for IMU "
@@ -319,151 +427,142 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
         return;
     }
 
-    // DLIO correction flow: the source already contains the IMU world prior,
-    // so GICP estimates a global left-multiplicative correction.
-    const PointCloudConstPtr registration_source =
-        downsamplePoints(deskewed.cloud);
-    if (registration_source->size()
-        < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
-        spdlog::warn(
-            "[pipeline] skipping LiDAR scan: {} points after voxel "
-            "downsampling (minimum {}, input {})",
-            registration_source->size(),
-            config_.registration.gicp.min_num_points,
-            deskewed.cloud->size());
+    const auto artifacts = runScanRegistration(deskewed);
+    if (!artifacts.has_value()) {
         return;
     }
-    spdlog::debug(
-        "[pipeline] GICP source downsampled: {} -> {} points",
-        deskewed.cloud->size(),
-        registration_source->size());
-    registration_.setSource(registration_source);
-    const RegistrationResult registration =
-        registration_.align(deskewed.T_world_lidar_ref);
-
-    PointCloudConstPtr corrected_scan = deskewed.cloud;
-    PointCloudConstPtr corrected_registration_source = registration_source;
-    if (registration.accepted) {
-        auto transformed = std::make_shared<PointCloud>();
-        pcl::transformPointCloud(
-            *deskewed.cloud,
-            *transformed,
-            registration.T_correction.matrix());
-        corrected_scan = transformed;
-
-        auto transformed_source = std::make_shared<PointCloud>();
-        pcl::transformPointCloud(
-            *registration_source,
-            *transformed_source,
-            registration.T_correction.matrix());
-        corrected_registration_source = transformed_source;
-    }
-
-    // Publish the same uniformly sampled geometry that GICP consumed, with
-    // its accepted correction applied. Keep the full cloud for keyframes.
-    latest_deskewed_ = corrected_registration_source;
-    latest_result_.T_world_lidar = registration.T_world_lidar;
-    latest_result_.stamp = deskewed.reference_stamp;
-    latest_result_.converged = registration.accepted;
+    commitLidarOutputs(deskewed, *artifacts);
 
     const Isometry3d T_world_imu_prior =
         deskewed.T_world_lidar_ref
         * config_.extrinsics.T_imu_lidar.inverse();
     const Isometry3d T_world_imu_corrected =
-        registration.T_world_lidar
+        artifacts->result.T_world_lidar
         * config_.extrinsics.T_imu_lidar.inverse();
-    Eigen::Vector3d corrected_velocity = deskewed.v_world_ref;
+    Eigen::Vector3d accel_bias;
+    Eigen::Vector3d gyro_bias;
     double previous_state_stamp = 0.0;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
         previous_state_stamp = imu_state_.stamp;
-    }
-    const double state_dt =
-        deskewed.reference_stamp - previous_state_stamp;
-    if (registration.accepted && state_dt > 0.0) {
-        // DLIO geometric observer: feed the GICP position innovation back
-        // into velocity so the next IMU prior does not retain a drift mode.
-        const Eigen::Vector3d position_error =
-            T_world_imu_corrected.translation()
-            - T_world_imu_prior.translation();
-        corrected_velocity +=
-            state_dt
-            * config_.odometry.observer.velocity_gain
-            * position_error;
+        accel_bias = accel_bias_;
+        gyro_bias = gyro_bias_;
     }
 
-    ImuState corrected_state;
-    corrected_state.stamp = deskewed.reference_stamp;
-    corrected_state.T_world_imu = T_world_imu_corrected;
-    corrected_state.v_world = corrected_velocity;
-    corrected_state.valid = true;
-    rebasePropagation(corrected_state);
-
-    // Rejected scans never enter the keyframe history. Accepted scans only
-    // update GICP's target when they cross a keyframe threshold and change
-    // the active nearest-keyframe set.
-    if (registration.accepted
-        && submap_manager_.shouldAddKeyframe(
-            registration.T_world_lidar)
-        && submap_manager_.addKeyframe(
-            registration.T_world_lidar,
-            corrected_scan,
-            deskewed.reference_stamp)) {
-        registration_.setTarget(submap_manager_.target());
-        spdlog::info(
-            "[pipeline] submap target rebuilt: keyframes={}, points={}, "
-            "revision={}",
-            submap_manager_.keyframeCount(),
-            submap_manager_.target()->size(),
-            submap_manager_.targetRevision());
+    NavigationState prior_state;
+    prior_state.stamp = deskewed.reference_stamp;
+    prior_state.T_world_imu = T_world_imu_prior;
+    prior_state.v_world = deskewed.v_world_ref;
+    prior_state.valid = true;
+    const ObserverUpdate observer_update = applyGeometricObserver(
+        prior_state,
+        T_world_imu_corrected,
+        previous_state_stamp,
+        accel_bias,
+        gyro_bias,
+        config_.odometry.observer,
+        artifacts->result.accepted);
+    if (artifacts->result.accepted
+        && deskewed.reference_stamp > previous_state_stamp) {
+        spdlog::debug(
+            "[pipeline] observer bias: accel=[{:.5f},{:.5f},{:.5f}] "
+            "gyro=[{:.6f},{:.6f},{:.6f}]",
+            observer_update.accel_bias.x(),
+            observer_update.accel_bias.y(),
+            observer_update.accel_bias.z(),
+            observer_update.gyro_bias.x(),
+            observer_update.gyro_bias.y(),
+            observer_update.gyro_bias.z());
     }
+
+    rebasePropagation(
+        observer_update.state,
+        observer_update.accel_bias,
+        observer_update.gyro_bias);
+    maybeUpdateSubmapTarget(deskewed, *artifacts);
+}
+
+void OdometryPipeline::pushLidar(
+    double stamp, const PointCloudConstPtr& points)
+{
+    if (!initialized_.load(std::memory_order_acquire)
+        || !points || points->empty()) {
+        return;
+    }
+
+    const PointCloudConstPtr preprocessed = preprocessPoints(points);
+    if (preprocessed->size()
+        < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
+        spdlog::warn(
+            "[pipeline] skipping LiDAR scan: {} points after preprocessing "
+            "(minimum {})",
+            preprocessed->size(),
+            config_.registration.gicp.min_num_points);
+        return;
+    }
+
+    if (!has_first_scan_.load(std::memory_order_acquire)) {
+        initializeFirstLidarTarget(stamp, preprocessed);
+        return;
+    }
+    processLidarScan(stamp, preprocessed);
 }
 
 // ── IMU callback ────────────────────────────────────────────────────
+
+void OdometryPipeline::finalizeImuInitialization(
+    ImuInitializer::Result&& result,
+    const ImuData& trigger_sample)
+{
+    imu_init_result_ = std::move(result);
+
+    ImuData corrected;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        accel_bias_ = imu_init_result_->accel_bias;
+        gyro_bias_ = imu_init_result_->gyro_bias;
+        imu_state_.stamp = trigger_sample.stamp;
+        imu_state_.T_world_imu = Isometry3d::Identity();
+        imu_state_.T_world_imu.linear() =
+            imu_init_result_->q_gravity.toRotationMatrix();
+        imu_state_.v_world.setZero();
+        imu_state_.valid = true;
+        corrected.stamp = trigger_sample.stamp;
+        corrected.accel = trigger_sample.accel - accel_bias_;
+        corrected.gyro = trigger_sample.gyro - gyro_bias_;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(imu_mutex_);
+        imu_buffer_.clear();
+        imu_buffer_.push_back(corrected);
+    }
+    initialized_.store(true, std::memory_order_release);
+    imu_cv_.notify_all();
+}
 
 void OdometryPipeline::pushImu(const ImuData& imu) {
     if (!initialized_.load(std::memory_order_acquire)) {
         auto result = imu_initializer_.feedImu(imu.stamp, imu.accel, imu.gyro);
         if (result.has_value()) {
-            imu_init_result_ = std::move(result);
-
-            // DLIO propagation starts from a gravity-aligned, stationary state.
-            // q_gravity maps vectors from the IMU frame into the world frame.
-            {
-                std::lock_guard<std::mutex> lock(state_mutex_);
-                imu_state_.stamp = imu.stamp;
-                imu_state_.T_world_imu = Isometry3d::Identity();
-                imu_state_.T_world_imu.linear() =
-                    imu_init_result_->q_gravity.toRotationMatrix();
-                imu_state_.v_world.setZero();
-                imu_state_.valid = true;
-            }
-
-            // Calibration samples are raw. Start the deskew buffer at the
-            // corrected-state timestamp with bias-corrected measurements only.
-            ImuData corrected = correctImu(imu);
-            {
-                std::lock_guard<std::mutex> lock(imu_mutex_);
-                imu_buffer_.clear();
-                imu_buffer_.push_back(corrected);
-            }
-            initialized_.store(true, std::memory_order_release);
-            imu_cv_.notify_all();
+            finalizeImuInitialization(std::move(*result), imu);
         }
         return;
     }
 
-    ImuData corrected = correctImu(imu);
+    ImuData corrected;
     {
-        std::lock_guard<std::mutex> lock(imu_mutex_);
+        // Correction, buffering, and propagation are atomic with respect to a
+        // LiDAR observer update that changes bias and replays the buffer.
+        std::scoped_lock lock(imu_mutex_, state_mutex_);
         if (!imu_buffer_.empty()
-            && corrected.stamp <= imu_buffer_.back().stamp) {
+            && imu.stamp <= imu_buffer_.back().stamp) {
             return;
         }
+        corrected.stamp = imu.stamp;
+        corrected.accel = imu.accel - accel_bias_;
+        corrected.gyro = imu.gyro - gyro_bias_;
         imu_buffer_.push_back(corrected);
-    }
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
         propagateStateLocked(corrected);
     }
     imu_cv_.notify_all();

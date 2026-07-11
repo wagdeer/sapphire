@@ -5,6 +5,7 @@
 #include <sapphire/imu_init.hpp>
 #include <sapphire/odometry/registration.hpp>
 #include <sapphire/odometry/deskew.hpp>
+#include <sapphire/odometry/observer.hpp>
 #include <sapphire/odometry/submap.hpp>
 #include <preintegration.hpp>
 #include <pcl/filters/crop_box.h>
@@ -55,18 +56,23 @@ public:
     /// After initialization, bias-corrected and buffered for deskew.
     void pushImu(const ImuData& imu);
 
-    /// Retrieve the most recent odometry result
-    const OdometryResult& latestResult() const { return latest_result_; }
+    /// Retrieve a consistent snapshot of the most recent LiDAR result.
+    OdometryResult latestResult() const;
 
     /// Retrieve the IMU-rate state propagated from the latest LiDAR correction.
     /// Empty until the first LiDAR target has initialized the propagation base.
     std::optional<OdometryResult> latestPropagatedResult() const;
 
+    /// Current total IMU biases, including stationary initialization and
+    /// online geometric-observer corrections.
+    Eigen::Vector3d accelBias() const;
+    Eigen::Vector3d gyroBias() const;
+
     /// Shorthand for latest pose
-    Isometry3d latestPose() const { return latest_result_.T_world_lidar; }
+    Isometry3d latestPose() const;
 
     /// Retrieve the most recent deskewed point cloud in the world frame.
-    PointCloudConstPtr latestDeskewed() const { return latest_deskewed_; }
+    PointCloudConstPtr latestDeskewed() const;
 
     /// Submap diagnostics, primarily useful for deterministic verification.
     size_t keyframeCount() const { return submap_manager_.keyframeCount(); }
@@ -75,19 +81,27 @@ public:
     }
 
 private:
-    /// IMU navigation state at the most recent LiDAR reference timestamp.
-    /// This is the corrected baseline used by the next deskew integration,
-    /// matching DLIO's previous pose/velocity propagation state.
-    struct ImuState {
-        double stamp = 0.0;
-        Isometry3d T_world_imu = Isometry3d::Identity();
-        Eigen::Vector3d v_world = Eigen::Vector3d::Zero();
-        bool valid = false;
+    struct RegistrationArtifacts {
+        RegistrationResult result;
+        PointCloudConstPtr corrected_full;
+        PointCloudConstPtr corrected_source;
     };
 
-    /// Apply bias correction.  Requires imu_init_result_ to be set.
-    /// Caller must check initialized_ before calling.
-    ImuData correctImu(const ImuData& raw) const;
+    bool initializeFirstLidarTarget(
+        double stamp, const PointCloudConstPtr& preprocessed);
+    void processLidarScan(
+        double stamp, const PointCloudConstPtr& preprocessed);
+    std::optional<RegistrationArtifacts> runScanRegistration(
+        const DeskewResult& deskewed);
+    void commitLidarOutputs(
+        const DeskewResult& deskewed,
+        const RegistrationArtifacts& artifacts);
+    void maybeUpdateSubmapTarget(
+        const DeskewResult& deskewed,
+        const RegistrationArtifacts& artifacts);
+    void finalizeImuInitialization(
+        ImuInitializer::Result&& result,
+        const ImuData& trigger_sample);
 
     /// Filter and normalize raw LiDAR points before deskew/registration.
     PointCloudConstPtr preprocessPoints(const PointCloudConstPtr& points) const;
@@ -106,7 +120,10 @@ private:
     void propagateStateLocked(const ImuData& imu);
 
     /// Replace the corrected LiDAR baseline and replay newer buffered IMU data.
-    void rebasePropagation(const ImuState& corrected_state);
+    void rebasePropagation(
+        const NavigationState& corrected_state,
+        const Eigen::Vector3d& accel_bias,
+        const Eigen::Vector3d& gyro_bias);
 
     /// Recover propagated_state_ from propagation_pim_ and imu_state_.
     /// state_mutex_ must be held by the caller.
@@ -122,6 +139,7 @@ private:
     // ── Latest output ───────────────────────────────────────────
     OdometryResult latest_result_;
     PointCloudConstPtr latest_deskewed_;
+    mutable std::mutex output_mutex_;
 
     // ── IMU buffer: ring buffer for deskew timestamp interpolation
     static constexpr size_t kMaxImuBuffer = 500;  // 200Hz * 2.5s
@@ -132,9 +150,11 @@ private:
     // ── Corrected IMU state used as the next integration baseline ──
     using PropagationPim =
         preintegration::EquivariantPreintegration<double>;
-    ImuState imu_state_;
-    ImuState propagated_state_;
+    NavigationState imu_state_;
+    NavigationState propagated_state_;
     std::unique_ptr<PropagationPim> propagation_pim_;
+    Eigen::Vector3d accel_bias_ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d gyro_bias_ = Eigen::Vector3d::Zero();
     mutable std::mutex state_mutex_;
     Eigen::Vector3d gravity_world_ = Eigen::Vector3d::Zero();
 
