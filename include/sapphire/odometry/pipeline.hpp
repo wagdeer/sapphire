@@ -2,7 +2,6 @@
 
 #include <sapphire/types.hpp>
 #include <sapphire/backend/pose_graph.hpp>
-#include <sapphire/ring_buffer.hpp>
 #include <sapphire/imu_init.hpp>
 #include <sapphire/odometry/registration.hpp>
 #include <sapphire/odometry/deskew.hpp>
@@ -168,8 +167,7 @@ private:
     mutable std::mutex output_mutex_;
 
     // ── IMU buffer: ring buffer for deskew timestamp interpolation
-    static constexpr size_t kMaxImuBuffer = 500;  // 200Hz * 2.5s
-    RingBuffer<ImuData, kMaxImuBuffer> imu_buffer_;
+    ImuBuffer imu_buffer_;
     std::mutex imu_mutex_;
     std::condition_variable imu_cv_;
 

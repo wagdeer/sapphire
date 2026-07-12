@@ -223,7 +223,8 @@ ros2 launch sapphire_ros2 sapphire.launch.py lidar_topic:=/velodyne_points
 **Logger 约定：** core 用 spdlog (`[pipeline] ...`)，ROS2 层用 RCLCPP_INFO（仅启动信息）。
 诊断输出（LiDAR/IMU 数据确认）走 pipeline 的 spdlog，见上方 Logging 约定。
 
-**IMU buffer:** 自定义 `sapphire::RingBuffer<ImuData, 500>`（`include/sapphire/ring_buffer.hpp`）。
+**IMU buffer:** `sapphire::ImuBuffer`，底层为定长
+`RingBuffer<ImuData, kImuBufferCapacity>`（`include/sapphire/ring_buffer.hpp`）。
 固定容量、零堆分配、O(1) 随机访问、支持反向迭代（rbegin/rend 用于 deskew 时间插值）。
 满了自动覆盖最老元素，无需手动 pop_front。
 
@@ -233,7 +234,9 @@ ros2 launch sapphire_ros2 sapphire.launch.py lidar_topic:=/velodyne_points
 - Abseil — 无 deque/ring-buffer 替代（flat_hash_map/btree_map/InlinedVector/…都不行）
 - `std::deque` — 堆分配 chunk，不如定长 ring buffer 干净
 
-RingBuffer 非线程安全，由调用方保证。当前 ROS executor 单线程无需同步。
+RingBuffer 本身非线程安全。Pipeline 使用 `imu_mutex_` 保护读写；deskew
+同时锁定状态和 IMU 缓冲完成一致快照，随后释放锁执行预积分和点云变换，
+避免阻塞 IMU callback。
 
 ### C++ 头文件陷阱
 

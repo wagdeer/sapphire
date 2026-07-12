@@ -12,6 +12,26 @@ namespace sapphire {
 
 namespace {
 
+constexpr double kMaxIntegrationStepSec = 0.02;
+constexpr double kImuGapWarningSec = 0.1;
+
+bool isFiniteImu(const ImuData& imu) {
+    return std::isfinite(imu.stamp)
+        && imu.accel.allFinite()
+        && imu.gyro.allFinite();
+}
+
+template <typename Pim>
+void integrateMeasurement(Pim& pim, const ImuData& imu, double dt) {
+    const int steps = std::max(
+        1, static_cast<int>(std::ceil(dt / kMaxIntegrationStepSec)));
+    const double step_dt = dt / static_cast<double>(steps);
+    for (int step = 0; step < steps; ++step) {
+        pim.integrateMeasurementMeanOnly(
+            imu.accel, imu.gyro, step_dt);
+    }
+}
+
 OdometryResult applyGlobalCorrection(
     OdometryResult result,
     const Isometry3d& T_map_odom)
@@ -216,30 +236,28 @@ DeskewResult OdometryPipeline::deskewPointcloud(
 {
     const auto started_at = std::chrono::steady_clock::now();
     NavigationState baseline;
+    ImuBuffer imu_snapshot;
     {
-        std::lock_guard<std::mutex> lock(state_mutex_);
+        std::scoped_lock lock(imu_mutex_, state_mutex_);
         if (!imu_state_.valid) {
             throw std::logic_error(
                 "OdometryPipeline::deskewPointcloud called without a valid IMU state");
         }
         baseline = imu_state_;
+        imu_snapshot = imu_buffer_;
     }
 
-    DeskewResult result;
-    {
-        std::lock_guard<std::mutex> lock(imu_mutex_);
-        result = deskew(
-            points,
-            stamp,
-            imu_buffer_,
-            baseline.stamp,
-            baseline.T_world_imu,
-            baseline.v_world,
-            config_.extrinsics.T_imu_lidar,
-            gravity_world_,
-            config_.imu.noise,
-            config_.deskew.time_offset);
-    }
+    DeskewResult result = deskew(
+        points,
+        stamp,
+        imu_snapshot,
+        baseline.stamp,
+        baseline.T_world_imu,
+        baseline.v_world,
+        config_.extrinsics.T_imu_lidar,
+        gravity_world_,
+        config_.imu.noise,
+        config_.deskew.time_offset);
     const double wall_ms =
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - started_at).count();
@@ -291,8 +309,7 @@ void OdometryPipeline::propagateStateLocked(const ImuData& imu) {
     }
 
     const double dt = imu.stamp - propagated_state_.stamp;
-    propagation_pim_->integrateMeasurementMeanOnly(
-        imu.accel, imu.gyro, dt);
+    integrateMeasurement(*propagation_pim_, imu, dt);
     recoverPropagatedStateLocked(imu.stamp);
 }
 
@@ -682,6 +699,11 @@ void OdometryPipeline::finalizeImuInitialization(
 }
 
 void OdometryPipeline::pushImu(const ImuData& imu) {
+    if (!isFiniteImu(imu)) {
+        spdlog::warn("[pipeline] dropping IMU sample with non-finite values");
+        return;
+    }
+
     if (!initialized_.load(std::memory_order_acquire)) {
         auto result = imu_initializer_.feedImu(imu.stamp, imu.accel, imu.gyro);
         if (result.has_value()) {
@@ -697,7 +719,19 @@ void OdometryPipeline::pushImu(const ImuData& imu) {
         std::scoped_lock lock(imu_mutex_, state_mutex_);
         if (!imu_buffer_.empty()
             && imu.stamp <= imu_buffer_.back().stamp) {
+            spdlog::warn(
+                "[pipeline] dropping non-monotonic IMU timestamp: "
+                "current={:.9f}, previous={:.9f}",
+                imu.stamp,
+                imu_buffer_.back().stamp);
             return;
+        }
+        if (!imu_buffer_.empty()) {
+            const double gap = imu.stamp - imu_buffer_.back().stamp;
+            if (gap > kImuGapWarningSec) {
+                spdlog::warn(
+                    "[pipeline] large IMU gap detected: {:.3f}s", gap);
+            }
         }
         corrected.stamp = imu.stamp;
         corrected.accel = imu.accel - accel_bias_;

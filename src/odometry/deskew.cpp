@@ -17,6 +17,24 @@ namespace {
 using Pim = preintegration::EquivariantPreintegration<double>;
 using Gal3 = Pim::Gal3;
 using Clock = std::chrono::steady_clock;
+constexpr double kMaxIntegrationStepSec = 0.02;
+
+void integrateMeasurement(
+    Pim& pim,
+    const ImuData& measurement,
+    double dt)
+{
+    if (dt <= 0.0) {
+        return;
+    }
+    const int steps = std::max(
+        1, static_cast<int>(std::ceil(dt / kMaxIntegrationStepSec)));
+    const double step_dt = dt / static_cast<double>(steps);
+    for (int step = 0; step < steps; ++step) {
+        pim.integrateMeasurementMeanOnly(
+            measurement.accel, measurement.gyro, step_dt);
+    }
+}
 
 double elapsedMilliseconds(const Clock::time_point& start) {
     return std::chrono::duration<double, std::milli>(
@@ -126,7 +144,7 @@ DeskewStatus buildScanTimeline(
 }
 
 DeskewStatus findImuStart(
-    const RingBuffer<ImuData, 500>& imu_buf,
+    const ImuBuffer& imu_buf,
     double prev_stamp,
     double scan_start,
     double scan_end,
@@ -181,7 +199,7 @@ makePreintegrationParams(
 
 std::vector<TimedState> integrateTimeline(
     const std::vector<double>& target_stamps,
-    const RingBuffer<ImuData, 500>& imu_buf,
+    const ImuBuffer& imu_buf,
     size_t imu_start,
     double prev_stamp,
     const Isometry3d& T_world_imu_prev,
@@ -221,10 +239,7 @@ std::vector<TimedState> integrateTimeline(
                    && target_stamps[target_idx] <= interval_end) {
                 const double target_stamp = target_stamps[target_idx];
                 const double partial_dt = target_stamp - partial_until;
-                if (partial_dt > 0.0) {
-                    partial.integrateMeasurementMeanOnly(
-                        measurement.accel, measurement.gyro, partial_dt);
-                }
+                integrateMeasurement(partial, measurement, partial_dt);
                 states.push_back({
                     partial.Gamma_ij() * initial_state
                         * partial.Upsilon(),
@@ -236,10 +251,7 @@ std::vector<TimedState> integrateTimeline(
         }
 
         const double interval_dt = interval_end - integrated_until;
-        if (interval_dt > 0.0) {
-            pim.integrateMeasurementMeanOnly(
-                measurement.accel, measurement.gyro, interval_dt);
-        }
+        integrateMeasurement(pim, measurement, interval_dt);
         integrated_until = interval_end;
     }
     return states;
@@ -306,7 +318,7 @@ const char* statusReason(DeskewStatus status) {
 DeskewResult deskew(
     const PointCloudConstPtr& scan,
     double scan_stamp,
-    const RingBuffer<ImuData, 500>& imu_buf,
+    const ImuBuffer& imu_buf,
     double prev_stamp,
     const Isometry3d& T_world_imu_prev,
     const Eigen::Vector3d& v_world_prev,

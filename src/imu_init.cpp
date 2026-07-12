@@ -30,6 +30,20 @@ ImuInitializer::feedImu(double stamp,
     if (state_ == State::CONVERGED || state_ == State::TIMEOUT) {
         return std::nullopt;
     }
+    if (!std::isfinite(stamp)
+        || !accel.allFinite()
+        || !gyro.allFinite()) {
+        spdlog::warn("[imu_init] dropping sample with non-finite values");
+        return std::nullopt;
+    }
+    if (!samples_.empty() && stamp <= samples_.back().stamp) {
+        spdlog::warn(
+            "[imu_init] dropping non-monotonic timestamp: "
+            "current={:.9f}, previous={:.9f}",
+            stamp,
+            samples_.back().stamp);
+        return std::nullopt;
+    }
 
     if (samples_.empty()) {
         start_stamp_ = stamp;

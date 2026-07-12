@@ -12,11 +12,11 @@ namespace {
 using sapphire::DeskewResult;
 using sapphire::DeskewStatus;
 using sapphire::ImuData;
+using sapphire::ImuBuffer;
 using sapphire::ImuNoiseConfig;
 using sapphire::Isometry3d;
 using sapphire::Point;
 using sapphire::PointCloud;
-using sapphire::RingBuffer;
 
 constexpr double kGravity = 9.80665;
 constexpr double kTolerance = 2e-5;
@@ -60,14 +60,14 @@ PointCloud::Ptr makeCloud(std::initializer_list<Point> points) {
     return cloud;
 }
 
-RingBuffer<ImuData, 500> makeImuBuffer(
+ImuBuffer makeImuBuffer(
     double start,
     double end,
     double step,
     const Eigen::Vector3d& gyro = Eigen::Vector3d::Zero(),
     const Eigen::Vector3d& accel = Eigen::Vector3d(0.0, 0.0, kGravity))
 {
-    RingBuffer<ImuData, 500> buffer;
+    ImuBuffer buffer;
     const int count = static_cast<int>(std::ceil((end - start) / step));
     for (int i = 0; i <= count; ++i) {
         ImuData imu;
@@ -81,7 +81,7 @@ RingBuffer<ImuData, 500> makeImuBuffer(
 
 DeskewResult runDeskew(
     const PointCloud::ConstPtr& cloud,
-    const RingBuffer<ImuData, 500>& imu,
+    const ImuBuffer& imu,
     double scan_stamp,
     double prev_stamp,
     const Isometry3d& T_world_imu = Isometry3d::Identity(),
@@ -211,7 +211,7 @@ void testNoTimestampFallbackUsesWorldTransform() {
         makePoint(1.0f, 0.0f, 0.0f, 0.0),
         makePoint(2.0f, 0.0f, 0.0f, 0.0),
     });
-    RingBuffer<ImuData, 500> imu;
+    ImuBuffer imu;
     Isometry3d T_world_imu = Isometry3d::Identity();
     T_world_imu.translation() = Eigen::Vector3d(3.0, 0.0, 0.0);
     Isometry3d T_imu_lidar = Isometry3d::Identity();

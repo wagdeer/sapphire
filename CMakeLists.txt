@@ -74,6 +74,15 @@ if(BUILD_TESTING)
     target_link_libraries(sapphire_deskew_test PRIVATE sapphire)
     add_test(NAME sapphire_deskew_test COMMAND sapphire_deskew_test)
 
+    add_executable(sapphire_ring_buffer_test
+        tests/ring_buffer_test.cpp
+    )
+    target_link_libraries(sapphire_ring_buffer_test PRIVATE sapphire)
+    add_test(
+        NAME sapphire_ring_buffer_test
+        COMMAND sapphire_ring_buffer_test
+    )
+
     add_executable(sapphire_preintegration_test
         tests/preintegration_test.cpp
     )

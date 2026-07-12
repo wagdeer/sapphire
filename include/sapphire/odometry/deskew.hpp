@@ -4,9 +4,13 @@
 #include <sapphire/ring_buffer.hpp>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <cstddef>
 #include <vector>
 
 namespace sapphire {
+
+inline constexpr std::size_t kImuBufferCapacity = 500;
+using ImuBuffer = RingBuffer<ImuData, kImuBufferCapacity>;
 
 enum class DeskewStatus {
     Success,
@@ -63,7 +67,7 @@ struct DeskewResult {
 DeskewResult deskew(
     const PointCloudConstPtr& scan,
     double scan_stamp,
-    const RingBuffer<ImuData, 500>& imu_buf,
+    const ImuBuffer& imu_buf,
     double prev_stamp,
     const Isometry3d& T_world_imu_prev,
     const Eigen::Vector3d& v_world_prev,
