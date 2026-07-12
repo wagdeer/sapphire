@@ -37,6 +37,7 @@ add_library(sapphire STATIC
     src/odometry/observer.cpp
     src/odometry/registration.cpp
     src/odometry/submap.cpp
+    src/odometry/voxel_filter.cpp
     src/imu_init.cpp
 )
 target_include_directories(sapphire PUBLIC
@@ -111,6 +112,15 @@ if(BUILD_TESTING)
     )
     target_link_libraries(sapphire_submap_test PRIVATE sapphire)
     add_test(NAME sapphire_submap_test COMMAND sapphire_submap_test)
+
+    add_executable(sapphire_voxel_filter_test
+        tests/voxel_filter_test.cpp
+    )
+    target_link_libraries(sapphire_voxel_filter_test PRIVATE sapphire)
+    add_test(
+        NAME sapphire_voxel_filter_test
+        COMMAND sapphire_voxel_filter_test
+    )
 endif()
 
 # TODO: add as modules are implemented:

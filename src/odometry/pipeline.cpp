@@ -1,5 +1,6 @@
 #include <sapphire/odometry/pipeline.hpp>
 #include <sapphire/odometry/deskew.hpp>
+#include <sapphire/odometry/voxel_filter.hpp>
 #include <pcl/common/transforms.h>
 #include <spdlog/spdlog.h>
 
@@ -48,9 +49,6 @@ OdometryPipeline::OdometryPipeline(const Config& config)
         Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag);
 
     const auto& box = config.odometry.crop_box;
-    const float leaf_size =
-        static_cast<float>(config.odometry.voxel_size);
-    source_voxel_filter_.setLeafSize(leaf_size, leaf_size, leaf_size);
 
     spdlog::info("[pipeline] OdometryPipeline created");
     spdlog::info("[pipeline]   scan_voxel_size={}m",
@@ -204,15 +202,8 @@ OdometryPipeline::DownsampleResult OdometryPipeline::downsamplePoints(
     const PointCloudConstPtr& points) const
 {
     const auto started_at = std::chrono::steady_clock::now();
-    auto downsampled = std::make_shared<PointCloud>();
-    source_voxel_filter_.setInputCloud(points);
-    source_voxel_filter_.filter(*downsampled);
-    // PCL's centroid path does not guarantee the homogeneous padding member
-    // for custom point types. small_gicp consumes getVector4fMap(), so every
-    // point must retain w=1 for covariance estimation and transformations.
-    for (auto& point : downsampled->points) {
-        point.data[3] = 1.0f;
-    }
+    const PointCloudPtr downsampled = deterministicVoxelDownsample(
+        *points, config_.odometry.voxel_size);
     return {
         downsampled,
         std::chrono::duration<double, std::milli>(

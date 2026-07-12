@@ -9,7 +9,6 @@
 #include <sapphire/odometry/observer.hpp>
 #include <sapphire/odometry/submap.hpp>
 #include <preintegration.hpp>
-#include <pcl/filters/voxel_grid.h>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <atomic>
@@ -193,9 +192,6 @@ private:
     // ── GICP Registration ─────────────────────────────────────────
     Registration registration_;
     size_t deskew_log_count_ = 0;
-
-    // ── Reused source scan voxel filter ───────────────────────────
-    mutable pcl::VoxelGrid<Point> source_voxel_filter_;
 
     // TODO v0.1:
     //   std::unique_ptr<VoxelMap> voxel_map_;
