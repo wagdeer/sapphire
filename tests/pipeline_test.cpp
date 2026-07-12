@@ -168,6 +168,12 @@ void testFirstLidarScanInitializesDeskewedTarget() {
            "first valid scan must initialize one keyframe");
     expect(result.diagnostics.stored_keyframe_points == deskewed->size(),
            "first keyframe must retain the downsampled output cloud");
+    expect(result.diagnostics.preprocess_ms >= 0.0,
+           "first-frame preprocessing duration must be nonnegative");
+    expect(result.diagnostics.downsample_ms >= 0.0,
+           "first-frame downsampling duration must be nonnegative");
+    expect(result.diagnostics.submap_rebuild_ms >= 0.0,
+           "first-frame submap rebuild duration must be nonnegative");
     const size_t initial_target_revision = pipeline.submapTargetRevision();
     const auto first_propagated = pipeline.latestPropagatedResult();
     expect(first_propagated.has_value(),
@@ -225,6 +231,12 @@ void testFirstLidarScanInitializesDeskewedTarget() {
            "pipeline diagnostics must expose deskew duration");
     expect(second_result.diagnostics.registration_ms >= 0.0,
            "registration duration must be nonnegative");
+    expect(second_result.diagnostics.preprocess_ms >= 0.0,
+           "preprocessing duration must be nonnegative");
+    expect(second_result.diagnostics.downsample_ms >= 0.0,
+           "downsampling duration must be nonnegative");
+    expect(second_result.diagnostics.submap_rebuild_ms == 0.0,
+           "a non-keyframe scan must report no submap rebuild");
     expect(second_result.diagnostics.source_points == second_scan->size(),
            "diagnostics must expose the downsampled source point count");
     expect(second_result.diagnostics.target_points == deskewed->size(),

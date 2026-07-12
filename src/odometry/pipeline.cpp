@@ -11,21 +11,6 @@ namespace sapphire {
 
 namespace {
 
-double computeScanEndStamp(
-    double stamp,
-    const PointCloud& points,
-    bool time_offset)
-{
-    const auto [min_time_it, max_time_it] = std::minmax_element(
-        points.points.begin(),
-        points.points.end(),
-        [](const Point& lhs, const Point& rhs) {
-            return lhs.timestamp < rhs.timestamp;
-        });
-    return stamp + max_time_it->timestamp
-        - (time_offset ? min_time_it->timestamp : 0.0);
-}
-
 OdometryResult applyGlobalCorrection(
     OdometryResult result,
     const Isometry3d& T_map_odom)
@@ -60,15 +45,9 @@ OdometryPipeline::OdometryPipeline(const Config& config)
         Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag);
 
     const auto& box = config.odometry.crop_box;
-    crop_filter_.setMin(Eigen::Vector4f(
-        static_cast<float>(box.min_x),
-        static_cast<float>(box.min_y),
-        static_cast<float>(box.min_z), 1.0f));
-    crop_filter_.setMax(Eigen::Vector4f(
-        static_cast<float>(box.max_x),
-        static_cast<float>(box.max_y),
-        static_cast<float>(box.max_z), 1.0f));
-    crop_filter_.setNegative(true);
+    const float leaf_size =
+        static_cast<float>(config.odometry.voxel_size);
+    source_voxel_filter_.setLeafSize(leaf_size, leaf_size, leaf_size);
 
     spdlog::info("[pipeline] OdometryPipeline created");
     spdlog::info("[pipeline]   scan_voxel_size={}m",
@@ -163,45 +142,79 @@ Eigen::Vector3d OdometryPipeline::gyroBias() const {
 
 // ── LiDAR preprocessing ─────────────────────────────────────────────
 
-PointCloudConstPtr OdometryPipeline::preprocessPoints(const PointCloudConstPtr& points) const {
-    auto out = std::make_shared<PointCloud>();
-    out->points.reserve(points->points.size());
+OdometryPipeline::PreprocessResult OdometryPipeline::preprocessPoints(
+    double stamp, const PointCloudConstPtr& points) const
+{
+    const auto started_at = std::chrono::steady_clock::now();
+    auto output = std::make_shared<PointCloud>();
+    output->points.reserve(points->points.size());
 
-    for (const auto& pt : points->points) {
-        if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) {
+    const auto& box = config_.odometry.crop_box;
+    double min_time = 0.0;
+    double max_time = 0.0;
+    bool have_time = false;
+    for (const Point& point : points->points) {
+        if (!std::isfinite(point.x)
+            || !std::isfinite(point.y)
+            || !std::isfinite(point.z)) {
             continue;
         }
-        out->points.push_back(pt);
+
+        // Match pcl::CropBox with setNegative(true): points on either box
+        // boundary are considered inside the robot body and are removed.
+        const bool inside_crop_box =
+            point.x >= box.min_x && point.x <= box.max_x
+            && point.y >= box.min_y && point.y <= box.max_y
+            && point.z >= box.min_z && point.z <= box.max_z;
+        if (inside_crop_box) {
+            continue;
+        }
+
+        output->points.push_back(point);
+        if (!have_time) {
+            min_time = point.timestamp;
+            max_time = point.timestamp;
+            have_time = true;
+        } else {
+            min_time = std::min(min_time, point.timestamp);
+            max_time = std::max(max_time, point.timestamp);
+        }
     }
 
-    out->width = out->points.size();
-    out->height = 1;
-    out->is_dense = true;
+    output->width = output->points.size();
+    output->height = 1;
+    output->is_dense = true;
 
-    // Crop Box Filter — remove robot body points inside the configured box
-    crop_filter_.setInputCloud(out);
-    crop_filter_.filter(*out);
-
-    return out;
+    PreprocessResult result;
+    result.cloud = output;
+    result.scan_end_stamp = have_time
+        ? stamp + max_time
+            - (config_.deskew.time_offset ? min_time : 0.0)
+        : stamp;
+    result.elapsed_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started_at).count();
+    return result;
 }
 
-PointCloudConstPtr OdometryPipeline::downsamplePoints(
+OdometryPipeline::DownsampleResult OdometryPipeline::downsamplePoints(
     const PointCloudConstPtr& points) const
 {
+    const auto started_at = std::chrono::steady_clock::now();
     auto downsampled = std::make_shared<PointCloud>();
-    pcl::VoxelGrid<Point> voxel_filter;
-    const float leaf_size =
-        static_cast<float>(config_.odometry.voxel_size);
-    voxel_filter.setLeafSize(leaf_size, leaf_size, leaf_size);
-    voxel_filter.setInputCloud(points);
-    voxel_filter.filter(*downsampled);
+    source_voxel_filter_.setInputCloud(points);
+    source_voxel_filter_.filter(*downsampled);
     // PCL's centroid path does not guarantee the homogeneous padding member
     // for custom point types. small_gicp consumes getVector4fMap(), so every
     // point must retain w=1 for covariance estimation and transformations.
     for (auto& point : downsampled->points) {
         point.data[3] = 1.0f;
     }
-    return downsampled;
+    return {
+        downsampled,
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started_at).count(),
+    };
 }
 
 DeskewResult OdometryPipeline::deskewPointcloud(
@@ -236,19 +249,22 @@ DeskewResult OdometryPipeline::deskewPointcloud(
     const double wall_ms =
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - started_at).count();
-    spdlog::info(
-        "[deskew] {:.2f}ms wall | timeline={:.2f}ms "
-        "integration={:.2f}ms transform={:.2f}ms | "
-        "points={} groups={} imu_intervals={} pim_copies={} status={}",
-        wall_ms,
-        result.metrics.timeline_ms,
-        result.metrics.integration_ms,
-        result.metrics.transform_ms,
-        points ? points->size() : 0,
-        result.metrics.timestamp_groups,
-        result.metrics.imu_intervals,
-        result.metrics.pim_copies,
-        static_cast<int>(result.status));
+    ++deskew_log_count_;
+    if (deskew_log_count_ <= 5 || deskew_log_count_ % 20 == 0) {
+        spdlog::info(
+            "[deskew] {:.2f}ms wall | timeline={:.2f}ms "
+            "integration={:.2f}ms transform={:.2f}ms | "
+            "points={} groups={} imu_intervals={} pim_copies={} status={}",
+            wall_ms,
+            result.metrics.timeline_ms,
+            result.metrics.integration_ms,
+            result.metrics.transform_ms,
+            points ? points->size() : 0,
+            result.metrics.timestamp_groups,
+            result.metrics.imu_intervals,
+            result.metrics.pim_copies,
+            static_cast<int>(result.status));
+    }
     return result;
 }
 
@@ -326,7 +342,7 @@ bool OdometryPipeline::waitForImuCoverage(double end_stamp) {
 // ── LiDAR callback ──────────────────────────────────────────────────
 
 bool OdometryPipeline::initializeFirstLidarTarget(
-    double stamp, const PointCloudConstPtr& preprocessed)
+    double stamp, const PreprocessResult& preprocessed)
 {
     // DLIO first-valid-scan path: do not integrate from the calibration
     // timestamp. Assume no motion, apply the gravity-aligned initial pose,
@@ -352,10 +368,16 @@ bool OdometryPipeline::initializeFirstLidarTarget(
         corrected_state.T_world_imu * config_.extrinsics.T_imu_lidar;
     auto world_scan = std::make_shared<PointCloud>();
     pcl::transformPointCloud(
-        *preprocessed, *world_scan, T_world_lidar.matrix());
-    const PointCloudConstPtr output_scan = downsamplePoints(world_scan);
+        *preprocessed.cloud, *world_scan, T_world_lidar.matrix());
+    const DownsampleResult downsampled = downsamplePoints(world_scan);
 
-    submap_manager_.addKeyframe(T_world_lidar, output_scan, stamp);
+    const auto submap_started_at = std::chrono::steady_clock::now();
+    const bool target_rebuilt =
+        submap_manager_.addKeyframe(T_world_lidar, downsampled.cloud, stamp);
+    const double submap_rebuild_ms = target_rebuilt
+        ? std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - submap_started_at).count()
+        : 0.0;
     registration_.setTarget(submap_manager_.target());
     spdlog::info(
         "[pipeline] submap target rebuilt: keyframes={}, points={}, "
@@ -366,9 +388,12 @@ bool OdometryPipeline::initializeFirstLidarTarget(
 
     {
         std::lock_guard<std::mutex> lock(output_mutex_);
-        latest_deskewed_ = output_scan;
+        latest_deskewed_ = downsampled.cloud;
         latest_result_.T_world_lidar = T_world_lidar;
         latest_result_.v_world = corrected_state.v_world;
+        latest_result_.diagnostics.preprocess_ms = preprocessed.elapsed_ms;
+        latest_result_.diagnostics.downsample_ms = downsampled.elapsed_ms;
+        latest_result_.diagnostics.submap_rebuild_ms = submap_rebuild_ms;
         latest_result_.diagnostics.keyframe_count =
             submap_manager_.keyframeCount();
         latest_result_.diagnostics.stored_keyframe_points =
@@ -382,20 +407,21 @@ bool OdometryPipeline::initializeFirstLidarTarget(
     }
 
     rebasePropagation(corrected_state, accel_bias, gyro_bias);
-    pgo_backend_.addFrame(output_scan, T_world_lidar, stamp);
+    pgo_backend_.addFrame(downsampled.cloud, T_world_lidar, stamp);
 
     spdlog::info(
         "[pipeline] first LiDAR target initialized: stamp={:.6f}, "
         "points={}",
         stamp,
-        output_scan->size());
+        downsampled.cloud->size());
     return true;
 }
 
 std::optional<OdometryPipeline::RegistrationArtifacts>
 OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
-    const PointCloudConstPtr registration_source =
+    const DownsampleResult downsampled =
         downsamplePoints(deskewed.cloud);
+    const PointCloudConstPtr& registration_source = downsampled.cloud;
     if (registration_source->size()
         < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
         spdlog::warn(
@@ -415,6 +441,7 @@ OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
     RegistrationArtifacts artifacts;
     artifacts.source_points = registration_source->size();
     artifacts.target_points = submap_manager_.target()->size();
+    artifacts.downsample_ms = downsampled.elapsed_ms;
     artifacts.result =
         registration_.align(deskewed.T_world_lidar_ref);
     artifacts.corrected_source = registration_source;
@@ -433,12 +460,17 @@ OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
 void OdometryPipeline::commitLidarOutputs(
     const DeskewResult& deskewed,
     const RegistrationArtifacts& artifacts,
-    const ObserverUpdate& observer_update)
+    const ObserverUpdate& observer_update,
+    double preprocess_ms,
+    double submap_rebuild_ms)
 {
     std::lock_guard<std::mutex> lock(output_mutex_);
     latest_deskewed_ = artifacts.corrected_source;
     latest_result_.T_world_lidar = artifacts.result.T_world_lidar;
     latest_result_.v_world = observer_update.state.v_world;
+    latest_result_.diagnostics.preprocess_ms = preprocess_ms;
+    latest_result_.diagnostics.downsample_ms = artifacts.downsample_ms;
+    latest_result_.diagnostics.submap_rebuild_ms = submap_rebuild_ms;
     latest_result_.diagnostics.deskew_timeline_ms =
         deskewed.metrics.timeline_ms;
     latest_result_.diagnostics.deskew_integration_ms =
@@ -479,19 +511,26 @@ void OdometryPipeline::commitLidarOutputs(
     latest_result_.converged = artifacts.result.accepted;
 }
 
-void OdometryPipeline::maybeUpdateSubmapTarget(
+double OdometryPipeline::maybeUpdateSubmapTarget(
     const DeskewResult& deskewed,
     const RegistrationArtifacts& artifacts)
 {
     if (!artifacts.result.accepted
         || !submap_manager_.shouldAddKeyframe(
-            artifacts.result.T_world_lidar)
-        || !submap_manager_.addKeyframe(
+            artifacts.result.T_world_lidar)) {
+        return 0.0;
+    }
+
+    const auto started_at = std::chrono::steady_clock::now();
+    if (!submap_manager_.addKeyframe(
             artifacts.result.T_world_lidar,
             artifacts.corrected_source,
             deskewed.reference_stamp)) {
-        return;
+        return 0.0;
     }
+    const double elapsed_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started_at).count();
 
     registration_.setTarget(submap_manager_.target());
     spdlog::info(
@@ -500,13 +539,13 @@ void OdometryPipeline::maybeUpdateSubmapTarget(
         submap_manager_.keyframeCount(),
         submap_manager_.target()->size(),
         submap_manager_.targetRevision());
+    return elapsed_ms;
 }
 
 void OdometryPipeline::processLidarScan(
-    double stamp, const PointCloudConstPtr& preprocessed)
+    double stamp, const PreprocessResult& preprocessed)
 {
-    const double scan_end = computeScanEndStamp(
-        stamp, *preprocessed, config_.deskew.time_offset);
+    const double scan_end = preprocessed.scan_end_stamp;
     if (!waitForImuCoverage(scan_end)) {
         spdlog::warn(
             "[pipeline] skipping LiDAR scan: timed out waiting for IMU "
@@ -515,7 +554,7 @@ void OdometryPipeline::processLidarScan(
         return;
     }
 
-    DeskewResult deskewed = deskewPointcloud(stamp, preprocessed);
+    DeskewResult deskewed = deskewPointcloud(stamp, preprocessed.cloud);
     if (deskewed.status != DeskewStatus::Success) {
         spdlog::warn(
             "[pipeline] skipping LiDAR scan: deskew failed with status {}",
@@ -573,8 +612,14 @@ void OdometryPipeline::processLidarScan(
         observer_update.state,
         observer_update.accel_bias,
         observer_update.gyro_bias);
-    maybeUpdateSubmapTarget(deskewed, *artifacts);
-    commitLidarOutputs(deskewed, *artifacts, observer_update);
+    const double submap_rebuild_ms =
+        maybeUpdateSubmapTarget(deskewed, *artifacts);
+    commitLidarOutputs(
+        deskewed,
+        *artifacts,
+        observer_update,
+        preprocessed.elapsed_ms,
+        submap_rebuild_ms);
     if (artifacts->result.accepted) {
         pgo_backend_.addFrame(
             artifacts->corrected_source,
@@ -591,13 +636,13 @@ void OdometryPipeline::pushLidar(
         return;
     }
 
-    const PointCloudConstPtr preprocessed = preprocessPoints(points);
-    if (preprocessed->size()
+    const PreprocessResult preprocessed = preprocessPoints(stamp, points);
+    if (preprocessed.cloud->size()
         < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
         spdlog::warn(
             "[pipeline] skipping LiDAR scan: {} points after preprocessing "
             "(minimum {})",
-            preprocessed->size(),
+            preprocessed.cloud->size(),
             config_.registration.gicp.min_num_points);
         return;
     }

@@ -121,9 +121,17 @@ void testLoopClosureAddsConstraint() {
     expect(stats.correction_translation > 1e-5,
            "loop closure must produce a non-identity global correction");
 
+    expect(backend.snapshot().optimized_poses.empty(),
+           "visualization poses must not be built without a request");
+    backend.requestSnapshot();
+    for (int attempt = 0;
+         attempt < 100 && backend.snapshot().optimized_poses.size() < 5;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     const sapphire::PoseGraphSnapshot snapshot = backend.snapshot();
     expect(snapshot.optimized_poses.size() == 5,
-           "visualization snapshot must contain optimized poses");
+           "requested visualization snapshot must be built asynchronously");
     expect(!snapshot.loop_edges.empty(),
            "visualization snapshot must contain loop endpoints");
 

@@ -9,7 +9,6 @@
 #include <sapphire/odometry/observer.hpp>
 #include <sapphire/odometry/submap.hpp>
 #include <preintegration.hpp>
-#include <pcl/filters/crop_box.h>
 #include <pcl/filters/voxel_grid.h>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -85,30 +84,44 @@ public:
     PoseGraphSnapshot poseGraphSnapshot() const {
         return pgo_backend_.snapshot();
     }
+    void requestPoseGraphSnapshot() { pgo_backend_.requestSnapshot(); }
     void requestPoseGraphMap() { pgo_backend_.requestGlobalMap(); }
     PointCloudConstPtr latestPoseGraphMap() const {
         return pgo_backend_.latestGlobalMap();
     }
 
 private:
+    struct PreprocessResult {
+        PointCloudConstPtr cloud;
+        double scan_end_stamp = 0.0;
+        double elapsed_ms = 0.0;
+    };
+
+    struct DownsampleResult {
+        PointCloudConstPtr cloud;
+        double elapsed_ms = 0.0;
+    };
+
     struct RegistrationArtifacts {
         RegistrationResult result;
         PointCloudConstPtr corrected_source;
         size_t source_points = 0;
         size_t target_points = 0;
+        double downsample_ms = 0.0;
     };
 
     bool initializeFirstLidarTarget(
-        double stamp, const PointCloudConstPtr& preprocessed);
-    void processLidarScan(
-        double stamp, const PointCloudConstPtr& preprocessed);
+        double stamp, const PreprocessResult& preprocessed);
+    void processLidarScan(double stamp, const PreprocessResult& preprocessed);
     std::optional<RegistrationArtifacts> runScanRegistration(
         const DeskewResult& deskewed);
     void commitLidarOutputs(
         const DeskewResult& deskewed,
         const RegistrationArtifacts& artifacts,
-        const ObserverUpdate& observer_update);
-    void maybeUpdateSubmapTarget(
+        const ObserverUpdate& observer_update,
+        double preprocess_ms,
+        double submap_rebuild_ms);
+    double maybeUpdateSubmapTarget(
         const DeskewResult& deskewed,
         const RegistrationArtifacts& artifacts);
     void finalizeImuInitialization(
@@ -116,10 +129,12 @@ private:
         const ImuData& trigger_sample);
 
     /// Filter and normalize raw LiDAR points before deskew/registration.
-    PointCloudConstPtr preprocessPoints(const PointCloudConstPtr& points) const;
+    PreprocessResult preprocessPoints(
+        double stamp, const PointCloudConstPtr& points) const;
 
     /// Uniformly downsample a world-frame deskewed scan for registration.
-    PointCloudConstPtr downsamplePoints(const PointCloudConstPtr& points) const;
+    DownsampleResult downsamplePoints(
+        const PointCloudConstPtr& points) const;
 
     /// Motion-compensate a preprocessed scan using buffered IMU data.
     DeskewResult deskewPointcloud(double stamp, const PointCloudConstPtr& points);
@@ -177,9 +192,10 @@ private:
 
     // ── GICP Registration ─────────────────────────────────────────
     Registration registration_;
+    size_t deskew_log_count_ = 0;
 
-    // ── Crop Box: remove robot body points in LiDAR frame ────────
-    mutable pcl::CropBox<Point> crop_filter_;
+    // ── Reused source scan voxel filter ───────────────────────────
+    mutable pcl::VoxelGrid<Point> source_voxel_filter_;
 
     // TODO v0.1:
     //   std::unique_ptr<VoxelMap> voxel_map_;

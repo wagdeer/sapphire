@@ -63,6 +63,9 @@ struct NavigationState {
 
 /// Per-LiDAR-frame health and performance diagnostics.
 struct OdometryDiagnostics {
+    double preprocess_ms = 0.0;
+    double downsample_ms = 0.0;
+    double submap_rebuild_ms = 0.0;
     double deskew_timeline_ms = 0.0;
     double deskew_integration_ms = 0.0;
     double deskew_transform_ms = 0.0;

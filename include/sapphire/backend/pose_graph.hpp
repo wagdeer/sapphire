@@ -57,7 +57,13 @@ public:
     Isometry3d T_map_odom() const;
 
     PoseGraphStats stats() const;
+
+    /// Latest completed visualization snapshot. Pose arrays remain empty
+    /// until requestSnapshot() has been serviced by the backend worker.
     PoseGraphSnapshot snapshot() const;
+
+    /// Request optimized poses and loop edges on the backend worker.
+    void requestSnapshot();
 
     /// Request a sparse global map rebuild on the backend worker.
     void requestGlobalMap();

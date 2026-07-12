@@ -176,6 +176,12 @@ public:
         return result;
     }
 
+    void requestSnapshot() {
+        if (config_.enabled) {
+            snapshot_requested_.store(true, std::memory_order_release);
+        }
+    }
+
     void requestGlobalMap() {
         if (config_.enabled) {
             map_requested_.store(true, std::memory_order_release);
@@ -260,6 +266,10 @@ private:
         if (buildLoopEdges(loop_graph)) {
             updateIsam(loop_graph, {});
             updateCorrection();
+        }
+        if (snapshot_requested_.exchange(false, std::memory_order_acq_rel)
+            && !optimized_.empty()) {
+            rebuildSnapshot();
         }
         if (map_requested_.exchange(false, std::memory_order_acq_rel)
             && !optimized_.empty()) {
@@ -488,6 +498,18 @@ private:
         optimized_ = isam2_->calculateEstimate();
     }
 
+    void rebuildSnapshot() {
+        std::vector<Isometry3d> poses;
+        poses.reserve(optimized_.size());
+        for (size_t i = 0; i < optimized_.size(); ++i) {
+            poses.push_back(fromGtsam(optimized_.at<gtsam::Pose3>(i)));
+        }
+
+        std::lock_guard<std::mutex> lock(output_mutex_);
+        optimized_poses_snapshot_ = std::move(poses);
+        loop_edges_snapshot_ = loop_edges_;
+    }
+
     void rebuildGlobalMap() {
         const auto started_at = std::chrono::steady_clock::now();
         auto merged = std::make_shared<PointCloud>();
@@ -531,13 +553,6 @@ private:
         stats_.correction_translation = correction.translation().norm();
         stats_.correction_rotation = rotationAngle(correction);
         ++stats_.revision;
-        optimized_poses_snapshot_.clear();
-        optimized_poses_snapshot_.reserve(optimized_.size());
-        for (size_t i = 0; i < optimized_.size(); ++i) {
-            optimized_poses_snapshot_.push_back(
-                fromGtsam(optimized_.at<gtsam::Pose3>(i)));
-        }
-        loop_edges_snapshot_ = loop_edges_;
     }
 
     Config::Pgo config_;
@@ -564,6 +579,7 @@ private:
     std::vector<Isometry3d> optimized_poses_snapshot_;
     std::vector<PoseGraphEdge> loop_edges_snapshot_;
     PointCloudConstPtr global_map_;
+    std::atomic<bool> snapshot_requested_{false};
     std::atomic<bool> map_requested_{false};
 
     std::atomic<bool> stop_{false};
@@ -601,6 +617,10 @@ PoseGraphStats PoseGraphBackend::stats() const {
 
 PoseGraphSnapshot PoseGraphBackend::snapshot() const {
     return impl_->snapshot();
+}
+
+void PoseGraphBackend::requestSnapshot() {
+    impl_->requestSnapshot();
 }
 
 void PoseGraphBackend::requestGlobalMap() {
