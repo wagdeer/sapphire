@@ -237,6 +237,10 @@ Config loadConfig(const std::filesystem::path& path) {
             root["registration"]["gicp"]["max_correction_rot_deg"].value<double>()) {
         config.registration.gicp.max_correction_rot_deg = *value;
     }
+    if (const auto value =
+            root["registration"]["vgicp"]["voxel_resolution"].value<double>()) {
+        config.registration.vgicp.voxel_resolution = *value;
+    }
     if (const auto value = root["pgo"]["enabled"].value<bool>()) {
         config.pgo.enabled = *value;
     }
@@ -397,9 +401,10 @@ void validateConfig(const Config& config) {
         throw std::invalid_argument(
             "odometry.submap.voxel_size must be finite and positive");
     }
-    if (config.registration.type != "GICP") {
+    if (config.registration.type != "GICP"
+        && config.registration.type != "VGICP") {
         throw std::invalid_argument(
-            "registration.type must be GICP in this build");
+            "registration.type must be GICP or VGICP");
     }
     const auto& gicp = config.registration.gicp;
     if (gicp.max_iterations <= 0 || gicp.k_correspondences <= 0
@@ -422,6 +427,9 @@ void validateConfig(const Config& config) {
     requireFinitePositive(
         gicp.max_correction_rot_deg,
         "registration.gicp.max_correction_rot_deg");
+    requireFinitePositive(
+        config.registration.vgicp.voxel_resolution,
+        "registration.vgicp.voxel_resolution");
     requireFinitePositive(
         config.pgo.keyframe_distance,
         "pgo.keyframe_distance");

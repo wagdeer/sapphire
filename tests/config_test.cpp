@@ -100,12 +100,15 @@ void testProjectConfig() {
     expectNear(
         config.odometry.submap.voxel_size, 0.25,
         "submap target voxel size");
-    expect(config.registration.type == "GICP", "registration backend");
+    expect(config.registration.type == "VGICP", "registration backend");
     expect(config.registration.gicp.max_iterations == 32,
            "GICP maximum iterations");
     expectNear(
         config.registration.gicp.max_correspondence_dist, 0.5,
         "GICP correspondence distance");
+    expectNear(
+        config.registration.vgicp.voxel_resolution, 0.5,
+        "VGICP voxel resolution");
     expect(config.pgo.enabled, "PGO must be enabled in the Mid-360 profile");
     expectNear(
         config.pgo.keyframe_distance, 0.5,

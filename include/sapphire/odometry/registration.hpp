@@ -7,9 +7,10 @@
 
 namespace sapphire {
 
-/// GICP registration wrapper for scan-to-scan and scan-to-submap alignment.
+/// small_gicp registration wrapper for scan-to-submap alignment.
 ///
-/// Uses small_gicp::RegistrationPCL with sapphire::Point type.
+/// Uses small_gicp::RegistrationPCL with sapphire::Point type and supports
+/// both GICP and VGICP.
 /// Covariances are computed automatically by small_gicp via setInputSource/Target.
 ///
 /// Usage:
@@ -21,7 +22,10 @@ class Registration {
 public:
     using GicpType = small_gicp::RegistrationPCL<Point, Point>;
 
-    explicit Registration(const RegistrationConfig& config = RegistrationConfig{});
+    explicit Registration(
+        const RegistrationConfig& config = RegistrationConfig{},
+        const std::string& type = "GICP",
+        double vgicp_voxel_resolution = 0.5);
 
     /// Set the source point cloud (current scan, deskewed).
     void setSource(const PointCloudConstPtr& cloud);
@@ -29,7 +33,7 @@ public:
     /// Set the target point cloud (previous scan or submap).
     void setTarget(const PointCloudConstPtr& cloud);
 
-    /// Run GICP alignment.
+    /// Run the configured GICP or VGICP alignment.
     /// Both source and target clouds are already expressed in the world frame.
     /// @param T_prior IMU-predicted world pose at the scan reference time.
     /// @return global correction and corrected world-frame pose
@@ -37,6 +41,7 @@ public:
 
 private:
     RegistrationConfig cfg_;
+    std::string type_;
     GicpType gicp_;
     bool target_set_ = false;
     size_t align_log_count_ = 0;

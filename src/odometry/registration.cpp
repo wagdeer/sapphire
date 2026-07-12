@@ -8,18 +8,31 @@
 
 namespace sapphire {
 
-Registration::Registration(const RegistrationConfig& config)
+Registration::Registration(
+    const RegistrationConfig& config,
+    const std::string& type,
+    double vgicp_voxel_resolution)
     : cfg_(config)
+    , type_(type)
 {
+    gicp_.setRegistrationType(type_);
+    if (type_ == "VGICP") {
+        gicp_.setVoxelResolution(vgicp_voxel_resolution);
+    }
     gicp_.setCorrespondenceRandomness(cfg_.k_correspondences);
     gicp_.setMaxCorrespondenceDistance(cfg_.max_correspondence_dist);
     gicp_.setMaximumIterations(cfg_.max_iterations);
     gicp_.setTransformationEpsilon(cfg_.transformation_epsilon);
     gicp_.setRotationEpsilon(cfg_.rotation_epsilon);
 
-    spdlog::info("[registration] GICP ready: max_iter={} max_corr_dist={:.2f}m "
-                 "k_corr={}", cfg_.max_iterations, cfg_.max_correspondence_dist,
-                 cfg_.k_correspondences);
+    spdlog::info(
+        "[registration] {} ready: max_iter={} max_corr_dist={:.2f}m "
+        "k_corr={} voxel={:.2f}m",
+        type_,
+        cfg_.max_iterations,
+        cfg_.max_correspondence_dist,
+        cfg_.k_correspondences,
+        vgicp_voxel_resolution);
 }
 
 void Registration::setSource(const PointCloudConstPtr& cloud) {
@@ -58,8 +71,9 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
     ++align_log_count_;
     if (align_log_count_ <= 5 || align_log_count_ % 20 == 0) {
         spdlog::info(
-            "[registration] GICP  {:.0f}ms  converged={}  inliers={}  "
+            "[registration] {}  {:.0f}ms  converged={}  inliers={}  "
             "iter={}  error={:.4f}",
+            type_,
             elapsed_ms,
             converged,
             reg_result.num_inliers,
@@ -88,7 +102,8 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
         && reg_result.num_inliers
             >= static_cast<size_t>(cfg_.min_num_points);
     if (!converged) {
-        spdlog::warn("[registration] rejected: GICP did not converge");
+        spdlog::warn(
+            "[registration] rejected: {} did not converge", type_);
     }
     if (!finite) {
         spdlog::warn("[registration] rejected: non-finite result");

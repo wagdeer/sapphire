@@ -202,8 +202,11 @@ struct Config {
     } odometry;
 
     struct Registration {
-        std::string type = "GICP";  // GICP | VGICP | CUDA_VGICP
+        std::string type = "GICP";  // GICP | VGICP
         RegistrationConfig gicp;
+        struct Vgicp {
+            double voxel_resolution = 0.5;
+        } vgicp;
     } registration;
 
     struct Pgo {

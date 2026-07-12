@@ -46,7 +46,7 @@ max_keyframes = 10
 voxel_size = 0.25
 
 [registration]
-type = "GICP"
+type = "VGICP"
 
 [registration.gicp]
 max_iterations = 32
@@ -57,6 +57,9 @@ k_correspondences = 16
 min_num_points = 64
 max_correction_trans = 1.0
 max_correction_rot_deg = 20.0
+
+[registration.vgicp]
+voxel_resolution = 0.5
 
 [pgo]
 enabled = true

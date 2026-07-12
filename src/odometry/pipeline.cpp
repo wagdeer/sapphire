@@ -38,7 +38,10 @@ OdometryPipeline::OdometryPipeline(const Config& config)
               0.0)))
     , submap_manager_(config.odometry.submap)
     , pgo_backend_(config.pgo)
-    , registration_(config.registration.gicp)
+    , registration_(
+          config.registration.gicp,
+          config.registration.type,
+          config.registration.vgicp.voxel_resolution)
 {
     latest_result_.T_world_lidar = Isometry3d::Identity();
     gravity_world_ =
@@ -433,7 +436,7 @@ OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
         return std::nullopt;
     }
     spdlog::debug(
-        "[pipeline] GICP source downsampled: {} -> {} points",
+        "[pipeline] registration source downsampled: {} -> {} points",
         deskewed.cloud->size(),
         registration_source->size());
 
