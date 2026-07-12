@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <limits>
+#include <omp.h>
 
 namespace sapphire {
 
@@ -251,11 +253,22 @@ PointCloudPtr transformScan(
     auto output = std::make_shared<PointCloud>();
     output->points.resize(timeline.sorted_scan.points.size());
 
-    for (size_t group = 0; group < timeline.stamps.size(); ++group) {
+    constexpr size_t kParallelPointThreshold = 4096;
+    constexpr int kMaxDeskewThreads = 4;
+    const int thread_count =
+        std::min(kMaxDeskewThreads, omp_get_max_threads());
+    const auto group_count =
+        static_cast<std::ptrdiff_t>(timeline.stamps.size());
+    const bool use_parallel =
+        output->points.size() >= kParallelPointThreshold && group_count > 1;
+
+#pragma omp parallel for schedule(static) num_threads(thread_count) if(use_parallel)
+    for (std::ptrdiff_t group = 0; group < group_count; ++group) {
+        const size_t group_index = static_cast<size_t>(group);
         const Isometry3d T_world_lidar =
-            poseFromState(states[group].state) * T_imu_lidar;
-        const size_t begin = timeline.group_offsets[group];
-        const size_t end = timeline.group_offsets[group + 1];
+            poseFromState(states[group_index].state) * T_imu_lidar;
+        const size_t begin = timeline.group_offsets[group_index];
+        const size_t end = timeline.group_offsets[group_index + 1];
         for (size_t point_idx = begin; point_idx < end; ++point_idx) {
             output->points[point_idx] = transformPoint(
                 timeline.sorted_scan.points[point_idx], T_world_lidar);

@@ -242,9 +242,13 @@ void testInsufficientImuCoverage() {
 void testDenseTimestampsReusePartialPreintegration() {
     constexpr double yaw_rate = 1.2;
     constexpr double velocity = 2.0;
+    constexpr size_t point_count = 5000;
+    constexpr double point_interval = 0.1 / static_cast<double>(point_count);
     auto cloud = std::make_shared<PointCloud>();
-    for (size_t i = 0; i < 200; ++i) {
-        const double stamp = 0.0005 + static_cast<double>(i) * 0.0005;
+    cloud->reserve(point_count);
+    for (size_t i = 0; i < point_count; ++i) {
+        const double stamp =
+            point_interval + static_cast<double>(i) * point_interval;
         cloud->push_back(makePoint(1.0f, 0.0f, 0.0f, stamp));
     }
     auto imu = makeImuBuffer(

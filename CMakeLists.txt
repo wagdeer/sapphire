@@ -10,6 +10,7 @@ find_package(spdlog REQUIRED)
 find_package(PCL REQUIRED)
 find_package(absl REQUIRED)
 find_package(GTSAM REQUIRED)
+find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
 
 find_package(small_gicp REQUIRED)
@@ -49,6 +50,7 @@ target_link_libraries(sapphire PUBLIC
     ${PCL_LIBRARIES}
     absl::flat_hash_map
     gtsam
+    OpenMP::OpenMP_CXX
     small_gicp::small_gicp
     Threads::Threads
     tomlplusplus::tomlplusplus
