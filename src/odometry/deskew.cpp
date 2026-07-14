@@ -73,10 +73,8 @@ DeskewResult makeFallback(
     const Eigen::Vector3d& v_world,
     const Isometry3d& T_imu_lidar,
     double reference_stamp,
-    DeskewStatus status,
-    const char* reason)
+    DeskewStatus status)
 {
-    spdlog::debug("[deskew] {} — single-pose world transform", reason);
     const Isometry3d T_world_lidar = T_world_imu * T_imu_lidar;
     auto out = std::make_shared<PointCloud>();
     out->points.reserve(scan ? scan->points.size() : 0);
@@ -293,26 +291,6 @@ PointCloudPtr transformScan(
     return output;
 }
 
-const char* statusReason(DeskewStatus status) {
-    switch (status) {
-        case DeskewStatus::EmptyScan:
-            return "empty scan";
-        case DeskewStatus::NoPointTimestamps:
-            return "no usable per-point timestamps";
-        case DeskewStatus::EmptyImuBuffer:
-            return "IMU buffer empty";
-        case DeskewStatus::InvalidTimeRange:
-            return "point time precedes initial state";
-        case DeskewStatus::InvalidImuOrder:
-            return "IMU timestamps are not increasing";
-        case DeskewStatus::InsufficientImuCoverage:
-            return "IMU does not cover initial state through scan end";
-        case DeskewStatus::Success:
-            return "success";
-    }
-    return "unknown deskew status";
-}
-
 }  // namespace
 
 DeskewResult deskew(
@@ -332,7 +310,7 @@ DeskewResult deskew(
         spdlog::warn("[deskew] empty scan");
         return makeFallback(
             scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
-            DeskewStatus::EmptyScan, "empty scan");
+            DeskewStatus::EmptyScan);
     }
 
     ScanTimeline timeline;
@@ -342,7 +320,7 @@ DeskewResult deskew(
     if (status != DeskewStatus::Success) {
         return makeFallback(
             scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
-            status, statusReason(status));
+            status);
     }
     DeskewMetrics metrics;
     metrics.timeline_ms = elapsedMilliseconds(timeline_start);
@@ -358,7 +336,7 @@ DeskewResult deskew(
     if (status != DeskewStatus::Success) {
         return makeFallback(
             scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
-            status, statusReason(status));
+            status);
     }
 
     const auto integration_start = Clock::now();
@@ -376,7 +354,7 @@ DeskewResult deskew(
     if (states.size() != timeline.stamps.size()) {
         return makeFallback(
             scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
-            DeskewStatus::InsufficientImuCoverage, "IMU-LiDAR sync mismatch");
+            DeskewStatus::InsufficientImuCoverage);
     }
 
     const size_t reference_idx = timeline.stamps.size() / 2;
@@ -392,7 +370,6 @@ DeskewResult deskew(
     result.reference_stamp = reference.stamp;
     result.metrics = metrics;
     result.status = DeskewStatus::Success;
-    result.converged = true;
     return result;
 }
 

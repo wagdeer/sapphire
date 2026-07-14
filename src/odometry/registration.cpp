@@ -68,19 +68,6 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
     const auto& reg_result = gicp_.getRegistrationResult();
     Eigen::Matrix4f T_corr_f = gicp_.getFinalTransformation();
 
-    ++align_log_count_;
-    if (align_log_count_ <= 5 || align_log_count_ % 20 == 0) {
-        spdlog::info(
-            "[registration] {}  {:.0f}ms  converged={}  inliers={}  "
-            "iter={}  error={:.4f}",
-            type_,
-            elapsed_ms,
-            converged,
-            reg_result.num_inliers,
-            reg_result.iterations,
-            reg_result.error);
-    }
-
     const Eigen::Isometry3d T_correction(
         T_corr_f.cast<double>());
 

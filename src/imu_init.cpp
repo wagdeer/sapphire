@@ -180,15 +180,11 @@ bool ImuInitializer::checkConvergence() {
     double gyro_std  = std::sqrt((gyro_var.x() + gyro_var.y() + gyro_var.z()) / n);
     double accel_std = std::sqrt((accel_var.x() + accel_var.y() + accel_var.z()) / n);
 
-    // ── In-place progress spinner ──────────────────────────────
     double elapsed = samples_.back().stamp - start_stamp_;
-    static const char spinner[] = "|/-\\";
-    static int spin_idx = 0;
 
     std::fprintf(stderr,
-        "\r[imu_init] %c %.1fs | %zu samples | "
+        "\r[imu_init] %.1fs | %zu samples | "
         "gyro_σ=%.4f/%.4f  accel_σ=%.3f/%.3f  ",
-        spinner[(spin_idx++) % 4],
         elapsed, samples_.size(),
         gyro_std, cfg_.convergence_gyro_std,
         accel_std, cfg_.convergence_accel_std);
@@ -241,40 +237,17 @@ ImuInitializer::Result ImuInitializer::computeResult() {
     Eigen::Vector3d gyro_bias = gyro_mean;
 
     double elapsed = samples_.back().stamp - start_stamp_;
-    const char* quality = (state_ == State::CONVERGED) ? "GOOD" :
-                          (gyro_std < 0.01 && accel_std < 0.1) ? "MARGINAL" : "POOR";
-
-    Eigen::Vector3d euler = q_gravity.toRotationMatrix().eulerAngles(2, 1, 0);
 
     spdlog::info(
-        "\n┌──────────────────────────────────────────────────┐\n"
-        "│  ◆ SAPPHIRE v0.1.0  ::  Ti:Sapphire LIO          │\n"
-        "│  IMU CALIBRATION COMPLETE                        │\n"
-        "├──────────────────────────────────────────────────┤\n"
-        "│  BIAS         GYRO (rad/s)    ACCEL (m/s^2)      │\n"
-        "│  x            {:>+11.6f}    {:>+11.6f}         │\n"
-        "│  y            {:>+11.6f}    {:>+11.6f}         │\n"
-        "│  z            {:>+11.6f}    {:>+11.6f}         │\n"
-        "│  std          {:>+11.6f}    {:>+11.6f}         │\n"
-        "│                                                  │\n"
-        "│  GRAVITY      [ {: 5.2f}   {: 5.2f}   {: 5.2f} ] m/s^2    │\n"
-        "│  ATTITUDE     R{:+5.1f}deg P{:+5.1f}deg Y{:+5.1f}deg      │\n"
-        "│                                                  │\n"
-        "│  DURATION     {:.2f}s  ({} samples)              │\n"
-        "│  QUALITY      [ {} ]                           │\n"
-        "├──────────────────────────────────────────────────┤\n"
-        "│  [ OK ] System ready for odometry                │\n"
-        "└──────────────────────────────────────────────────┘",
-        gyro_bias.x(), accel_bias.x(),
-        gyro_bias.y(), accel_bias.y(),
-        gyro_bias.z(), accel_bias.z(),
-        gyro_std, accel_std,
-        grav_in_imu.x(), grav_in_imu.y(), grav_in_imu.z(),
-        euler[2] * 180.0 / M_PI,
-        euler[1] * 180.0 / M_PI,
-        euler[0] * 180.0 / M_PI,
-        elapsed, static_cast<int>(samples_.size()),
-        quality);
+        "[imu_init] calibration complete: {:.2f}s, {} samples, "
+        "gyro_bias=[{:.6f},{:.6f},{:.6f}], "
+        "accel_bias=[{:.6f},{:.6f},{:.6f}], "
+        "gyro_std={:.6f}, accel_std={:.6f}",
+        elapsed,
+        static_cast<int>(samples_.size()),
+        gyro_bias.x(), gyro_bias.y(), gyro_bias.z(),
+        accel_bias.x(), accel_bias.y(), accel_bias.z(),
+        gyro_std, accel_std);
 
     return Result{
         .gyro_bias   = gyro_bias,

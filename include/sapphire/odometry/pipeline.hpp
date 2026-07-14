@@ -92,20 +92,11 @@ private:
     struct PreprocessResult {
         PointCloudConstPtr cloud;
         double scan_end_stamp = 0.0;
-        double elapsed_ms = 0.0;
-    };
-
-    struct DownsampleResult {
-        PointCloudConstPtr cloud;
-        double elapsed_ms = 0.0;
     };
 
     struct RegistrationArtifacts {
         RegistrationResult result;
         PointCloudConstPtr corrected_source;
-        size_t source_points = 0;
-        size_t target_points = 0;
-        double downsample_ms = 0.0;
     };
 
     bool initializeFirstLidarTarget(
@@ -113,13 +104,7 @@ private:
     void processLidarScan(double stamp, const PreprocessResult& preprocessed);
     std::optional<RegistrationArtifacts> runScanRegistration(
         const DeskewResult& deskewed);
-    void commitLidarOutputs(
-        const DeskewResult& deskewed,
-        const RegistrationArtifacts& artifacts,
-        const ObserverUpdate& observer_update,
-        double preprocess_ms,
-        double submap_rebuild_ms);
-    double maybeUpdateSubmapTarget(
+    void maybeUpdateSubmapTarget(
         const DeskewResult& deskewed,
         const RegistrationArtifacts& artifacts);
     void finalizeImuInitialization(
@@ -131,7 +116,7 @@ private:
         double stamp, const PointCloudConstPtr& points) const;
 
     /// Uniformly downsample a world-frame deskewed scan for registration.
-    DownsampleResult downsamplePoints(
+    PointCloudConstPtr downsamplePoints(
         const PointCloudConstPtr& points) const;
 
     /// Motion-compensate a preprocessed scan using buffered IMU data.
@@ -189,7 +174,6 @@ private:
 
     // ── GICP Registration ─────────────────────────────────────────
     Registration registration_;
-    size_t deskew_log_count_ = 0;
 
     // TODO v0.1:
     //   std::unique_ptr<VoxelMap> voxel_map_;

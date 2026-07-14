@@ -40,7 +40,6 @@ struct DeskewResult {
     double reference_stamp = 0.0;
     DeskewMetrics metrics;
     DeskewStatus status = DeskewStatus::EmptyScan;
-    bool converged = false;                 // true only when per-point deskew succeeded
 };
 
 /// Deskew a LiDAR scan into the world frame using Gal(3) IMU preintegration.

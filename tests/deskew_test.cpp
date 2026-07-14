@@ -112,7 +112,6 @@ void testStaticGravityCancellation() {
 
     const DeskewResult result = runDeskew(cloud, imu, 0.0, 0.0);
     expect(result.status == DeskewStatus::Success, "static scan must succeed");
-    expect(result.converged, "static scan must be marked converged");
     for (size_t i = 0; i < cloud->size(); ++i) {
         expectNear(result.cloud->points[i].x, cloud->points[i].x, "static x");
         expectNear(result.cloud->points[i].y, cloud->points[i].y, "static y");
@@ -222,7 +221,6 @@ void testNoTimestampFallbackUsesWorldTransform() {
         Eigen::Vector3d::Zero(), T_imu_lidar);
     expect(result.status == DeskewStatus::NoPointTimestamps,
            "identical timestamps must report fallback");
-    expect(!result.converged, "fallback must not be converged");
     expectNear(result.cloud->points[0].x, 4.5, "fallback world transform");
 }
 
@@ -236,7 +234,6 @@ void testInsufficientImuCoverage() {
     const DeskewResult result = runDeskew(cloud, imu, 0.0, 0.0);
     expect(result.status == DeskewStatus::InsufficientImuCoverage,
            "missing scan-end IMU must fail");
-    expect(!result.converged, "insufficient IMU must not be converged");
 }
 
 void testDenseTimestampsReusePartialPreintegration() {

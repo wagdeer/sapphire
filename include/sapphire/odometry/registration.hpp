@@ -44,7 +44,6 @@ private:
     std::string type_;
     GicpType gicp_;
     bool target_set_ = false;
-    size_t align_log_count_ = 0;
 };
 
 }  // namespace sapphire

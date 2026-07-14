@@ -511,7 +511,6 @@ private:
     }
 
     void rebuildGlobalMap() {
-        const auto started_at = std::chrono::steady_clock::now();
         auto merged = std::make_shared<PointCloud>();
         const size_t stride =
             static_cast<size_t>(config_.map_frame_stride);
@@ -522,18 +521,14 @@ private:
         }
         const PointCloudPtr sparse =
             voxelized(merged, config_.map_voxel_size);
-        const double elapsed_ms =
-            std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - started_at).count();
         {
             std::lock_guard<std::mutex> lock(output_mutex_);
             global_map_ = sparse;
         }
         spdlog::debug(
-            "[pgo] sparse map rebuilt: poses={}, points={}, {:.1f}ms",
+            "[pgo] sparse map rebuilt: poses={}, points={}",
             optimized_.size(),
-            sparse->size(),
-            elapsed_ms);
+            sparse->size());
     }
 
     void updateCorrection() {
