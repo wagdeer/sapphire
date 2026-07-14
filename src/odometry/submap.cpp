@@ -1,6 +1,5 @@
 #include <sapphire/odometry/submap.hpp>
-
-#include <pcl/filters/voxel_grid.h>
+#include <sapphire/odometry/voxel_filter.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -102,19 +101,7 @@ void SubmapManager::rebuildTarget() {
         *merged += *keyframes_[index].cloud_world;
     }
 
-    auto filtered = std::make_shared<PointCloud>();
-    pcl::VoxelGrid<Point> voxel_filter;
-    const float leaf_size = static_cast<float>(config_.voxel_size);
-    voxel_filter.setLeafSize(leaf_size, leaf_size, leaf_size);
-    voxel_filter.setInputCloud(merged);
-    voxel_filter.filter(*filtered);
-    // PCL's generic VoxelGrid centroid path does not restore the padding
-    // component from PCL_ADD_POINT4D. small_gicp consumes homogeneous point
-    // vectors, so every filtered point must explicitly keep w=1.
-    for (Point& point : filtered->points) {
-        point.data[3] = 1.0f;
-    }
-    target_ = filtered;
+    target_ = deterministicVoxelDownsample(*merged, config_.voxel_size);
     ++target_revision_;
 }
 

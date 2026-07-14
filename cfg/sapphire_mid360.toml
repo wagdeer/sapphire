@@ -90,6 +90,3 @@ time_offset = false
 # are identical, so their relative transform is identity.
 translation = [0.0, 0.0, 0.0]
 rotation_xyzw = [0.0, 0.0, 0.0, 1.0]
-
-[cuda]
-enabled = false

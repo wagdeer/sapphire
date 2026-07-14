@@ -198,10 +198,6 @@ struct Config {
         double map_voxel_size = 0.8;
     } pgo;
 
-    struct Cuda {
-        bool enabled = false;
-    } cuda;
-
     ImuConfig imu;
     DeskewConfig deskew;
 };

@@ -1,4 +1,5 @@
 #include <sapphire/odometry/deskew.hpp>
+#include <sapphire/odometry/detail/integrate_measurement.hpp>
 
 #include <preintegration.hpp>
 #include <spdlog/spdlog.h>
@@ -15,24 +16,6 @@ namespace {
 
 using Pim = preintegration::EquivariantPreintegration<double>;
 using Gal3 = Pim::Gal3;
-constexpr double kMaxIntegrationStepSec = 0.02;
-
-void integrateMeasurement(
-    Pim& pim,
-    const ImuData& measurement,
-    double dt)
-{
-    if (dt <= 0.0) {
-        return;
-    }
-    const int steps = std::max(
-        1, static_cast<int>(std::ceil(dt / kMaxIntegrationStepSec)));
-    const double step_dt = dt / static_cast<double>(steps);
-    for (int step = 0; step < steps; ++step) {
-        pim.integrateMeasurementMeanOnly(
-            measurement.accel, measurement.gyro, step_dt);
-    }
-}
 
 struct TimedState {
     Gal3 state;
@@ -227,7 +210,7 @@ std::vector<TimedState> integrateTimeline(
                    && target_stamps[target_idx] <= interval_end) {
                 const double target_stamp = target_stamps[target_idx];
                 const double partial_dt = target_stamp - partial_until;
-                integrateMeasurement(partial, measurement, partial_dt);
+                detail::integrateMeasurement(partial, measurement, partial_dt);
                 states.push_back({
                     partial.Gamma_ij() * initial_state
                         * partial.Upsilon(),
@@ -239,7 +222,7 @@ std::vector<TimedState> integrateTimeline(
         }
 
         const double interval_dt = interval_end - integrated_until;
-        integrateMeasurement(pim, measurement, interval_dt);
+        detail::integrateMeasurement(pim, measurement, interval_dt);
         integrated_until = interval_end;
     }
     return states;

@@ -121,7 +121,6 @@ void testProjectConfig() {
     expectNear(
         config.pgo.map_voxel_size, 0.8,
         "PGO sparse-map voxel size");
-    expect(!config.cuda.enabled, "CUDA must be disabled in CPU profile");
     expect(!config.deskew.time_offset, "Mid-360 time offset must be disabled");
     expect(config.extrinsics.T_imu_lidar.matrix().isApprox(
                Eigen::Matrix4d::Identity(), 1e-12),

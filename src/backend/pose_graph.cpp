@@ -1,4 +1,5 @@
 #include <sapphire/backend/pose_graph.hpp>
+#include <sapphire/odometry/voxel_filter.hpp>
 
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/nonlinear/ISAM2.h>
@@ -7,7 +8,6 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
 #include <pcl/common/transforms.h>
-#include <pcl/filters/voxel_grid.h>
 #include <pcl/registration/icp.h>
 #include <spdlog/spdlog.h>
 
@@ -47,7 +47,7 @@ PointCloudPtr transformedCloud(
 {
     auto output = std::make_shared<PointCloud>();
     pcl::transformPointCloud(
-        *cloud, *output, transform.matrix().cast<float>());
+        *cloud, *output, transform.matrix());
     for (Point& point : output->points) {
         point.data[3] = 1.0f;
     }
@@ -61,16 +61,7 @@ PointCloudPtr voxelized(
     if (leaf_size <= 0.0) {
         return std::make_shared<PointCloud>(*cloud);
     }
-    auto output = std::make_shared<PointCloud>();
-    pcl::VoxelGrid<Point> filter;
-    const float leaf = static_cast<float>(leaf_size);
-    filter.setLeafSize(leaf, leaf, leaf);
-    filter.setInputCloud(cloud);
-    filter.filter(*output);
-    for (Point& point : output->points) {
-        point.data[3] = 1.0f;
-    }
-    return output;
+    return deterministicVoxelDownsample(*cloud, leaf_size);
 }
 
 }  // namespace

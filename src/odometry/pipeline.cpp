@@ -1,5 +1,6 @@
 #include <sapphire/odometry/pipeline.hpp>
 #include <sapphire/odometry/deskew.hpp>
+#include <sapphire/odometry/detail/integrate_measurement.hpp>
 #include <sapphire/odometry/voxel_filter.hpp>
 #include <pcl/common/transforms.h>
 #include <spdlog/spdlog.h>
@@ -12,24 +13,12 @@ namespace sapphire {
 
 namespace {
 
-constexpr double kMaxIntegrationStepSec = 0.02;
 constexpr double kImuGapWarningSec = 0.1;
 
 bool isFiniteImu(const ImuData& imu) {
     return std::isfinite(imu.stamp)
         && imu.accel.allFinite()
         && imu.gyro.allFinite();
-}
-
-template <typename Pim>
-void integrateMeasurement(Pim& pim, const ImuData& imu, double dt) {
-    const int steps = std::max(
-        1, static_cast<int>(std::ceil(dt / kMaxIntegrationStepSec)));
-    const double step_dt = dt / static_cast<double>(steps);
-    for (int step = 0; step < steps; ++step) {
-        pim.integrateMeasurementMeanOnly(
-            imu.accel, imu.gyro, step_dt);
-    }
 }
 
 OdometryResult applyGlobalCorrection(
@@ -153,8 +142,7 @@ OdometryPipeline::PreprocessResult OdometryPipeline::preprocessPoints(
             continue;
         }
 
-        // Match pcl::CropBox with setNegative(true): points on either box
-        // boundary are considered inside the robot body and are removed.
+        // Remove points inside the crop box (robot body / mounting blind zone).
         const bool inside_crop_box =
             point.x >= box.min_x && point.x <= box.max_x
             && point.y >= box.min_y && point.y <= box.max_y
@@ -252,7 +240,7 @@ void OdometryPipeline::propagateStateLocked(const ImuData& imu) {
     }
 
     const double dt = imu.stamp - propagated_state_.stamp;
-    integrateMeasurement(*propagation_pim_, imu, dt);
+    detail::integrateMeasurement(*propagation_pim_, imu, dt);
     recoverPropagatedStateLocked(imu.stamp);
 }
 

@@ -288,9 +288,6 @@ Config loadConfig(const std::filesystem::path& path) {
     if (const auto value = root["pgo"]["map_voxel_size"].value<double>()) {
         config.pgo.map_voxel_size = *value;
     }
-    if (const auto value = root["cuda"]["enabled"].value<bool>()) {
-        config.cuda.enabled = *value;
-    }
 
     const auto time_offset = root["deskew"]["time_offset"].value<bool>();
     if (!time_offset.has_value()) {
@@ -473,10 +470,6 @@ void validateConfig(const Config& config) {
     requireFinitePositive(
         config.pgo.map_voxel_size,
         "pgo.map_voxel_size");
-    if (config.cuda.enabled) {
-        throw std::invalid_argument(
-            "cuda.enabled=true is unsupported in this build");
-    }
 
     const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;
     if (!extrinsic.matrix().allFinite()) {

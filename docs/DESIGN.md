@@ -167,11 +167,11 @@ ros2 launch sapphire_ros2 sapphire.launch.py lidar_topic:=/velodyne_points
 ## 核心依赖
 
 **apt 直接装:**
-- libeigen3-dev, libtbb-dev, libabsl-dev
+- libeigen3-dev, libtbb-dev
 - libspdlog-dev, libnanoflann-dev, libomp-dev
 
 **sapphire core 当前已 link 的 CMake targets:**
-- `Eigen3::Eigen`, `spdlog::spdlog`, `${PCL_LIBRARIES}`, `absl::flat_hash_map`
+- `Eigen3::Eigen`, `spdlog::spdlog`, `${PCL_LIBRARIES}`
 - TBB/GTSAM/tomlplusplus — 已安装但未 link，等对应模块实现时再加
 
 **PPA（不再源码编译）:**
@@ -231,7 +231,7 @@ ros2 launch sapphire_ros2 sapphire.launch.py lidar_topic:=/velodyne_points
 为什么自己写而不引入外部库：
 - `boost::circular_buffer` — DLIO 原来用的，但我们已决定不用 Boost
 - `rigtorp/SPSCQueue` (MIT, 1.8k stars) — 纯 FIFO，不支持 deskew 需要的随机访问
-- Abseil — 无 deque/ring-buffer 替代（flat_hash_map/btree_map/InlinedVector/…都不行）
+- Abseil — 无 deque/ring-buffer 替代（btree_map/InlinedVector/…都不行）
 - `std::deque` — 堆分配 chunk，不如定长 ring buffer 干净
 
 RingBuffer 本身非线程安全。Pipeline 使用 `imu_mutex_` 保护读写；deskew
@@ -362,7 +362,7 @@ colcon build --symlink-install --packages-select sapphire_ros2
 - **PCL 原生 Point type**: `sapphire::Point` (PCL_ADD_POINT4D + POINT_CLOUD_REGISTER_POINT_STRUCT)，替代自定义 Point3d。core 依赖 PCL——做 SLAM 的都用 PCL，没问题。small_gicp 零转换直接消费。
 - **传感器适配边界**: ROS wrapper 只做原始 PointCloud2 bytes → `sapphire::Point` 数据搬运，不含传感器类型判断。不同传感器的 timestamp 字段名差异在 wrapper 内以 auto-detect 处理（offset_time/t/timestamp/time），不引入传感器抽象层。
 - **Deskew 输出坐标系**: World frame。新版 deskew 使用完整 Gal3 恢复（`Gamma_ij() * Xi_init * Upsilon()`），直接输出世界系点云 + 世界系位姿 + 速度。两个 scan 都在世界系时 scan-to-scan GICP 的 correction 就是 inter-scan motion。
-- **VoxelMap**: KISS-SLAM 移植, 138 行, O(1) absl::flat_hash_map
+- **VoxelMap**: KISS-SLAM 移植（规划中）
 - **Submap 分割**: 距离 100m + 旋转 90° 双阈值
 - **RegistrationBackend::setTarget(raw PointCloud)**: 后端自预处理（KD-tree/GaussianVoxelMap/NDT grid）
 - **KD-tree 回环**: 用 geometric_centroid 而非 origin（大 submap 必漏检）
