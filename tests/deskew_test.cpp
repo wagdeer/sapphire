@@ -140,6 +140,35 @@ void testConstantVelocity() {
     }
 }
 
+void testConstantAccelerationInterpolation() {
+    constexpr double acceleration = 2.0;
+    auto cloud = makeCloud({
+        makePoint(0.0f, 0.0f, 0.0f, 0.003),
+        makePoint(0.0f, 0.0f, 0.0f, 0.017),
+        makePoint(0.0f, 0.0f, 0.0f, 0.043),
+        makePoint(0.0f, 0.0f, 0.0f, 0.097),
+    });
+    auto imu = makeImuBuffer(
+        0.0,
+        0.11,
+        0.01,
+        Eigen::Vector3d::Zero(),
+        Eigen::Vector3d(acceleration, 0.0, kGravity));
+
+    const DeskewResult result = runDeskew(cloud, imu, 0.0, 0.0);
+    expect(result.status == DeskewStatus::Success,
+           "constant acceleration scan must succeed");
+    for (size_t i = 0; i < cloud->size(); ++i) {
+        const double stamp = cloud->points[i].timestamp;
+        expectNear(
+            result.cloud->points[i].x,
+            0.5 * acceleration * stamp * stamp,
+            "constant acceleration displacement");
+        expectNear(result.cloud->points[i].z, 0.0,
+                   "constant acceleration gravity cancellation");
+    }
+}
+
 void testConstantYawRate() {
     constexpr double yaw_rate = 1.2;
     auto cloud = makeCloud({
@@ -272,6 +301,7 @@ void testDenseTimestampsDeskewCorrectness() {
 int main() {
     testStaticGravityCancellation();
     testConstantVelocity();
+    testConstantAccelerationInterpolation();
     testConstantYawRate();
     testRotatingLeverArmExtrinsic();
     testTimeOffsetAlignment();

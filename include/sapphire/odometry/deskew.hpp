@@ -36,8 +36,8 @@ struct DeskewResult {
 /// Algorithm:
 ///   1. Sort points by timestamp
 ///   2. Extract unique timestamps → build per-group indices
-///   3. Integrate IMU exactly to each unique timestamp
-///   4. Recover the world IMU state using Gamma * T_i * Upsilon
+///   3. Integrate one exact Gal(3) state per IMU interval endpoint
+///   4. Interpolate R/v/p at every unique point timestamp
 ///   5. Transform each point with T_world_imu(t) * T_imu_lidar
 ///
 /// T_A_B maps coordinates in frame B into frame A.

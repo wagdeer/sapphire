@@ -1,6 +1,5 @@
 #include <sapphire/odometry/pipeline.hpp>
 #include <sapphire/odometry/deskew.hpp>
-#include <sapphire/odometry/detail/integrate_measurement.hpp>
 #include <sapphire/odometry/voxel_filter.hpp>
 #include <pcl/common/transforms.h>
 #include <spdlog/spdlog.h>
@@ -35,17 +34,6 @@ OdometryResult applyGlobalCorrection(
 OdometryPipeline::OdometryPipeline(const Config& config)
     : config_(config)
     , imu_initializer_(config.imu.init)
-    , propagation_pim_(std::make_unique<PropagationPim>(
-          std::make_shared<PropagationPim::Params>(
-              Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag),
-              config.imu.noise.gyro_noise_density,
-              config.imu.noise.accel_noise_density,
-              0.0,
-              0.0,
-              config.imu.noise.gyro_random_walk,
-              config.imu.noise.accel_random_walk,
-              0.0,
-              0.0)))
     , submap_manager_(config.odometry.submap)
     , pgo_backend_(config.pgo)
     , registration_(
@@ -212,17 +200,17 @@ DeskewResult OdometryPipeline::deskewPointcloud(
 }
 
 void OdometryPipeline::recoverPropagatedStateLocked(double stamp) {
-    using Gal3 = PropagationPim::Gal3;
+    using Gal3 = detail::MeanOnlyGal3Integrator::Gal3;
     Gal3::IsometriesType initial_isometries{
         imu_state_.v_world,
         imu_state_.T_world_imu.translation(),
     };
     const Gal3 initial_state(
         imu_state_.T_world_imu.rotation(), initial_isometries, 0.0);
-    const Gal3 propagated =
-        propagation_pim_->Gamma_ij()
-        * initial_state
-        * propagation_pim_->Upsilon();
+    const Gal3 propagated = detail::recoverWorldState(
+        propagation_integrator_.Upsilon(),
+        initial_state,
+        gravity_world_);
 
     propagated_state_.stamp = stamp;
     propagated_state_.T_world_imu = Isometry3d::Identity();
@@ -240,7 +228,7 @@ void OdometryPipeline::propagateStateLocked(const ImuData& imu) {
     }
 
     const double dt = imu.stamp - propagated_state_.stamp;
-    detail::integrateMeasurement(*propagation_pim_, imu, dt);
+    propagation_integrator_.integrate(imu, dt);
     recoverPropagatedStateLocked(imu.stamp);
 }
 
@@ -263,8 +251,7 @@ void OdometryPipeline::rebasePropagation(
 
     imu_state_ = corrected_state;
     propagated_state_ = corrected_state;
-    propagation_pim_->resetIntegrationAndSetBias(
-        PropagationPim::Vec10::Zero());
+    propagation_integrator_.reset();
     has_first_scan_.store(true, std::memory_order_release);
 
     for (const ImuData& imu : imu_buffer_) {

@@ -1,7 +1,6 @@
 #include <sapphire/odometry/deskew.hpp>
-#include <sapphire/odometry/detail/integrate_measurement.hpp>
+#include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
 
-#include <preintegration.hpp>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -14,8 +13,7 @@ namespace sapphire {
 
 namespace {
 
-using Pim = preintegration::EquivariantPreintegration<double>;
-using Gal3 = Pim::Gal3;
+using Gal3 = detail::MeanOnlyGal3Integrator::Gal3;
 
 struct TimedState {
     Gal3 state;
@@ -154,21 +152,34 @@ DeskewStatus findImuStart(
     return DeskewStatus::Success;
 }
 
-std::shared_ptr<preintegration::PreintegrationParams<double>>
-makePreintegrationParams(
-    const Eigen::Vector3d& gravity_world,
-    const ImuNoiseConfig& noise)
+Gal3 interpolateState(
+    const Gal3& start,
+    const Gal3& end,
+    double alpha,
+    double interval_dt)
 {
-    return std::make_shared<preintegration::PreintegrationParams<double>>(
-        gravity_world,
-        noise.gyro_noise_density,
-        noise.accel_noise_density,
-        0.0,
-        0.0,
-        noise.gyro_random_walk,
-        noise.accel_random_walk,
-        0.0,
-        0.0);
+    alpha = std::clamp(alpha, 0.0, 1.0);
+    const Eigen::Quaterniond rotation =
+        start.q().slerp(alpha, end.q()).normalized();
+    const Eigen::Vector3d velocity =
+        (1.0 - alpha) * start.v() + alpha * end.v();
+
+    // Cubic Hermite interpolation preserves constant velocity and constant
+    // world acceleration exactly while remaining cheap for every point stamp.
+    const double alpha2 = alpha * alpha;
+    const double alpha3 = alpha2 * alpha;
+    const double h00 = 2.0 * alpha3 - 3.0 * alpha2 + 1.0;
+    const double h10 = alpha3 - 2.0 * alpha2 + alpha;
+    const double h01 = -2.0 * alpha3 + 3.0 * alpha2;
+    const double h11 = alpha3 - alpha2;
+    const Eigen::Vector3d position =
+        h00 * start.p()
+        + h10 * interval_dt * start.v()
+        + h01 * end.p()
+        + h11 * interval_dt * end.v();
+
+    Gal3::IsometriesType isometries{velocity, position};
+    return Gal3(rotation, isometries, 0.0);
 }
 
 std::vector<TimedState> integrateTimeline(
@@ -178,11 +189,9 @@ std::vector<TimedState> integrateTimeline(
     double prev_stamp,
     const Isometry3d& T_world_imu_prev,
     const Eigen::Vector3d& v_world_prev,
-    const Eigen::Vector3d& gravity_world,
-    const ImuNoiseConfig& noise)
+    const Eigen::Vector3d& gravity_world)
 {
-    Pim pim(makePreintegrationParams(gravity_world, noise));
-    pim.resetIntegrationAndSetBias(Pim::Vec10::Zero());
+    detail::MeanOnlyGal3Integrator integrator;
 
     Gal3::IsometriesType initial_isometries{
         v_world_prev,
@@ -195,35 +204,45 @@ std::vector<TimedState> integrateTimeline(
     states.reserve(target_stamps.size());
     size_t target_idx = 0;
     double integrated_until = prev_stamp;
+    Gal3 interval_start_state = initial_state;
 
     for (size_t imu_idx = imu_start + 1;
          imu_idx < imu_buf.size() && target_idx < target_stamps.size();
          ++imu_idx) {
         const ImuData& measurement = imu_buf[imu_idx];
         const double interval_end = measurement.stamp;
+        const double interval_dt = interval_end - integrated_until;
+        if (interval_dt <= 0.0) {
+            continue;
+        }
+
+        integrator.integrate(measurement, interval_dt);
+        const Gal3 interval_end_state = detail::recoverWorldState(
+            integrator.Upsilon(),
+            initial_state,
+            gravity_world);
 
         if (target_idx < target_stamps.size()
             && target_stamps[target_idx] <= interval_end) {
-            Pim partial = pim;
-            double partial_until = integrated_until;
             while (target_idx < target_stamps.size()
                    && target_stamps[target_idx] <= interval_end) {
                 const double target_stamp = target_stamps[target_idx];
-                const double partial_dt = target_stamp - partial_until;
-                detail::integrateMeasurement(partial, measurement, partial_dt);
+                const double alpha =
+                    (target_stamp - integrated_until) / interval_dt;
                 states.push_back({
-                    partial.Gamma_ij() * initial_state
-                        * partial.Upsilon(),
+                    interpolateState(
+                        interval_start_state,
+                        interval_end_state,
+                        alpha,
+                        interval_dt),
                     target_stamp,
                 });
-                partial_until = target_stamp;
                 ++target_idx;
             }
         }
 
-        const double interval_dt = interval_end - integrated_until;
-        detail::integrateMeasurement(pim, measurement, interval_dt);
         integrated_until = interval_end;
+        interval_start_state = interval_end_state;
     }
     return states;
 }
@@ -278,6 +297,8 @@ DeskewResult deskew(
     const ImuNoiseConfig& noise,
     bool time_offset)
 {
+    (void)noise;
+
     if (!scan || scan->empty()) {
         spdlog::warn("[deskew] empty scan");
         return makeFallback(
@@ -313,8 +334,7 @@ DeskewResult deskew(
         prev_stamp,
         T_world_imu_prev,
         v_world_prev,
-        gravity_world,
-        noise);
+        gravity_world);
     if (states.size() != timeline.stamps.size()) {
         return makeFallback(
             scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,

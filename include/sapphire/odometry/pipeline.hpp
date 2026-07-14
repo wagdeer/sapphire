@@ -5,9 +5,9 @@
 #include <sapphire/imu_init.hpp>
 #include <sapphire/odometry/registration.hpp>
 #include <sapphire/odometry/deskew.hpp>
+#include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
 #include <sapphire/odometry/observer.hpp>
 #include <sapphire/odometry/submap.hpp>
-#include <preintegration.hpp>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <atomic>
@@ -135,7 +135,7 @@ private:
         const Eigen::Vector3d& accel_bias,
         const Eigen::Vector3d& gyro_bias);
 
-    /// Recover propagated_state_ from propagation_pim_ and imu_state_.
+    /// Recover propagated_state_ from the preintegrated mean and imu_state_.
     /// state_mutex_ must be held by the caller.
     void recoverPropagatedStateLocked(double stamp);
 
@@ -157,11 +157,9 @@ private:
     std::condition_variable imu_cv_;
 
     // ── Corrected IMU state used as the next integration baseline ──
-    using PropagationPim =
-        preintegration::EquivariantPreintegration<double>;
     NavigationState imu_state_;
     NavigationState propagated_state_;
-    std::unique_ptr<PropagationPim> propagation_pim_;
+    detail::MeanOnlyGal3Integrator propagation_integrator_;
     Eigen::Vector3d accel_bias_ = Eigen::Vector3d::Zero();
     Eigen::Vector3d gyro_bias_ = Eigen::Vector3d::Zero();
     mutable std::mutex state_mutex_;

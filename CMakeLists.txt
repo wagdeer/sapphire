@@ -90,6 +90,16 @@ if(BUILD_TESTING)
         COMMAND sapphire_preintegration_test
     )
 
+    add_executable(sapphire_mean_only_gal3_integrator_test
+        tests/mean_only_gal3_integrator_test.cpp
+    )
+    target_link_libraries(
+        sapphire_mean_only_gal3_integrator_test PRIVATE sapphire)
+    add_test(
+        NAME sapphire_mean_only_gal3_integrator_test
+        COMMAND sapphire_mean_only_gal3_integrator_test
+    )
+
     add_executable(sapphire_pipeline_test
         tests/pipeline_test.cpp
     )
