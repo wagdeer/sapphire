@@ -133,7 +133,6 @@ void ImuInitializer::rejectOutliers() {
 
     std::vector<Sample> filtered;
     filtered.reserve(samples_.size());
-    int rejected = 0;
     for (const auto& s : samples_) {
         bool outlier = false;
         outlier |= (std::abs(s.gyro.x() - med_gx) > kMADThreshold * mad_gx);
@@ -144,8 +143,6 @@ void ImuInitializer::rejectOutliers() {
         outlier |= (std::abs(s.accel.z() - med_az) > kMADThreshold * mad_az);
         if (!outlier) {
             filtered.push_back(s);
-        } else {
-            ++rejected;
         }
     }
 

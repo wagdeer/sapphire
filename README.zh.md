@@ -70,8 +70,7 @@ Xi(t) = Gamma_ij(t) * Xi_ref * Upsilon_ij(t)
 - tomlplusplus 3.4+（无系统包时由 CMake 自动下载）
 
 ROS 封装额外需要 ROS 2、`rclcpp`、`sensor_msgs`、`nav_msgs`、
-`diagnostic_msgs`、`visualization_msgs`、`tf2_ros`、`tf2_eigen` 和
-`pcl_ros`。
+`visualization_msgs`、`tf2_ros`、`tf2_eigen` 和 `pcl_ros`。
 
 GTSAM 和 small_gicp 的安装方式因平台而异。安装能导出 CMake package
 configuration、可被 `find_package` 发现的版本后，再配置 Sapphire。
@@ -171,7 +170,6 @@ Launch 默认值：
 
 - `/sapphire/odometry` — `nav_msgs/msg/Odometry`，通常以 IMU 频率发布
 - `/sapphire/deskewed` — `sensor_msgs/msg/PointCloud2`，LiDAR 频率
-- `/sapphire/diagnostics` — `diagnostic_msgs/msg/DiagnosticArray`
 - `/sapphire/pgo/map` — 订阅者驱动的位姿图地图
 - `/sapphire/pgo/graph` — 订阅者驱动的位姿图标记
 - TF — 默认 `map -> lidar`；坐标系名称可配置

@@ -4,7 +4,6 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -16,7 +15,6 @@ namespace {
 
 using Pim = preintegration::EquivariantPreintegration<double>;
 using Gal3 = Pim::Gal3;
-using Clock = std::chrono::steady_clock;
 constexpr double kMaxIntegrationStepSec = 0.02;
 
 void integrateMeasurement(
@@ -34,11 +32,6 @@ void integrateMeasurement(
         pim.integrateMeasurementMeanOnly(
             measurement.accel, measurement.gyro, step_dt);
     }
-}
-
-double elapsedMilliseconds(const Clock::time_point& start) {
-    return std::chrono::duration<double, std::milli>(
-        Clock::now() - start).count();
 }
 
 struct TimedState {
@@ -203,8 +196,7 @@ std::vector<TimedState> integrateTimeline(
     const Isometry3d& T_world_imu_prev,
     const Eigen::Vector3d& v_world_prev,
     const Eigen::Vector3d& gravity_world,
-    const ImuNoiseConfig& noise,
-    DeskewMetrics& metrics)
+    const ImuNoiseConfig& noise)
 {
     Pim pim(makePreintegrationParams(gravity_world, noise));
     pim.resetIntegrationAndSetBias(Pim::Vec10::Zero());
@@ -224,14 +216,12 @@ std::vector<TimedState> integrateTimeline(
     for (size_t imu_idx = imu_start + 1;
          imu_idx < imu_buf.size() && target_idx < target_stamps.size();
          ++imu_idx) {
-        ++metrics.imu_intervals;
         const ImuData& measurement = imu_buf[imu_idx];
         const double interval_end = measurement.stamp;
 
         if (target_idx < target_stamps.size()
             && target_stamps[target_idx] <= interval_end) {
             Pim partial = pim;
-            ++metrics.pim_copies;
             double partial_until = integrated_until;
             while (target_idx < target_stamps.size()
                    && target_stamps[target_idx] <= interval_end) {
@@ -305,7 +295,6 @@ DeskewResult deskew(
     const ImuNoiseConfig& noise,
     bool time_offset)
 {
-    const auto total_start = Clock::now();
     if (!scan || scan->empty()) {
         spdlog::warn("[deskew] empty scan");
         return makeFallback(
@@ -314,7 +303,6 @@ DeskewResult deskew(
     }
 
     ScanTimeline timeline;
-    const auto timeline_start = Clock::now();
     DeskewStatus status =
         buildScanTimeline(*scan, scan_stamp, time_offset, timeline);
     if (status != DeskewStatus::Success) {
@@ -322,10 +310,6 @@ DeskewResult deskew(
             scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
             status);
     }
-    DeskewMetrics metrics;
-    metrics.timeline_ms = elapsedMilliseconds(timeline_start);
-    metrics.timestamp_groups = timeline.stamps.size();
-
     size_t imu_start = imu_buf.size();
     status = findImuStart(
         imu_buf,
@@ -339,7 +323,6 @@ DeskewResult deskew(
             status);
     }
 
-    const auto integration_start = Clock::now();
     const std::vector<TimedState> states = integrateTimeline(
         timeline.stamps,
         imu_buf,
@@ -348,9 +331,7 @@ DeskewResult deskew(
         T_world_imu_prev,
         v_world_prev,
         gravity_world,
-        noise,
-        metrics);
-    metrics.integration_ms = elapsedMilliseconds(integration_start);
+        noise);
     if (states.size() != timeline.stamps.size()) {
         return makeFallback(
             scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
@@ -360,15 +341,11 @@ DeskewResult deskew(
     const size_t reference_idx = timeline.stamps.size() / 2;
     const TimedState& reference = states[reference_idx];
     DeskewResult result;
-    const auto transform_start = Clock::now();
     result.cloud = transformScan(timeline, states, T_imu_lidar);
-    metrics.transform_ms = elapsedMilliseconds(transform_start);
-    metrics.total_ms = elapsedMilliseconds(total_start);
     result.T_world_lidar_ref =
         poseFromState(reference.state) * T_imu_lidar;
     result.v_world_ref = reference.state.v();
     result.reference_stamp = reference.stamp;
-    result.metrics = metrics;
     result.status = DeskewStatus::Success;
     return result;
 }

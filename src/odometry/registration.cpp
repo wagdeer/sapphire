@@ -2,7 +2,6 @@
 #include <spdlog/spdlog.h>
 
 #include <Eigen/Geometry>
-#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -58,11 +57,7 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
     // additional relative-pose initial guess.
     PointCloudPtr aligned = std::make_shared<PointCloud>();
 
-    auto t0 = std::chrono::steady_clock::now();
     gicp_.align(*aligned);
-    auto t1 = std::chrono::steady_clock::now();
-
-    double elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
     bool converged = gicp_.hasConverged();
     const auto& reg_result = gicp_.getRegistrationResult();
@@ -88,29 +83,23 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
     bool accepted = converged && finite
         && reg_result.num_inliers
             >= static_cast<size_t>(cfg_.min_num_points);
-    if (!converged) {
-        spdlog::warn(
-            "[registration] rejected: {} did not converge", type_);
-    }
-    if (!finite) {
-        spdlog::warn("[registration] rejected: non-finite result");
-    }
-    if (reg_result.num_inliers
-        < static_cast<size_t>(cfg_.min_num_points)) {
-        spdlog::warn(
-            "[registration] rejected: inliers={} < minimum={}",
-            reg_result.num_inliers,
-            cfg_.min_num_points);
-    }
     if (corr_trans_m > cfg_.max_correction_trans) {
-        spdlog::warn("[registration] rejected: trans={:.3f}m > {:.2f}m",
-                     corr_trans_m, cfg_.max_correction_trans);
         accepted = false;
     }
     if (corr_rot_deg > cfg_.max_correction_rot_deg) {
-        spdlog::warn("[registration] rejected: rot={:.1f}deg > {:.1f}deg",
-                     corr_rot_deg, cfg_.max_correction_rot_deg);
         accepted = false;
+    }
+    if (!accepted) {
+        spdlog::warn(
+            "[registration] {} rejected: converged={} finite={} "
+            "inliers={}/{} trans={:.3f}m rot={:.1f}deg",
+            type_,
+            converged,
+            finite,
+            reg_result.num_inliers,
+            cfg_.min_num_points,
+            corr_trans_m,
+            corr_rot_deg);
     }
 
     if (accepted) {
@@ -122,10 +111,7 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
     }
 
     result.converged     = converged;
-    result.fitness_score = reg_result.error;
-    result.elapsed_ms    = elapsed_ms;
     result.num_inliers   = reg_result.num_inliers;
-    result.iterations    = reg_result.iterations;
     result.accepted      = accepted;
 
     return result;

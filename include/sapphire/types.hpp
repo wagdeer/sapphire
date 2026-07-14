@@ -124,10 +124,7 @@ struct RegistrationResult {
     Eigen::Isometry3d T_correction;  // correction: T_prior → T_world_lidar
     Eigen::Isometry3d T_world_lidar; // world-frame pose after correction
     bool    converged      = false;
-    double  fitness_score  = 0.0;
-    double  elapsed_ms     = 0.0;
     size_t  num_inliers    = 0;
-    size_t  iterations     = 0;
     bool    accepted       = false;   // false if correction was rejected
 };
 

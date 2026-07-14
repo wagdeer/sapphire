@@ -55,7 +55,6 @@ the recovered `Xi(t)`. The vendored implementation under
 - Distance/rotation-gated frontend submaps
 - Asynchronous GTSAM ISAM2 pose graph with ICP loop verification
 - Validated TOML configuration
-- Per-frame timing, registration, deskew, and keyframe diagnostics
 - Ten CTest targets covering configuration, deskew, preintegration,
   pipeline, observer, registration, submaps, pose graph, voxel filtering,
   and the IMU ring buffer
@@ -183,7 +182,6 @@ Published interfaces:
 
 - `/sapphire/odometry` — `nav_msgs/msg/Odometry`, normally at IMU rate
 - `/sapphire/deskewed` — `sensor_msgs/msg/PointCloud2`, at LiDAR rate
-- `/sapphire/diagnostics` — `diagnostic_msgs/msg/DiagnosticArray`
 - `/sapphire/pgo/map` — subscriber-driven pose-graph map
 - `/sapphire/pgo/graph` — subscriber-driven pose-graph markers
 - TF — `map -> lidar` by default; frame names are configurable

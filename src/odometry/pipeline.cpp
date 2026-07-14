@@ -327,12 +327,6 @@ bool OdometryPipeline::initializeFirstLidarTarget(
 
     submap_manager_.addKeyframe(T_world_lidar, downsampled, stamp);
     registration_.setTarget(submap_manager_.target());
-    spdlog::debug(
-        "[pipeline] submap target rebuilt: keyframes={}, points={}, "
-        "revision={}",
-        submap_manager_.keyframeCount(),
-        submap_manager_.target()->size(),
-        submap_manager_.targetRevision());
 
     {
         std::lock_guard<std::mutex> lock(output_mutex_);
@@ -368,10 +362,6 @@ OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
             deskewed.cloud->size());
         return std::nullopt;
     }
-    spdlog::debug(
-        "[pipeline] registration source downsampled: {} -> {} points",
-        deskewed.cloud->size(),
-        registration_source->size());
 
     registration_.setSource(registration_source);
     RegistrationArtifacts artifacts;
@@ -408,12 +398,6 @@ void OdometryPipeline::maybeUpdateSubmapTarget(
     }
 
     registration_.setTarget(submap_manager_.target());
-    spdlog::debug(
-        "[pipeline] submap target rebuilt: keyframes={}, points={}, "
-        "revision={}",
-        submap_manager_.keyframeCount(),
-        submap_manager_.target()->size(),
-        submap_manager_.targetRevision());
 }
 
 void OdometryPipeline::processLidarScan(
@@ -469,18 +453,6 @@ void OdometryPipeline::processLidarScan(
         gyro_bias,
         config_.odometry.observer,
         artifacts->result.accepted);
-    if (artifacts->result.accepted
-        && deskewed.reference_stamp > previous_state_stamp) {
-        spdlog::debug(
-            "[pipeline] observer bias: accel=[{:.5f},{:.5f},{:.5f}] "
-            "gyro=[{:.6f},{:.6f},{:.6f}]",
-            observer_update.accel_bias.x(),
-            observer_update.accel_bias.y(),
-            observer_update.accel_bias.z(),
-            observer_update.gyro_bias.x(),
-            observer_update.gyro_bias.y(),
-            observer_update.gyro_bias.z());
-    }
 
     rebasePropagation(
         observer_update.state,
