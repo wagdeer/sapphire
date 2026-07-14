@@ -26,17 +26,9 @@ struct ScanTimeline {
     std::vector<size_t> group_offsets;
 };
 
-Point transformPoint(const Point& source, const Isometry3d& transform) {
+Point transformPoint(const Point& source, const Isometry3f& transform) {
     Point output = source;
-    Eigen::Vector4d homogeneous(
-        static_cast<double>(source.x),
-        static_cast<double>(source.y),
-        static_cast<double>(source.z),
-        1.0);
-    homogeneous = transform.matrix() * homogeneous;
-    output.x = static_cast<float>(homogeneous.x());
-    output.y = static_cast<float>(homogeneous.y());
-    output.z = static_cast<float>(homogeneous.z());
+    output.getVector3fMap() = transform * source.getVector3fMap();
     output.data[3] = 1.0f;
     return output;
 }
@@ -50,11 +42,12 @@ DeskewResult makeFallback(
     DeskewStatus status)
 {
     const Isometry3d T_world_lidar = T_world_imu * T_imu_lidar;
+    const Isometry3f T_world_lidar_f = T_world_lidar.cast<float>();
     auto out = std::make_shared<PointCloud>();
     out->points.reserve(scan ? scan->points.size() : 0);
     if (scan) {
         for (const Point& point : scan->points) {
-            out->points.push_back(transformPoint(point, T_world_lidar));
+            out->points.push_back(transformPoint(point, T_world_lidar_f));
         }
     }
     out->width = out->points.size();
@@ -166,12 +159,12 @@ Gal3 interpolateState(
 
     // Cubic Hermite interpolation preserves constant velocity and constant
     // world acceleration exactly while remaining cheap for every point stamp.
-    const double alpha2 = alpha * alpha;
-    const double alpha3 = alpha2 * alpha;
-    const double h00 = 2.0 * alpha3 - 3.0 * alpha2 + 1.0;
-    const double h10 = alpha3 - 2.0 * alpha2 + alpha;
-    const double h01 = -2.0 * alpha3 + 3.0 * alpha2;
-    const double h11 = alpha3 - alpha2;
+    const double a2 = alpha * alpha;
+    const double a3 = a2 * alpha;
+    const double h00 = 2.0 * a3 - 3.0 * a2 + 1.0;
+    const double h10 = a3 - 2.0 * a2 + alpha;
+    const double h01 = -2.0 * a3 + 3.0 * a2;
+    const double h11 = a3 - a2;
     const Eigen::Vector3d position =
         h00 * start.p()
         + h10 * interval_dt * start.v()
@@ -204,7 +197,9 @@ std::vector<TimedState> integrateTimeline(
     states.reserve(target_stamps.size());
     size_t target_idx = 0;
     double integrated_until = prev_stamp;
-    Gal3 interval_start_state = initial_state;
+    // World state recovered at the end of the previous IMU interval; the first
+    // interval uses prev_stamp as its start.
+    Gal3 prev_interval_end_state = initial_state;
 
     for (size_t imu_idx = imu_start + 1;
          imu_idx < imu_buf.size() && target_idx < target_stamps.size();
@@ -216,6 +211,8 @@ std::vector<TimedState> integrateTimeline(
             continue;
         }
 
+        // Upsilon accumulates from prev_stamp; recoverWorldState always uses
+        // initial_state at prev_stamp and Gamma built from the total elapsed s.
         integrator.integrate(measurement, interval_dt);
         const Gal3 interval_end_state = detail::recoverWorldState(
             integrator.Upsilon(),
@@ -231,7 +228,7 @@ std::vector<TimedState> integrateTimeline(
                     (target_stamp - integrated_until) / interval_dt;
                 states.push_back({
                     interpolateState(
-                        interval_start_state,
+                        prev_interval_end_state,
                         interval_end_state,
                         alpha,
                         interval_dt),
@@ -242,7 +239,7 @@ std::vector<TimedState> integrateTimeline(
         }
 
         integrated_until = interval_end;
-        interval_start_state = interval_end_state;
+        prev_interval_end_state = interval_end_state;
     }
     return states;
 }
@@ -267,8 +264,9 @@ PointCloudPtr transformScan(
 #pragma omp parallel for schedule(static) num_threads(thread_count) if(use_parallel)
     for (std::ptrdiff_t group = 0; group < group_count; ++group) {
         const size_t group_index = static_cast<size_t>(group);
-        const Isometry3d T_world_lidar =
-            poseFromState(states[group_index].state) * T_imu_lidar;
+        const Isometry3f T_world_lidar = (
+            poseFromState(states[group_index].state) * T_imu_lidar
+        ).cast<float>();
         const size_t begin = timeline.group_offsets[group_index];
         const size_t end = timeline.group_offsets[group_index + 1];
         for (size_t point_idx = begin; point_idx < end; ++point_idx) {

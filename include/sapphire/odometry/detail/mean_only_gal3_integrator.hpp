@@ -43,6 +43,9 @@ public:
 
         Vec10 input;
         input << gyro, accel, Vec3::Zero(), 1.0;
+        // input and step_dt are fixed for this call, so all sub-steps share the
+        // same Lie algebra direction and exp(v/n)^n = exp(v). Reusing one
+        // increment is safe only when a single IMU sample is integrated per call.
         const Gal3 increment = Gal3::exp(input * step_dt);
         for (int step = 0; step < steps; ++step) {
             Upsilon_.multiplyRight(increment);

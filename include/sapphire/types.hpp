@@ -35,7 +35,9 @@ using PointCloudConstPtr = PointCloud::ConstPtr;
 //  Math Types
 // ═══════════════════════════════════════════════════════════════════
 
+using Vector3f = Eigen::Vector3f;
 using Vector3d = Eigen::Vector3d;
+using Isometry3f = Eigen::Isometry3f;
 using Isometry3d = Eigen::Isometry3d;
 using Matrix6d = Eigen::Matrix<double, 6, 6>;
 
