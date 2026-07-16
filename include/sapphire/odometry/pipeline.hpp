@@ -6,6 +6,7 @@
 #include <sapphire/odometry/registration.hpp>
 #include <sapphire/odometry/deskew.hpp>
 #include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
+#include <sapphire/odometry/eskf.hpp>
 #include <sapphire/odometry/observer.hpp>
 #include <sapphire/odometry/submap.hpp>
 #include <Eigen/Core>
@@ -106,7 +107,8 @@ private:
         const DeskewResult& deskewed);
     void maybeUpdateSubmapTarget(
         const DeskewResult& deskewed,
-        const RegistrationArtifacts& artifacts);
+        const Isometry3d& T_world_lidar,
+        const PointCloudConstPtr& cloud);
     void finalizeImuInitialization(
         ImuInitializer::Result&& result,
         const ImuData& trigger_sample);
@@ -139,6 +141,12 @@ private:
     /// state_mutex_ must be held by the caller.
     void recoverPropagatedStateLocked(double stamp);
 
+    bool useEskf() const {
+        return config_.odometry.fusion == "eskf";
+    }
+
+    static EskfConfig makeEskfConfig(const Config& config);
+
     Config config_;
 
     // ── Initialization ──────────────────────────────────────────
@@ -160,6 +168,7 @@ private:
     NavigationState imu_state_;
     NavigationState propagated_state_;
     detail::MeanOnlyGal3Integrator propagation_integrator_;
+    Eskf eskf_;
     Eigen::Vector3d accel_bias_ = Eigen::Vector3d::Zero();
     Eigen::Vector3d gyro_bias_ = Eigen::Vector3d::Zero();
     mutable std::mutex state_mutex_;

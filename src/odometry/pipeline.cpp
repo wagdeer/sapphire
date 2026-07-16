@@ -31,9 +31,32 @@ OdometryResult applyGlobalCorrection(
 
 }  // namespace
 
+EskfConfig OdometryPipeline::makeEskfConfig(const Config& config) {
+    EskfConfig eskf;
+    eskf.sigma_rotation = config.odometry.eskf.sigma_rotation;
+    eskf.sigma_translation = config.odometry.eskf.sigma_translation;
+    eskf.icp_covariance_scale = config.odometry.eskf.icp_covariance_scale;
+    eskf.use_hessian = config.odometry.eskf.use_hessian;
+    eskf.mahalanobis_threshold = config.odometry.eskf.mahalanobis_threshold;
+    eskf.inject_full_pose = config.odometry.eskf.inject_full_pose;
+    eskf.bias_update_scale = config.odometry.eskf.bias_update_scale;
+    eskf.velocity_correction_gain =
+        config.odometry.eskf.velocity_correction_gain;
+    eskf.accel_bias_max = config.odometry.eskf.accel_bias_max;
+    eskf.gyro_bias_max = config.odometry.eskf.gyro_bias_max;
+    eskf.init_sigma_theta = config.odometry.eskf.init_sigma_theta;
+    eskf.init_sigma_velocity = config.odometry.eskf.init_sigma_velocity;
+    eskf.init_sigma_position = config.odometry.eskf.init_sigma_position;
+    return eskf;
+}
+
 OdometryPipeline::OdometryPipeline(const Config& config)
     : config_(config)
     , imu_initializer_(config.imu.init)
+    , eskf_(
+          makeEskfConfig(config),
+          config.imu.noise,
+          Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag))
     , submap_manager_(config.odometry.submap)
     , pgo_backend_(config.pgo)
     , registration_(
@@ -46,7 +69,9 @@ OdometryPipeline::OdometryPipeline(const Config& config)
         Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag);
 
     spdlog::info(
-        "[pipeline] ready: registration={}, deskew={}, submap_kf={}",
+        "[pipeline] ready: fusion={}, registration={}, deskew={}, "
+        "submap_kf={}",
+        config.odometry.fusion,
         config.registration.type,
         config.deskew.time_offset ? "offset" : "zero-ref",
         config.odometry.submap.max_keyframes);
@@ -227,6 +252,12 @@ void OdometryPipeline::propagateStateLocked(const ImuData& imu) {
         return;
     }
 
+    if (useEskf()) {
+        eskf_.predict(imu);
+        propagated_state_ = eskf_.tipState();
+        return;
+    }
+
     const double dt = imu.stamp - propagated_state_.stamp;
     propagation_integrator_.integrate(imu, dt);
     recoverPropagatedStateLocked(imu.stamp);
@@ -251,9 +282,26 @@ void OdometryPipeline::rebasePropagation(
 
     imu_state_ = corrected_state;
     propagated_state_ = corrected_state;
-    propagation_integrator_.reset();
     has_first_scan_.store(true, std::memory_order_release);
 
+    if (useEskf()) {
+        if (!eskf_.initialized()) {
+            eskf_.initialize(
+                corrected_state, accel_bias_, gyro_bias_);
+        } else {
+            // Preserve posterior covariance installed by correctAt / initialize.
+            eskf_.setBaseline(
+                corrected_state,
+                accel_bias_,
+                gyro_bias_,
+                eskf_.baselineCovariance());
+        }
+        eskf_.replayToLatest(imu_buffer_);
+        propagated_state_ = eskf_.tipState();
+        return;
+    }
+
+    propagation_integrator_.reset();
     for (const ImuData& imu : imu_buffer_) {
         propagateStateLocked(imu);
     }
@@ -357,17 +405,17 @@ OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
 
 void OdometryPipeline::maybeUpdateSubmapTarget(
     const DeskewResult& deskewed,
-    const RegistrationArtifacts& artifacts)
+    const Isometry3d& T_world_lidar,
+    const PointCloudConstPtr& cloud)
 {
-    if (!artifacts.result.accepted
-        || !submap_manager_.shouldAddKeyframe(
-            artifacts.result.T_world_lidar)) {
+    if (!cloud
+        || !submap_manager_.shouldAddKeyframe(T_world_lidar)) {
         return;
     }
 
     if (!submap_manager_.addKeyframe(
-            artifacts.result.T_world_lidar,
-            artifacts.corrected_source,
+            T_world_lidar,
+            cloud,
             deskewed.reference_stamp)) {
         return;
     }
@@ -420,32 +468,116 @@ void OdometryPipeline::processLidarScan(
     prior_state.T_world_imu = T_world_imu_prior;
     prior_state.v_world = deskewed.v_world_ref;
     prior_state.valid = true;
-    const ObserverUpdate observer_update = applyGeometricObserver(
-        prior_state,
-        T_world_imu_corrected,
-        previous_state_stamp,
-        accel_bias,
-        gyro_bias,
-        config_.odometry.observer,
-        artifacts->result.accepted);
 
-    rebasePropagation(
-        observer_update.state,
-        observer_update.accel_bias,
-        observer_update.gyro_bias);
-    maybeUpdateSubmapTarget(deskewed, *artifacts);
+    NavigationState fused_state;
+    Eigen::Vector3d fused_accel_bias;
+    Eigen::Vector3d fused_gyro_bias;
+    bool fusion_accepted = artifacts->result.accepted;
+
+    if (useEskf()) {
+        std::optional<Eskf::Mat6> hessian;
+        if (artifacts->result.hessian_valid) {
+            hessian = artifacts->result.hessian;
+        }
+        // Hold IMU/state locks for the whole correct + bias rebase so pushImu
+        // cannot interleave predicts against a mid-update filter.
+        {
+            std::scoped_lock lock(imu_mutex_, state_mutex_);
+            if (!eskf_.initialized()) {
+                eskf_.initialize(
+                    imu_state_, accel_bias_, gyro_bias_);
+            }
+            const EskfUpdate eskf_update = eskf_.correctAt(
+                deskewed.reference_stamp,
+                prior_state,
+                T_world_imu_corrected,
+                artifacts->result.accepted,
+                imu_buffer_,
+                hessian);
+            fused_state = eskf_update.state;
+            fused_accel_bias = eskf_update.accel_bias;
+            fused_gyro_bias = eskf_update.gyro_bias;
+            fusion_accepted = eskf_update.accepted;
+
+            const Eigen::Vector3d accel_correction =
+                accel_bias_ - fused_accel_bias;
+            const Eigen::Vector3d gyro_correction =
+                gyro_bias_ - fused_gyro_bias;
+            for (ImuData& imu : imu_buffer_) {
+                imu.accel += accel_correction;
+                imu.gyro += gyro_correction;
+            }
+            accel_bias_ = fused_accel_bias;
+            gyro_bias_ = fused_gyro_bias;
+            imu_state_ = fused_state;
+            // Commit baseline only after the buffer has been bias-adjusted.
+            eskf_.setBaseline(
+                fused_state,
+                accel_bias_,
+                gyro_bias_,
+                eskf_.tipCovariance());
+            eskf_.replayToLatest(imu_buffer_);
+            propagated_state_ = eskf_.tipState();
+            has_first_scan_.store(true, std::memory_order_release);
+        }
+        (void)previous_state_stamp;
+    } else {
+        const ObserverUpdate observer_update = applyGeometricObserver(
+            prior_state,
+            T_world_imu_corrected,
+            previous_state_stamp,
+            accel_bias,
+            gyro_bias,
+            config_.odometry.observer,
+            artifacts->result.accepted);
+        fused_state = observer_update.state;
+        fused_accel_bias = observer_update.accel_bias;
+        fused_gyro_bias = observer_update.gyro_bias;
+        fusion_accepted = artifacts->result.accepted;
+        rebasePropagation(
+            fused_state,
+            fused_accel_bias,
+            fused_gyro_bias);
+    }
+
+    // Observer keeps the DLIO pattern (publish/map use full GICP pose).
+    // ESKF must keep map, output, and IMU state on the same fused pose;
+    // otherwise the submap races ahead of the filter and drifts in seconds.
+    Isometry3d T_world_lidar_out = artifacts->result.T_world_lidar;
+    PointCloudConstPtr cloud_out = artifacts->corrected_source;
+    if (useEskf()) {
+        T_world_lidar_out =
+            fused_state.T_world_imu * config_.extrinsics.T_imu_lidar;
+        if (artifacts->result.accepted) {
+            const Isometry3d T_align =
+                T_world_lidar_out
+                * artifacts->result.T_world_lidar.inverse();
+            if (!T_align.matrix().isIdentity(1e-9)) {
+                auto aligned = std::make_shared<PointCloud>();
+                pcl::transformPointCloud(
+                    *artifacts->corrected_source,
+                    *aligned,
+                    T_align.matrix());
+                cloud_out = aligned;
+            }
+        }
+    }
+
+    if (fusion_accepted) {
+        maybeUpdateSubmapTarget(deskewed, T_world_lidar_out, cloud_out);
+    }
     {
         std::lock_guard<std::mutex> lock(output_mutex_);
-        latest_deskewed_ = artifacts->corrected_source;
-        latest_result_.T_world_lidar = artifacts->result.T_world_lidar;
-        latest_result_.v_world = observer_update.state.v_world;
+        latest_deskewed_ = cloud_out;
+        latest_result_.T_world_lidar = T_world_lidar_out;
+        latest_result_.v_world = fused_state.v_world;
         latest_result_.stamp = deskewed.reference_stamp;
-        latest_result_.converged = artifacts->result.accepted;
+        latest_result_.converged = fusion_accepted;
     }
-    if (artifacts->result.accepted) {
+    if (fusion_accepted) {
         pgo_backend_.addFrame(
-            artifacts->corrected_source,
-            artifacts->result.T_world_lidar,
+            cloud_out,
+            T_world_lidar_out,
             deskewed.reference_stamp);
     }
 }

@@ -133,6 +133,10 @@ Config loadConfig(const std::filesystem::path& path) {
             root["odometry"]["voxel_size"].value<double>()) {
         config.odometry.voxel_size = *voxel_size;
     }
+    if (const auto fusion =
+            root["odometry"]["fusion"].value<std::string>()) {
+        config.odometry.fusion = *fusion;
+    }
     if (const auto value =
             root["odometry"]["crop_box"]["min_x"].value<double>()) {
         config.odometry.crop_box.min_x = *value;
@@ -184,6 +188,67 @@ Config loadConfig(const std::filesystem::path& path) {
     if (const auto gyro_bias_max =
             root["odometry"]["observer"]["gyro_bias_max"].value<double>()) {
         config.odometry.observer.gyro_bias_max = *gyro_bias_max;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["sigma_rotation"].value<double>()) {
+        config.odometry.eskf.sigma_rotation = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["sigma_translation"].value<double>()) {
+        config.odometry.eskf.sigma_translation = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["icp_covariance_scale"].value<double>()) {
+        config.odometry.eskf.icp_covariance_scale = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["use_hessian"].value<bool>()) {
+        config.odometry.eskf.use_hessian = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["mahalanobis_threshold"].value<double>()) {
+        config.odometry.eskf.mahalanobis_threshold = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["inject_full_pose"].value<bool>()) {
+        config.odometry.eskf.inject_full_pose = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["bias_update_scale"].value<double>()) {
+        config.odometry.eskf.bias_update_scale = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["velocity_correction_gain"]
+                .value<double>()) {
+        config.odometry.eskf.velocity_correction_gain = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["accel_bias_max"].value<double>()) {
+        config.odometry.eskf.accel_bias_max = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["gyro_bias_max"].value<double>()) {
+        config.odometry.eskf.gyro_bias_max = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["init_sigma_theta"].value<double>()) {
+        config.odometry.eskf.init_sigma_theta = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["init_sigma_velocity"].value<double>()) {
+        config.odometry.eskf.init_sigma_velocity = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["init_sigma_position"].value<double>()) {
+        config.odometry.eskf.init_sigma_position = *value;
+    }
+    if (const auto value =
+            root["imu"]["noise"]["accel_bias_rw_sigma"].value<double>()) {
+        config.imu.noise.accel_bias_rw_sigma = *value;
+    }
+    if (const auto value =
+            root["imu"]["noise"]["gyro_bias_rw_sigma"].value<double>()) {
+        config.imu.noise.gyro_bias_rw_sigma = *value;
     }
     if (const auto splitting_distance =
             root["odometry"]["submap"]["splitting_distance"].value<double>()) {
@@ -365,6 +430,46 @@ void validateConfig(const Config& config) {
     requireFiniteNonnegative(
         config.odometry.observer.gyro_bias_max,
         "odometry.observer.gyro_bias_max");
+    if (config.odometry.fusion != "observer"
+        && config.odometry.fusion != "eskf") {
+        throw std::invalid_argument(
+            "odometry.fusion must be \"observer\" or \"eskf\"");
+    }
+    requireFinitePositive(
+        config.odometry.eskf.sigma_rotation,
+        "odometry.eskf.sigma_rotation");
+    requireFinitePositive(
+        config.odometry.eskf.sigma_translation,
+        "odometry.eskf.sigma_translation");
+    requireFinitePositive(
+        config.odometry.eskf.icp_covariance_scale,
+        "odometry.eskf.icp_covariance_scale");
+    if (!std::isfinite(config.odometry.eskf.mahalanobis_threshold)) {
+        throw std::invalid_argument(
+            "odometry.eskf.mahalanobis_threshold must be finite "
+            "(use <=0 to disable)");
+    }
+    requireFiniteNonnegative(
+        config.odometry.eskf.bias_update_scale,
+        "odometry.eskf.bias_update_scale");
+    requireFiniteNonnegative(
+        config.odometry.eskf.velocity_correction_gain,
+        "odometry.eskf.velocity_correction_gain");
+    requireFiniteNonnegative(
+        config.odometry.eskf.accel_bias_max,
+        "odometry.eskf.accel_bias_max");
+    requireFiniteNonnegative(
+        config.odometry.eskf.gyro_bias_max,
+        "odometry.eskf.gyro_bias_max");
+    requireFinitePositive(
+        config.odometry.eskf.init_sigma_theta,
+        "odometry.eskf.init_sigma_theta");
+    requireFinitePositive(
+        config.odometry.eskf.init_sigma_velocity,
+        "odometry.eskf.init_sigma_velocity");
+    requireFinitePositive(
+        config.odometry.eskf.init_sigma_position,
+        "odometry.eskf.init_sigma_position");
     if (!std::isfinite(config.odometry.voxel_size)
         || config.odometry.voxel_size <= 0.0) {
         throw std::invalid_argument(

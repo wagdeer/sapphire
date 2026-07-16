@@ -113,6 +113,9 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
     result.converged     = converged;
     result.num_inliers   = reg_result.num_inliers;
     result.accepted      = accepted;
+    result.hessian       = gicp_.getFinalHessian();
+    result.hessian_valid = result.hessian.allFinite()
+        && result.hessian.norm() > 0.0;
 
     return result;
 }

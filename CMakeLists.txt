@@ -60,6 +60,7 @@ add_library(sapphire STATIC
     src/backend/pose_graph.cpp
     src/odometry/pipeline.cpp
     src/odometry/deskew.cpp
+    src/odometry/eskf.cpp
     src/odometry/observer.cpp
     src/odometry/registration.cpp
     src/odometry/submap.cpp
@@ -153,6 +154,13 @@ if(BUILD_TESTING)
     target_link_libraries(sapphire_observer_test PRIVATE sapphire)
     sapphire_enable_release_ipo(sapphire_observer_test)
     add_test(NAME sapphire_observer_test COMMAND sapphire_observer_test)
+
+    add_executable(sapphire_eskf_test
+        tests/eskf_test.cpp
+    )
+    target_link_libraries(sapphire_eskf_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_eskf_test)
+    add_test(NAME sapphire_eskf_test COMMAND sapphire_eskf_test)
 
     add_executable(sapphire_registration_test
         tests/registration_test.cpp

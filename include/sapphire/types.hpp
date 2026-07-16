@@ -128,6 +128,9 @@ struct RegistrationResult {
     bool    converged      = false;
     size_t  num_inliers    = 0;
     bool    accepted       = false;   // false if correction was rejected
+    /// Final GICP information matrix from small_gicp, order [rx,ry,rz,tx,ty,tz].
+    Eigen::Matrix<double, 6, 6> hessian = Eigen::Matrix<double, 6, 6>::Zero();
+    bool    hessian_valid  = false;
 };
 
 /// Sapphire sensor suite config — mirrors odometry.yaml.
@@ -147,6 +150,8 @@ struct Config {
     struct Odometry {
         /// Leaf size used to downsample each deskewed scan before GICP.
         double voxel_size = 0.25;
+        /// Frontend fusion backend: "observer" (default) or "eskf".
+        std::string fusion = "observer";
         /// Axis-aligned box in LiDAR frame; points inside are removed (robot body).
         struct CropBox {
             double min_x = -1.0;
@@ -172,6 +177,21 @@ struct Config {
             double accel_bias_max = 10.0;  // m/s², absolute total bias
             double gyro_bias_max = 0.5;    // rad/s, absolute total bias
         } observer;
+        struct Eskf {
+            double sigma_rotation = 0.01;       // rad
+            double sigma_translation = 0.01;    // m
+            double icp_covariance_scale = 25.0;
+            bool use_hessian = false;
+            double mahalanobis_threshold = -1.0;  // disabled; hard gates only
+            bool inject_full_pose = true;
+            double bias_update_scale = 0.25;
+            double velocity_correction_gain = 0.0;
+            double accel_bias_max = 10.0;
+            double gyro_bias_max = 0.5;
+            double init_sigma_theta = 0.1;      // rad
+            double init_sigma_velocity = 1.0;   // m/s
+            double init_sigma_position = 1.0;   // m
+        } eskf;
     } odometry;
 
     struct Registration {

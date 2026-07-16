@@ -16,10 +16,15 @@ accel_noise_density = 0.000196
 gyro_noise_density = 0.000152
 accel_random_walk = 0.000165
 gyro_random_walk = 0.0000655
+# Explicit bias RW for ESKF (same DLIO defaults; also used as fallback via *_random_walk).
+accel_bias_rw_sigma = 0.000165
+gyro_bias_rw_sigma = 0.0000655
 
 [odometry]
 # Downsample each deskewed scan before GICP. Matches the validated DLIO profile.
 voxel_size = 0.25
+# Frontend fusion: "observer" (default, DLIO geometric observer) or "eskf".
+fusion = "eskf"
 
 [odometry.crop_box]
 min_x = -1.0
@@ -38,6 +43,28 @@ accel_bias_gain = 2.25
 gyro_bias_gain = 1.0
 accel_bias_max = 10.0
 gyro_bias_max = 0.5
+
+[odometry.eskf]
+# Conservative bring-up profile: keep pose on accepted ICP while reducing
+# scan-to-scan noise coupled into ESKF velocity and bias states.
+sigma_rotation = 0.02
+sigma_translation = 0.05
+icp_covariance_scale = 25.0
+use_hessian = false
+# Disabled (<=0): small R + Mahalanobis was rejecting good ICP and causing
+# IMU-only open-loop drift within ~5s. Hard VGICP gates remain active.
+mahalanobis_threshold = -1.0
+inject_full_pose = true
+# Disable online bias injection while isolating the current drift source.
+bias_update_scale = 0.0
+# Correct velocity from the position innovation without differentiating ICP.
+# Lower than the validated observer gain (11.25) for conservative ESKF bring-up.
+velocity_correction_gain = 8.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
+init_sigma_theta = 0.017
+init_sigma_velocity = 0.01
+init_sigma_position = 0.01
 
 [odometry.submap]
 splitting_distance = 1.5
