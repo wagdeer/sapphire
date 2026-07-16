@@ -1,5 +1,7 @@
 #include <sapphire/odometry/eskf.hpp>
 
+#include <Eigen/Eigenvalues>
+
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -26,6 +28,59 @@ void expectNear(
         fail(message + " (actual=" + std::to_string(actual)
              + " expected=" + std::to_string(expected) + ")");
     }
+}
+
+Eigen::Matrix3d skew(const Eigen::Vector3d& v) {
+    Eigen::Matrix3d m;
+    m << 0.0, -v.z(), v.y(),
+         v.z(), 0.0, -v.x(),
+        -v.y(), v.x(), 0.0;
+    return m;
+}
+
+Eigen::Matrix3d expSo3(const Eigen::Vector3d& omega) {
+    const double angle = omega.norm();
+    if (angle < 1e-12) {
+        return Eigen::Matrix3d::Identity() + skew(omega);
+    }
+    return Eigen::AngleAxisd(angle, omega / angle).toRotationMatrix();
+}
+
+Eigen::Vector3d logSo3(const Eigen::Matrix3d& rotation) {
+    const Eigen::AngleAxisd angle_axis(rotation);
+    return angle_axis.axis() * angle_axis.angle();
+}
+
+sapphire::Isometry3d expSe3(
+    const Eigen::Matrix<double, 6, 1>& delta)
+{
+    sapphire::Isometry3d result = sapphire::Isometry3d::Identity();
+    const Eigen::Vector3d omega = delta.head<3>();
+    const Eigen::Vector3d translation = delta.tail<3>();
+    const double theta = omega.norm();
+    const Eigen::Matrix3d Omega = skew(omega);
+    Eigen::Matrix3d V = Eigen::Matrix3d::Identity();
+    if (theta < 1e-8) {
+        V += 0.5 * Omega + (1.0 / 6.0) * Omega * Omega;
+    } else {
+        V += (1.0 - std::cos(theta)) / (theta * theta) * Omega
+            + (theta - std::sin(theta)) / (theta * theta * theta)
+                * Omega * Omega;
+    }
+    result.linear() = expSo3(omega);
+    result.translation() = V * translation;
+    return result;
+}
+
+Eigen::Matrix<double, 6, 1> poseInnovation(
+    const sapphire::Isometry3d& prior,
+    const sapphire::Isometry3d& measured)
+{
+    Eigen::Matrix<double, 6, 1> innovation;
+    innovation.head<3>() =
+        logSo3(prior.rotation().transpose() * measured.rotation());
+    innovation.tail<3>() = measured.translation() - prior.translation();
+    return innovation;
 }
 
 sapphire::NavigationState makeState(
@@ -318,6 +373,212 @@ void testPositionInnovationUpdatesAccelBias() {
            "position innovation after IMU propagation must update accel bias");
 }
 
+void testRegistrationJacobianMatchesFiniteDifference() {
+    sapphire::Isometry3d prior = sapphire::Isometry3d::Identity();
+    prior.linear() =
+        (Eigen::AngleAxisd(0.35, Eigen::Vector3d::UnitZ())
+         * Eigen::AngleAxisd(-0.2, Eigen::Vector3d::UnitY()))
+            .toRotationMatrix();
+    prior.translation() = Eigen::Vector3d(4.0, -2.0, 1.5);
+
+    sapphire::Isometry3d correction = sapphire::Isometry3d::Identity();
+    correction.linear() =
+        Eigen::AngleAxisd(0.08, Eigen::Vector3d(1.0, 2.0, -1.0).normalized())
+            .toRotationMatrix();
+    correction.translation() = Eigen::Vector3d(0.1, -0.03, 0.04);
+    const sapphire::Isometry3d measured = correction * prior;
+
+    const auto analytic =
+        sapphire::Eskf::registrationToInnovationJacobian(prior, measured);
+    sapphire::Eskf::Mat6 numeric;
+    constexpr double epsilon = 1e-7;
+    for (int column = 0; column < 6; ++column) {
+        Eigen::Matrix<double, 6, 1> delta =
+            Eigen::Matrix<double, 6, 1>::Zero();
+        delta(column) = epsilon;
+        const auto plus =
+            poseInnovation(prior, correction * expSe3(delta) * prior);
+        delta(column) = -epsilon;
+        const auto minus =
+            poseInnovation(prior, correction * expSe3(delta) * prior);
+        numeric.col(column) = (plus - minus) / (2.0 * epsilon);
+    }
+
+    expect(
+        analytic.isApprox(numeric, 2e-7),
+        "registration-to-innovation Jacobian must match finite differences");
+}
+
+void testDegenerateHessianInflatesWeakDirection() {
+    sapphire::EskfConfig config;
+    config.use_hessian = true;
+    config.sigma_rotation = 1e-4;
+    config.sigma_translation = 1e-4;
+    config.icp_covariance_scale = 1.0;
+    config.hessian_max_condition = 100.0;
+    config.hessian_degenerate_sigma = 2.0;
+    config.hessian_max_sigma = 5.0;
+    sapphire::Eskf eskf(
+        config,
+        sapphire::ImuNoiseConfig{},
+        Eigen::Vector3d(0.0, 0.0, -9.80665));
+
+    sapphire::Eskf::Mat6 information =
+        sapphire::Eskf::Mat6::Identity() * 1e6;
+    information(3, 3) = 1.0;
+    const auto covariance = eskf.measurementCovariance(information);
+
+    expect(
+        covariance(3, 3) > 1e5 * covariance(4, 4),
+        "corridor-like weak translation axis must receive larger covariance");
+    Eigen::SelfAdjointEigenSolver<sapphire::Eskf::Mat6> solver(covariance);
+    expect(
+        solver.info() == Eigen::Success
+            && solver.eigenvalues().minCoeff() > 0.0,
+        "directional measurement covariance must remain positive definite");
+}
+
+void testMixedDegenerateDirectionPreservesEigenvector() {
+    sapphire::EskfConfig config;
+    config.use_hessian = true;
+    config.sigma_rotation = 1e-4;
+    config.sigma_translation = 1e-4;
+    config.icp_covariance_scale = 1.0;
+    config.hessian_max_condition = 100.0;
+    config.hessian_degenerate_sigma = 1.5;
+    sapphire::Eskf eskf(
+        config,
+        sapphire::ImuNoiseConfig{},
+        Eigen::Vector3d(0.0, 0.0, -9.80665));
+
+    sapphire::Eskf::Mat6 basis = sapphire::Eskf::Mat6::Identity();
+    const double inv_sqrt_two = 1.0 / std::sqrt(2.0);
+    basis.col(3).setZero();
+    basis.col(4).setZero();
+    basis(3, 3) = inv_sqrt_two;
+    basis(4, 3) = inv_sqrt_two;
+    basis(3, 4) = -inv_sqrt_two;
+    basis(4, 4) = inv_sqrt_two;
+    Eigen::Matrix<double, 6, 1> eigenvalues =
+        Eigen::Matrix<double, 6, 1>::Constant(1e6);
+    eigenvalues(3) = 1.0;
+    const sapphire::Eskf::Mat6 information =
+        basis * eigenvalues.asDiagonal() * basis.transpose();
+    const auto covariance = eskf.measurementCovariance(information);
+
+    Eigen::Matrix<double, 6, 1> weak =
+        Eigen::Matrix<double, 6, 1>::Zero();
+    weak(3) = inv_sqrt_two;
+    weak(4) = inv_sqrt_two;
+    Eigen::Matrix<double, 6, 1> strong =
+        Eigen::Matrix<double, 6, 1>::Zero();
+    strong(3) = -inv_sqrt_two;
+    strong(4) = inv_sqrt_two;
+    expect(
+        weak.dot(covariance * weak)
+            > 1e5 * strong.dot(covariance * strong),
+        "mixed weak Hessian eigenvector must be preserved in covariance");
+}
+
+void testPlanarHessianInflatesInPlaneAndYawDirections() {
+    sapphire::EskfConfig config;
+    config.use_hessian = true;
+    config.sigma_rotation = 1e-4;
+    config.sigma_translation = 1e-4;
+    config.icp_covariance_scale = 1.0;
+    config.hessian_max_condition = 100.0;
+    config.hessian_degenerate_sigma = 2.0;
+    sapphire::Eskf eskf(
+        config,
+        sapphire::ImuNoiseConfig{},
+        Eigen::Vector3d(0.0, 0.0, -9.80665));
+
+    sapphire::Eskf::Mat6 planar_information =
+        sapphire::Eskf::Mat6::Identity() * 1e6;
+    planar_information(2, 2) = 1.0;  // yaw around plane normal
+    planar_information(3, 3) = 1.0;  // in-plane X
+    planar_information(4, 4) = 1.0;  // in-plane Y
+    const auto covariance =
+        eskf.measurementCovariance(planar_information);
+
+    expect(
+        covariance(2, 2) > 1e5 * covariance(0, 0)
+            && covariance(3, 3) > 1e5 * covariance(5, 5)
+            && covariance(4, 4) > 1e5 * covariance(5, 5),
+        "single-plane weak yaw and in-plane translation must be inflated");
+}
+
+void testDirectionalPoseUpdateTrustsOnlyObservableAxis() {
+    sapphire::EskfConfig config;
+    config.inject_full_pose = false;
+    config.inject_directional_pose = true;
+    config.use_hessian = true;
+    config.sigma_rotation = 1e-4;
+    config.sigma_translation = 1e-4;
+    config.icp_covariance_scale = 1.0;
+    config.hessian_max_condition = 100.0;
+    config.hessian_degenerate_sigma = 2.0;
+    config.init_sigma_position = 0.5;
+    config.velocity_correction_gain = 8.0;
+    sapphire::Eskf eskf(
+        config,
+        sapphire::ImuNoiseConfig{},
+        Eigen::Vector3d(0.0, 0.0, -9.80665));
+    eskf.initialize(
+        makeState(0.0), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
+
+    sapphire::Eskf::Mat6 information =
+        sapphire::Eskf::Mat6::Identity() * 1e6;
+    information(3, 3) = 1.0;
+    sapphire::Isometry3d measurement = sapphire::Isometry3d::Identity();
+    measurement.translation() = Eigen::Vector3d(0.2, 0.2, 0.0);
+    const auto update = eskf.correctAt(
+        0.1,
+        makeState(0.1),
+        measurement,
+        true,
+        makeStationaryBuffer(0.0, 0.1, 0.01, 9.80665),
+        information);
+
+    expect(update.accepted, "directional Hessian update must be accepted");
+    expect(
+        update.state.T_world_imu.translation().y() > 0.19,
+        "well-observed translation axis must follow GICP");
+    expect(
+        update.state.T_world_imu.translation().x() < 0.02,
+        "degenerate translation axis must remain close to the IMU prior");
+    expect(
+        update.pose_gain_diagonal(3) < update.pose_gain_diagonal(4),
+        "weak direction must have a smaller Kalman gain");
+    expect(
+        update.state.v_world.x() < 0.02
+            && update.state.v_world.y() > 0.1,
+        "velocity bridge must be projected through directional observability");
+}
+
+void testBiasRandomWalkGrowsWhenBiasInjectionDisabled() {
+    sapphire::EskfConfig config;
+    config.bias_update_scale = 0.0;
+    sapphire::ImuNoiseConfig noise;
+    noise.accel_bias_rw_sigma = 0.01;
+    noise.gyro_bias_rw_sigma = 0.01;
+    sapphire::Eskf eskf(
+        config, noise, Eigen::Vector3d(0.0, 0.0, -9.80665));
+    eskf.initialize(
+        makeState(0.0), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
+    const double before = eskf.tipCovariance()(9, 9);
+
+    sapphire::ImuData imu;
+    imu.stamp = 1.0;
+    imu.accel = Eigen::Vector3d(0.0, 0.0, 9.80665);
+    imu.gyro.setZero();
+    eskf.predict(imu);
+
+    expect(
+        eskf.tipCovariance()(9, 9) > before + 1e-6,
+        "bias covariance random walk must not depend on bias injection scale");
+}
+
 }  // namespace
 
 int main() {
@@ -331,6 +592,12 @@ int main() {
     testCovariancePropagatesToInterpolatedReferenceStamp();
     testPositionInnovationVelocityCorrection();
     testPositionInnovationUpdatesAccelBias();
+    testRegistrationJacobianMatchesFiniteDifference();
+    testDegenerateHessianInflatesWeakDirection();
+    testMixedDegenerateDirectionPreservesEigenvector();
+    testPlanarHessianInflatesInPlaneAndYawDirections();
+    testDirectionalPoseUpdateTrustsOnlyObservableAxis();
+    testBiasRandomWalkGrowsWhenBiasInjectionDisabled();
     std::cout << "All eskf tests passed\n";
     return EXIT_SUCCESS;
 }

@@ -181,6 +181,8 @@ private:
 
     // ── GICP Registration ─────────────────────────────────────────
     Registration registration_;
+    std::size_t registration_attempt_count_ = 0;
+    std::size_t registration_reject_count_ = 0;
 
     // TODO v0.1:
     //   std::unique_ptr<VoxelMap> voxel_map_;

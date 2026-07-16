@@ -8,6 +8,7 @@
 #include <Eigen/Geometry>
 
 #include <cstddef>
+#include <deque>
 #include <optional>
 
 namespace sapphire {
@@ -23,6 +24,11 @@ struct EskfConfig {
     double icp_covariance_scale = 25.0;
     /// If true, build R from small_gicp Hessian; otherwise diagonal fallback.
     bool use_hessian = false;
+    /// Numerical and degeneracy controls for the GICP information matrix.
+    double hessian_min_information = 1e-6;
+    double hessian_max_condition = 1e4;
+    double hessian_degenerate_sigma = 1.0;
+    double hessian_max_sigma = 10.0;
     /// χ² threshold for 6-DOF innovation. Set <= 0 to disable the gate.
     /// With high ICP trust / inject_full_pose, prefer hard registration gates
     /// only: a tight Mahalanobis gate rejects good ICP and opens an IMU-only
@@ -31,6 +37,10 @@ struct EskfConfig {
     /// If true, accepted updates set R/p exactly to the ICP pose. Velocity and
     /// biases still come from the Kalman update (bias optionally damped).
     bool inject_full_pose = true;
+    /// If true (and Hessian is enabled), accepted pose increments use the
+    /// Hessian observability projector rather than the statistical Kalman
+    /// pose rows. Strong directions follow GICP; weak directions retain IMU.
+    bool inject_directional_pose = false;
     /// Scale applied to Kalman bias increments (1 = full ESKF coupling).
     double bias_update_scale = 0.25;
     /// Optional position-innovation velocity correction [1/s]. This avoids
@@ -52,6 +62,14 @@ struct EskfUpdate {
     Eigen::Vector3d gyro_bias = Eigen::Vector3d::Zero();
     bool accepted = false;
     double mahalanobis = 0.0;
+    double normalized_nis = 0.0;
+    double mean_normalized_nis = 0.0;
+    Eigen::Matrix<double, 6, 1> measurement_std =
+        Eigen::Matrix<double, 6, 1>::Zero();
+    Eigen::Matrix<double, 6, 1> information_eigenvalues =
+        Eigen::Matrix<double, 6, 1>::Zero();
+    Eigen::Matrix<double, 6, 1> pose_gain_diagonal =
+        Eigen::Matrix<double, 6, 1>::Zero();
 };
 
 /// Error-state Kalman filter for IMU–LiDAR frontend fusion (Approach A).
@@ -120,8 +138,24 @@ public:
     const Mat15& baselineCovariance() const { return P_baseline_; }
     bool initialized() const { return initialized_; }
 
-    /// Build measurement covariance R (diagonal or Hessian-based).
+    /// Build measurement covariance R assuming an identity correction frame.
+    /// Primarily retained for simple callers and tests.
     Mat6 measurementCovariance(const std::optional<Mat6>& hessian) const;
+
+    /// Build R in the ESKF innovation coordinates for a GICP correction
+    /// Hessian evaluated between prior and measured IMU poses.
+    Mat6 measurementCovariance(
+        const std::optional<Mat6>& hessian,
+        const Isometry3d& T_world_imu_prior,
+        const Isometry3d& T_world_imu_measured,
+        Vec6* information_eigenvalues = nullptr,
+        Mat6* directional_observability = nullptr) const;
+
+    /// First-order map from small_gicp correction right perturbations
+    /// [rotation, translation] to the ESKF innovation coordinates.
+    static Mat6 registrationToInnovationJacobian(
+        const Isometry3d& T_world_imu_prior,
+        const Isometry3d& T_world_imu_measured);
 
 private:
     void recoverTipLocked(double stamp);
@@ -148,6 +182,8 @@ private:
     Mat15 P_tip_ = Mat15::Zero();
     detail::MeanOnlyGal3Integrator integrator_;
     std::size_t correction_count_ = 0;
+    std::deque<double> normalized_nis_window_;
+    double normalized_nis_sum_ = 0.0;
 };
 
 }  // namespace sapphire

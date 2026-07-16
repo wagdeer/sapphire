@@ -1,5 +1,5 @@
-# Sapphire configuration for Livox Mid-360.
-# Point offset_time must be converted from nanoseconds to seconds by the ROS adapter.
+# Experimental direction-aware ESKF profile for Livox Mid-360.
+# Keep sapphire_mid360.toml as the validated observer-hybrid rollback profile.
 
 [imu]
 gravity = 9.80665
@@ -16,14 +16,11 @@ accel_noise_density = 0.000196
 gyro_noise_density = 0.000152
 accel_random_walk = 0.000165
 gyro_random_walk = 0.0000655
-# Explicit bias RW for ESKF (same DLIO defaults; also used as fallback via *_random_walk).
 accel_bias_rw_sigma = 0.000165
 gyro_bias_rw_sigma = 0.0000655
 
 [odometry]
-# Downsample each deskewed scan before GICP. Matches the validated DLIO profile.
 voxel_size = 0.25
-# Frontend fusion: "observer" (default, DLIO geometric observer) or "eskf".
 fusion = "eskf"
 
 [odometry.crop_box]
@@ -35,7 +32,6 @@ max_y = 1.0
 max_z = 1.0
 
 [odometry.observer]
-# Matches the validated DLIO Mid-360 geometric observer.
 position_gain = 4.5
 velocity_gain = 11.25
 orientation_gain = 4.0
@@ -45,33 +41,31 @@ accel_bias_max = 10.0
 gyro_bias_max = 0.5
 
 [odometry.eskf]
-# Conservative bring-up profile: keep pose on accepted ICP while reducing
-# scan-to-scan noise coupled into ESKF velocity and bias states.
 sigma_rotation = 0.02
 sigma_translation = 0.05
 icp_covariance_scale = 25.0
-use_hessian = false
-# Parsed even in baseline mode so switching profiles changes only behavior,
-# not numerical defaults.
+use_hessian = true
 hessian_min_information = 1e-6
 hessian_max_condition = 10000.0
 hessian_degenerate_sigma = 1.0
 hessian_max_sigma = 10.0
-# Disabled (<=0): small R + Mahalanobis was rejecting good ICP and causing
-# IMU-only open-loop drift within ~5s. Hard VGICP gates remain active.
+# Retain registration hard gates; collect NIS before enabling a statistical gate.
 mahalanobis_threshold = -1.0
-inject_full_pose = true
-inject_directional_pose = false
-# Disable online bias injection while isolating the current drift source.
-bias_update_scale = 0.0
-# Correct velocity from the position innovation without differentiating ICP.
-# Lower than the validated observer gain (11.25) for conservative ESKF bring-up.
+# Pose uses the bounded Hessian observability gain. Velocity keeps the
+# validated observer gain during stage 1, projected through the same
+# observability so weak geometry cannot inject a full correction.
+inject_full_pose = false
+inject_directional_pose = true
 velocity_correction_gain = 8.0
+# Bias remains frozen during pose/velocity bring-up. Its covariance RW is active.
+bias_update_scale = 0.0
 accel_bias_max = 10.0
 gyro_bias_max = 0.5
-init_sigma_theta = 0.017
-init_sigma_velocity = 0.01
-init_sigma_position = 0.01
+# Bring-up starts uncertain enough for the first accepted scan to establish
+# the posterior instead of locking the filter to the stationary initializer.
+init_sigma_theta = 0.1
+init_sigma_velocity = 0.5
+init_sigma_position = 0.5
 
 [odometry.submap]
 splitting_distance = 1.5
@@ -113,14 +107,8 @@ map_frame_stride = 3
 map_voxel_size = 0.8
 
 [deskew]
-# Mid-360 offset_time is already relative to the message reference timestamp.
 time_offset = false
 
 [extrinsics.T_imu_lidar]
-# T_imu_lidar maps LiDAR-frame points into the IMU frame:
-# p_imu = R_imu_lidar * p_lidar + translation
-#
-# In the referenced dlio_mid360.yaml, baselink2imu and baselink2lidar
-# are identical, so their relative transform is identity.
 translation = [0.0, 0.0, 0.0]
 rotation_xyzw = [0.0, 0.0, 0.0, 1.0]

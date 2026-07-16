@@ -127,6 +127,29 @@ void testProjectConfig() {
            "referenced DLIO extrinsic must be identity");
 }
 
+void testDirectionalEskfProfile() {
+    const auto config = sapphire::loadConfig(
+        std::filesystem::path(SAPPHIRE_SOURCE_DIR)
+        / "cfg" / "sapphire_mid360_directional_eskf.toml");
+
+    expect(config.odometry.fusion == "eskf",
+           "directional profile must select ESKF fusion");
+    expect(config.odometry.eskf.use_hessian,
+           "directional profile must use the GICP Hessian");
+    expect(!config.odometry.eskf.inject_full_pose,
+           "directional profile must disable unconditional full-pose injection");
+    expect(config.odometry.eskf.inject_directional_pose,
+           "directional profile must use the Hessian observability pose gain");
+    expectNear(
+        config.odometry.eskf.velocity_correction_gain,
+        8.0,
+        "directional stage-one profile must retain stable velocity feedback");
+    expectNear(
+        config.odometry.eskf.bias_update_scale,
+        0.0,
+        "directional bring-up must initially freeze bias injection");
+}
+
 void testQuaternionNormalization() {
     const auto path = writeConfig(
         "sapphire_config_normalization.toml",
@@ -174,6 +197,7 @@ void testMissingFieldRejected() {
 
 int main() {
     testProjectConfig();
+    testDirectionalEskfProfile();
     testQuaternionNormalization();
     testInvalidGravityRejected();
     testMissingFieldRejected();

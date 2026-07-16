@@ -37,8 +37,17 @@ EskfConfig OdometryPipeline::makeEskfConfig(const Config& config) {
     eskf.sigma_translation = config.odometry.eskf.sigma_translation;
     eskf.icp_covariance_scale = config.odometry.eskf.icp_covariance_scale;
     eskf.use_hessian = config.odometry.eskf.use_hessian;
+    eskf.hessian_min_information =
+        config.odometry.eskf.hessian_min_information;
+    eskf.hessian_max_condition =
+        config.odometry.eskf.hessian_max_condition;
+    eskf.hessian_degenerate_sigma =
+        config.odometry.eskf.hessian_degenerate_sigma;
+    eskf.hessian_max_sigma = config.odometry.eskf.hessian_max_sigma;
     eskf.mahalanobis_threshold = config.odometry.eskf.mahalanobis_threshold;
     eskf.inject_full_pose = config.odometry.eskf.inject_full_pose;
+    eskf.inject_directional_pose =
+        config.odometry.eskf.inject_directional_pose;
     eskf.bias_update_scale = config.odometry.eskf.bias_update_scale;
     eskf.velocity_correction_gain =
         config.odometry.eskf.velocity_correction_gain;
@@ -391,6 +400,18 @@ OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
     artifacts.result =
         registration_.align(deskewed.T_world_lidar_ref);
     artifacts.corrected_source = registration_source;
+    ++registration_attempt_count_;
+    if (!artifacts.result.accepted) {
+        ++registration_reject_count_;
+    }
+    if (registration_attempt_count_ % 20 == 0) {
+        spdlog::warn(
+            "[registration] hard rejection rate: {}/{} ({:.1f}%)",
+            registration_reject_count_,
+            registration_attempt_count_,
+            100.0 * static_cast<double>(registration_reject_count_)
+                / static_cast<double>(registration_attempt_count_));
+    }
 
     if (artifacts.result.accepted) {
         auto transformed_source = std::make_shared<PointCloud>();

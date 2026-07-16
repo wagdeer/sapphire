@@ -2,6 +2,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <Eigen/LU>
+
 #include <algorithm>
 #include <cmath>
 
@@ -26,6 +28,23 @@ Eigen::Matrix3d so3Exp(const Eigen::Vector3d& omega) {
     return SO3::exp(omega).R();
 }
 
+Eigen::Matrix3d so3RightJacobianInverse(const Eigen::Vector3d& phi) {
+    const double theta = phi.norm();
+    const Eigen::Matrix3d Phi = skew(phi);
+    if (theta < 1e-6) {
+        return Eigen::Matrix3d::Identity()
+            + 0.5 * Phi
+            + (1.0 / 12.0) * Phi * Phi;
+    }
+    const double coefficient =
+        1.0 / (theta * theta)
+        - (1.0 + std::cos(theta))
+            / (2.0 * theta * std::sin(theta));
+    return Eigen::Matrix3d::Identity()
+        + 0.5 * Phi
+        + coefficient * Phi * Phi;
+}
+
 }  // namespace
 
 Eskf::Eskf(
@@ -39,18 +58,12 @@ Eskf::Eskf(
 }
 
 double Eskf::biasRwAccel() const {
-    if (config_.bias_update_scale <= 0.0) {
-        return 0.0;
-    }
     return noise_.accel_bias_rw_sigma > 0.0
         ? noise_.accel_bias_rw_sigma
         : noise_.accel_random_walk;
 }
 
 double Eskf::biasRwGyro() const {
-    if (config_.bias_update_scale <= 0.0) {
-        return 0.0;
-    }
     return noise_.gyro_bias_rw_sigma > 0.0
         ? noise_.gyro_bias_rw_sigma
         : noise_.gyro_random_walk;
@@ -84,9 +97,11 @@ void Eskf::initialize(
     initialized_ = true;
 
     if (config_.bias_update_scale <= 0.0) {
-        spdlog::info("[eskf] bias state fixed; bias random walk disabled");
-    } else if (noise_.accel_bias_rw_sigma <= 0.0
-               || noise_.gyro_bias_rw_sigma <= 0.0) {
+        spdlog::info(
+            "[eskf] bias injection fixed; covariance random walk remains active");
+    }
+    if (noise_.accel_bias_rw_sigma <= 0.0
+        || noise_.gyro_bias_rw_sigma <= 0.0) {
         spdlog::info(
             "[eskf] using imu.noise.*_random_walk for bias RW "
             "(accel={:.3e}, gyro={:.3e}); set *_bias_rw_sigma to override",
@@ -209,6 +224,44 @@ void Eskf::replayToLatest(const ImuBuffer& imu_buffer) {
 Eskf::Mat6 Eskf::measurementCovariance(
     const std::optional<Mat6>& hessian) const
 {
+    return measurementCovariance(
+        hessian,
+        Isometry3d::Identity(),
+        Isometry3d::Identity());
+}
+
+Eskf::Mat6 Eskf::registrationToInnovationJacobian(
+    const Isometry3d& T_world_imu_prior,
+    const Isometry3d& T_world_imu_measured)
+{
+    // small_gicp optimizes the global correction C with a right perturbation:
+    // C' = C Exp(delta). The measured IMU pose is C * T_prior. Map delta to
+    // [Log(R_prior^T R_measured), p_measured - p_prior].
+    const Eigen::Matrix3d R_prior = T_world_imu_prior.rotation();
+    const Eigen::Matrix3d R_measured = T_world_imu_measured.rotation();
+    const Eigen::Matrix3d R_correction = R_measured * R_prior.transpose();
+    const Eigen::Vector3d rotation_innovation =
+        so3Log(R_prior.transpose() * R_measured);
+
+    Mat6 J = Mat6::Zero();
+    J.block<3, 3>(0, 0) =
+        so3RightJacobianInverse(rotation_innovation) * R_prior.transpose();
+    J.block<3, 3>(3, 0) =
+        -R_correction * skew(T_world_imu_prior.translation());
+    J.block<3, 3>(3, 3) = R_correction;
+    return J;
+}
+
+Eskf::Mat6 Eskf::measurementCovariance(
+    const std::optional<Mat6>& hessian,
+    const Isometry3d& T_world_imu_prior,
+    const Isometry3d& T_world_imu_measured,
+    Vec6* information_eigenvalues,
+    Mat6* directional_observability) const
+{
+    if (directional_observability != nullptr) {
+        *directional_observability = Mat6::Identity();
+    }
     Mat6 R = Mat6::Zero();
     R.block<3, 3>(0, 0) =
         Eigen::Matrix3d::Identity()
@@ -221,7 +274,17 @@ Eskf::Mat6 Eskf::measurementCovariance(
         return R;
     }
 
-    Mat6 H = 0.5 * (*hessian + hessian->transpose());
+    const Mat6 J = registrationToInnovationJacobian(
+        T_world_imu_prior, T_world_imu_measured);
+    const Mat6 J_inv = J.inverse();
+    // Transform information before classifying eigen-directions. Clipping in
+    // the correction coordinates and transforming afterwards produces a
+    // non-orthogonal "projector" with gains outside [0, 1].
+    Mat6 H =
+        J_inv.transpose()
+        * (0.5 * (*hessian + hessian->transpose()))
+        * J_inv;
+    H = 0.5 * (H + H.transpose());
     Eigen::SelfAdjointEigenSolver<Mat6> solver(H);
     if (solver.info() != Eigen::Success) {
         spdlog::warn("[eskf] Hessian eigensolve failed; using diagonal R");
@@ -229,15 +292,44 @@ Eskf::Mat6 Eskf::measurementCovariance(
     }
 
     Eigen::Matrix<double, 6, 1> evals = solver.eigenvalues();
-    constexpr double kMinEigen = 1e-4;
-    for (int i = 0; i < 6; ++i) {
-        evals(i) = std::max(evals(i), kMinEigen);
+    if (information_eigenvalues != nullptr) {
+        *information_eigenvalues = evals;
     }
-    Mat6 H_inv =
+
+    const double max_eigen =
+        std::max(evals.maxCoeff(), config_.hessian_min_information);
+    const double weak_threshold = std::max(
+        config_.hessian_min_information,
+        max_eigen / config_.hessian_max_condition);
+    Eigen::Matrix<double, 6, 1> variances;
+    Eigen::Matrix<double, 6, 1> observability_weights;
+    for (int i = 0; i < 6; ++i) {
+        const double information =
+            std::max(evals(i), config_.hessian_min_information);
+        double sigma =
+            std::sqrt(config_.icp_covariance_scale / information);
+        if (evals(i) < weak_threshold) {
+            sigma = std::max(sigma, config_.hessian_degenerate_sigma);
+        }
+        sigma = std::min(sigma, config_.hessian_max_sigma);
+        variances(i) = sigma * sigma;
+        observability_weights(i) = std::clamp(
+            evals(i) / weak_threshold, 0.0, 1.0);
+    }
+
+    const Mat6 innovation_covariance =
         solver.eigenvectors()
-        * evals.cwiseInverse().asDiagonal()
+        * variances.asDiagonal()
         * solver.eigenvectors().transpose();
-    R = config_.icp_covariance_scale * H_inv;
+    if (directional_observability != nullptr) {
+        *directional_observability =
+            solver.eigenvectors()
+            * observability_weights.asDiagonal()
+            * solver.eigenvectors().transpose();
+    }
+    // The configured diagonal covariance is a physical noise floor. The
+    // Hessian only contributes additional geometry-dependent uncertainty.
+    R += innovation_covariance;
     R = 0.5 * (R + R.transpose());
     return R;
 }
@@ -349,7 +441,14 @@ EskfUpdate Eskf::correctAt(
     H.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
     H.block<3, 3>(3, 6) = Eigen::Matrix3d::Identity();
 
-    const Mat6 R = measurementCovariance(hessian);
+    Mat6 directional_observability = Mat6::Identity();
+    const Mat6 R = measurementCovariance(
+        hessian,
+        prior_mean.T_world_imu,
+        T_world_imu_measured,
+        &update.information_eigenvalues,
+        &directional_observability);
+    update.measurement_std = R.diagonal().cwiseMax(0.0).cwiseSqrt();
     const Mat6 S = H * P_tip_ * H.transpose() + R;
     Eigen::LDLT<Mat6> ldlt(S);
     if (ldlt.info() != Eigen::Success) {
@@ -359,6 +458,17 @@ EskfUpdate Eskf::correctAt(
 
     const Vec6 Sinv_nu = ldlt.solve(nu);
     update.mahalanobis = nu.dot(Sinv_nu);
+    update.normalized_nis = update.mahalanobis / 6.0;
+    constexpr std::size_t kNisWindowSize = 100;
+    normalized_nis_window_.push_back(update.normalized_nis);
+    normalized_nis_sum_ += update.normalized_nis;
+    if (normalized_nis_window_.size() > kNisWindowSize) {
+        normalized_nis_sum_ -= normalized_nis_window_.front();
+        normalized_nis_window_.pop_front();
+    }
+    update.mean_normalized_nis =
+        normalized_nis_sum_
+        / static_cast<double>(normalized_nis_window_.size());
     // Optional diagnostic gate. Disabled by default (<=0): with high ICP trust
     // this gate previously rejected valid corrections and left the filter in
     // IMU-only open loop until VGICP also failed.
@@ -392,11 +502,45 @@ EskfUpdate Eskf::correctAt(
             reference_stamp - baseline_state_.stamp,
             0.0,
             kMaxCorrectionDtSec);
+        Eigen::Matrix3d position_observability =
+            Eigen::Matrix3d::Identity();
+        if (config_.use_hessian && !config_.inject_full_pose) {
+            // During directional bring-up, retain the stable velocity
+            // observer but project it through Hessian observability only.
+            // Unlike the Kalman gain, this projector does not decay merely
+            // because repeated good measurements made P small.
+            Eigen::Matrix3d raw_observability =
+                0.5 * (
+                    directional_observability.block<3, 3>(3, 3)
+                    + directional_observability.block<3, 3>(3, 3).transpose());
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> obs_solver(
+                raw_observability);
+            if (obs_solver.info() == Eigen::Success) {
+                Eigen::Vector3d weights =
+                    obs_solver.eigenvalues().cwiseMax(0.0).cwiseMin(1.0);
+                position_observability =
+                    obs_solver.eigenvectors()
+                    * weights.asDiagonal()
+                    * obs_solver.eigenvectors().transpose();
+            }
+        }
         K_effective.block<3, 6>(3, 0).setZero();
         K_effective.block<3, 3>(3, 3) =
-            Eigen::Matrix3d::Identity()
-            * correction_dt
-            * config_.velocity_correction_gain;
+            correction_dt
+            * config_.velocity_correction_gain
+            * position_observability;
+    }
+
+    if (config_.inject_directional_pose
+        && config_.use_hessian
+        && hessian.has_value()) {
+        // This bring-up mode expresses the intended degeneracy semantics
+        // directly: GICP owns observable correction directions while the IMU
+        // prior owns weak ones. Joseph below uses the same effective gain.
+        K_effective.block<3, 6>(0, 0) =
+            directional_observability.block<3, 6>(0, 0);
+        K_effective.block<3, 6>(6, 0) =
+            directional_observability.block<3, 6>(3, 0);
     }
 
     if (config_.inject_full_pose) {
@@ -408,6 +552,10 @@ EskfUpdate Eskf::correctAt(
         K_effective.block<3, 6>(6, 0).setZero();
         K_effective.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity();
     }
+    update.pose_gain_diagonal.segment<3>(0) =
+        K_effective.block<3, 3>(0, 0).diagonal();
+    update.pose_gain_diagonal.segment<3>(3) =
+        K_effective.block<3, 3>(6, 3).diagonal();
 
     const Vec15 dx = K_effective * nu;
 
@@ -452,7 +600,8 @@ EskfUpdate Eskf::correctAt(
             "[eskf] update #{}: nu_rot={:.4f}rad nu_pos={:.3f}m "
             "dv={:.3f}m/s replay_err(r,p,v)=({:.4f},{:.3f},{:.3f}) "
             "ba={:.4f} bg={:.5f} "
-            "P(v,p,ba,bg)=({:.3e},{:.3e},{:.3e},{:.3e}) maha={:.2f}",
+            "P(v,p,ba,bg)=({:.3e},{:.3e},{:.3e},{:.3e}) "
+            "NIS/6={:.2f} mean={:.2f}",
             correction_count_,
             nu.segment<3>(0).norm(),
             nu.segment<3>(3).norm(),
@@ -466,7 +615,29 @@ EskfUpdate Eskf::correctAt(
             P_tip_.block<3, 3>(6, 6).trace(),
             P_tip_.block<3, 3>(9, 9).trace(),
             P_tip_.block<3, 3>(12, 12).trace(),
-            update.mahalanobis);
+            update.normalized_nis,
+            update.mean_normalized_nis);
+        if (config_.use_hessian) {
+            spdlog::warn(
+                "[eskf] directional: info=[{:.2e},{:.2e}] "
+                "std(r,p)=({:.3f},{:.3f},{:.3f};"
+                "{:.3f},{:.3f},{:.3f}) Kpose=({:.2f},{:.2f},{:.2f};"
+                "{:.2f},{:.2f},{:.2f})",
+                update.information_eigenvalues.minCoeff(),
+                update.information_eigenvalues.maxCoeff(),
+                update.measurement_std(0),
+                update.measurement_std(1),
+                update.measurement_std(2),
+                update.measurement_std(3),
+                update.measurement_std(4),
+                update.measurement_std(5),
+                update.pose_gain_diagonal(0),
+                update.pose_gain_diagonal(1),
+                update.pose_gain_diagonal(2),
+                update.pose_gain_diagonal(3),
+                update.pose_gain_diagonal(4),
+                update.pose_gain_diagonal(5));
+        }
     }
 
     update.state = tip_state_;

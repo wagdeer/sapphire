@@ -206,12 +206,35 @@ Config loadConfig(const std::filesystem::path& path) {
         config.odometry.eskf.use_hessian = *value;
     }
     if (const auto value =
+            root["odometry"]["eskf"]["hessian_min_information"]
+                .value<double>()) {
+        config.odometry.eskf.hessian_min_information = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["hessian_max_condition"]
+                .value<double>()) {
+        config.odometry.eskf.hessian_max_condition = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["hessian_degenerate_sigma"]
+                .value<double>()) {
+        config.odometry.eskf.hessian_degenerate_sigma = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["hessian_max_sigma"].value<double>()) {
+        config.odometry.eskf.hessian_max_sigma = *value;
+    }
+    if (const auto value =
             root["odometry"]["eskf"]["mahalanobis_threshold"].value<double>()) {
         config.odometry.eskf.mahalanobis_threshold = *value;
     }
     if (const auto value =
             root["odometry"]["eskf"]["inject_full_pose"].value<bool>()) {
         config.odometry.eskf.inject_full_pose = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["inject_directional_pose"].value<bool>()) {
+        config.odometry.eskf.inject_directional_pose = *value;
     }
     if (const auto value =
             root["odometry"]["eskf"]["bias_update_scale"].value<double>()) {
@@ -444,6 +467,24 @@ void validateConfig(const Config& config) {
     requireFinitePositive(
         config.odometry.eskf.icp_covariance_scale,
         "odometry.eskf.icp_covariance_scale");
+    requireFinitePositive(
+        config.odometry.eskf.hessian_min_information,
+        "odometry.eskf.hessian_min_information");
+    requireFinitePositive(
+        config.odometry.eskf.hessian_max_condition,
+        "odometry.eskf.hessian_max_condition");
+    requireFinitePositive(
+        config.odometry.eskf.hessian_degenerate_sigma,
+        "odometry.eskf.hessian_degenerate_sigma");
+    requireFinitePositive(
+        config.odometry.eskf.hessian_max_sigma,
+        "odometry.eskf.hessian_max_sigma");
+    if (config.odometry.eskf.hessian_degenerate_sigma
+        > config.odometry.eskf.hessian_max_sigma) {
+        throw std::invalid_argument(
+            "odometry.eskf.hessian_degenerate_sigma must not exceed "
+            "hessian_max_sigma");
+    }
     if (!std::isfinite(config.odometry.eskf.mahalanobis_threshold)) {
         throw std::invalid_argument(
             "odometry.eskf.mahalanobis_threshold must be finite "

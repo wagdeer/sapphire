@@ -182,8 +182,20 @@ struct Config {
             double sigma_translation = 0.01;    // m
             double icp_covariance_scale = 25.0;
             bool use_hessian = false;
+            /// Absolute information floor used before inverting the GICP
+            /// Hessian. Eigen-directions weaker than max_eigen /
+            /// hessian_max_condition are treated as degenerate.
+            double hessian_min_information = 1e-6;
+            double hessian_max_condition = 1e4;
+            /// Correction-tangent standard deviation assigned to a
+            /// degenerate Hessian direction, capped at this maximum.
+            double hessian_degenerate_sigma = 1.0;
+            double hessian_max_sigma = 10.0;
             double mahalanobis_threshold = -1.0;  // disabled; hard gates only
             bool inject_full_pose = true;
+            /// Use Hessian observability itself as the accepted pose gain:
+            /// observable directions follow GICP, degenerate ones keep IMU.
+            bool inject_directional_pose = false;
             double bias_update_scale = 0.25;
             double velocity_correction_gain = 0.0;
             double accel_bias_max = 10.0;
