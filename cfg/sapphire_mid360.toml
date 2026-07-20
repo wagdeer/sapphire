@@ -112,6 +112,19 @@ update_period_sec = 1.0
 map_frame_stride = 3
 map_voxel_size = 0.8
 
+[pgo.occupancy]
+# Attitude-aware 2.5D grid from PGO keyframes (global nav).
+# d = lidar-frame z; h_clearance ≈ sensor height above ground.
+enabled = true
+resolution = 0.1
+h_clearance = 2.0
+d_max = 3.0
+occ_threshold = 0.3
+usable_range = 40.0
+min_range = 0.5
+cloud_voxel_size = 0.2
+margin = 5.0
+
 [deskew]
 # Mid-360 offset_time is already relative to the message reference timestamp.
 time_offset = false

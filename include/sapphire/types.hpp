@@ -230,6 +230,29 @@ struct Config {
         double update_period_sec = 1.0;
         int map_frame_stride = 3;
         double map_voxel_size = 0.8;
+
+        /// Attitude-aware 2.5D occupancy grid built from PGO keyframes.
+        ///
+        /// Signed distance d is body/lidar-frame z (along pose R.col(2)).
+        /// Hits are kept only for d in [-h_clearance, d_max].
+        /// For a roof-mounted Mid-360, set h_clearance ≈ sensor height above
+        /// ground (e.g. 1.5–2.5 m); 0.15 m only keeps a thin slice at the
+        /// sensor and will miss tree trunks / curbs below the lidar.
+        struct Occupancy {
+            bool enabled = false;
+            double resolution = 0.1;
+            /// Keep hits with body-z >= -h_clearance (≈ sensor mount height).
+            double h_clearance = 2.0;
+            /// Drop hits with body-z > d_max (ceilings / high canopy). <=0 disables.
+            double d_max = 3.0;
+            double occ_threshold = 0.3;
+            double usable_range = 40.0;
+            double min_range = 0.5;
+            /// Voxel size used before inserting a keyframe cloud.
+            double cloud_voxel_size = 0.2;
+            /// Extra meters reserved when expanding the map AABB.
+            double margin = 5.0;
+        } occupancy;
     } pgo;
 
     ImuConfig imu;

@@ -88,6 +88,10 @@ public:
     PointCloudConstPtr latestPoseGraphMap() const {
         return pgo_backend_.latestGlobalMap();
     }
+    void requestOccupancyGrid() { pgo_backend_.requestOccupancyGrid(); }
+    std::shared_ptr<const OccupancyGridMsg> latestOccupancyGrid() const {
+        return pgo_backend_.latestOccupancyGrid();
+    }
 
 private:
     struct PreprocessResult {

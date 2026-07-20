@@ -121,6 +121,17 @@ void testProjectConfig() {
     expectNear(
         config.pgo.map_voxel_size, 0.8,
         "PGO sparse-map voxel size");
+    expect(config.pgo.occupancy.enabled,
+           "occupancy grid must be enabled in Mid-360 profile");
+    expectNear(
+        config.pgo.occupancy.resolution, 0.1,
+        "occupancy resolution");
+    expectNear(
+        config.pgo.occupancy.h_clearance, 2.0,
+        "occupancy h_clearance");
+    expectNear(
+        config.pgo.occupancy.d_max, 3.0,
+        "occupancy d_max");
     expect(!config.deskew.time_offset, "Mid-360 time offset must be disabled");
     expect(config.extrinsics.T_imu_lidar.matrix().isApprox(
                Eigen::Matrix4d::Identity(), 1e-12),

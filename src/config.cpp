@@ -376,6 +376,40 @@ Config loadConfig(const std::filesystem::path& path) {
     if (const auto value = root["pgo"]["map_voxel_size"].value<double>()) {
         config.pgo.map_voxel_size = *value;
     }
+    if (const auto value = root["pgo"]["occupancy"]["enabled"].value<bool>()) {
+        config.pgo.occupancy.enabled = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["resolution"].value<double>()) {
+        config.pgo.occupancy.resolution = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["h_clearance"].value<double>()) {
+        config.pgo.occupancy.h_clearance = *value;
+    }
+    if (const auto value = root["pgo"]["occupancy"]["d_max"].value<double>()) {
+        config.pgo.occupancy.d_max = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["occ_threshold"].value<double>()) {
+        config.pgo.occupancy.occ_threshold = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["usable_range"].value<double>()) {
+        config.pgo.occupancy.usable_range = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["min_range"].value<double>()) {
+        config.pgo.occupancy.min_range = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["cloud_voxel_size"].value<double>()) {
+        config.pgo.occupancy.cloud_voxel_size = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["margin"].value<double>()) {
+        config.pgo.occupancy.margin = *value;
+    }
 
     const auto time_offset = root["deskew"]["time_offset"].value<bool>();
     if (!time_offset.has_value()) {
@@ -616,6 +650,40 @@ void validateConfig(const Config& config) {
     requireFinitePositive(
         config.pgo.map_voxel_size,
         "pgo.map_voxel_size");
+    if (config.pgo.occupancy.enabled) {
+        requireFinitePositive(
+            config.pgo.occupancy.resolution,
+            "pgo.occupancy.resolution");
+        requireFiniteNonnegative(
+            config.pgo.occupancy.h_clearance,
+            "pgo.occupancy.h_clearance");
+        requireFiniteNonnegative(
+            config.pgo.occupancy.d_max,
+            "pgo.occupancy.d_max");
+        if (config.pgo.occupancy.occ_threshold <= 0.0
+            || config.pgo.occupancy.occ_threshold > 1.0
+            || !std::isfinite(config.pgo.occupancy.occ_threshold)) {
+            throw std::invalid_argument(
+                "pgo.occupancy.occ_threshold must be in (0, 1]");
+        }
+        requireFinitePositive(
+            config.pgo.occupancy.usable_range,
+            "pgo.occupancy.usable_range");
+        requireFiniteNonnegative(
+            config.pgo.occupancy.min_range,
+            "pgo.occupancy.min_range");
+        if (config.pgo.occupancy.min_range
+            >= config.pgo.occupancy.usable_range) {
+            throw std::invalid_argument(
+                "pgo.occupancy.min_range must be < usable_range");
+        }
+        requireFiniteNonnegative(
+            config.pgo.occupancy.cloud_voxel_size,
+            "pgo.occupancy.cloud_voxel_size");
+        requireFinitePositive(
+            config.pgo.occupancy.margin,
+            "pgo.occupancy.margin");
+    }
 
     const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;
     if (!extrinsic.matrix().allFinite()) {

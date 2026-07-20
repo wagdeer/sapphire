@@ -58,6 +58,7 @@ endif()
 add_library(sapphire STATIC
     src/config.cpp
     src/backend/pose_graph.cpp
+    src/mapping/occupancy_grid.cpp
     src/odometry/pipeline.cpp
     src/odometry/deskew.cpp
     src/odometry/eskf.cpp
@@ -147,6 +148,16 @@ if(BUILD_TESTING)
     target_link_libraries(sapphire_pose_graph_test PRIVATE sapphire)
     sapphire_enable_release_ipo(sapphire_pose_graph_test)
     add_test(NAME sapphire_pose_graph_test COMMAND sapphire_pose_graph_test)
+
+    add_executable(sapphire_occupancy_grid_test
+        tests/occupancy_grid_test.cpp
+    )
+    target_link_libraries(sapphire_occupancy_grid_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_occupancy_grid_test)
+    add_test(
+        NAME sapphire_occupancy_grid_test
+        COMMAND sapphire_occupancy_grid_test
+    )
 
     add_executable(sapphire_observer_test
         tests/observer_test.cpp
