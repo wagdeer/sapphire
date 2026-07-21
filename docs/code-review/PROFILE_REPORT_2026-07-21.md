@@ -107,3 +107,23 @@ correctly optimized. No covariance computation at IMU rate.
 | Voxel is #3 | 10-15% | 4.6% | ✅ direction |
 | OpenMP overhead | Not predicted | 29.5% | ❌ completely missed |
 | Occupancy grid | 3-5% | ~12% | ❌ much higher |
+
+---
+
+## Post-RViz Clean Profile (2026-07-21)
+
+The original 29K-sample profile included RViz visualization overhead (DDS traffic,
+rendering). A clean re-run with occupancy also disabled yields a sharper picture:
+
+```
+                    ORIGINAL (RViz)      CLEAN (no occupancy)
+total samples        29,271               19,460
+omp_get_num_procs    29.5% (8,648)        43.4% (8,436)
+knn_search           17.9% (5,249)        31.9% (6,200)
+occupancy total      ~12%                 0%
+deskew               ~1%                  <0.3%
+small_gicp total     ~35% cum             ~73% of all CPU
+```
+
+Key insight: small_gicp owns 73% of CPU in the clean profile. The decision to make
+small_gicp the next optimization target is documented in HOTSPOT_DEEP_ANALYSIS.md §五–七.

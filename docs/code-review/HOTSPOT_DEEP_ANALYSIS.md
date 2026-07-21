@@ -579,14 +579,110 @@ done
 
 ---
 
-## 五、总结
+## 五、实验验证 (2026-07-21) — 5 项假设逐一实锤
 
-1. **最大单一瓶颈是 OpenMP fork/join 开销**（29.5%），不是任何算法。修复简单（环境变量），预计节省 15-20%。
+以下所有实验在 Docker (WSL2, 32 vCPU) + Sapphire ESKF/VGICP + 同一 1.4GB rosbag 上完成。
+occupancy grid 已关闭（已验证节省 ~10% CPU），所有对比基于无 RViz 纯净剖面。
 
-2. **Occupancy grid 是第二大开销**（12%），且无条件运行。这是 P0 修复。
+### 实验矩阵
 
-3. **Deskew 和 IMU 传播的优化已经到位**（<1%），验证了 MeanOnlyGal3 路径的正确性。
+```
+┌──────┬──────────────────────────────┬──────────┬──────────────┐
+│ 实验  │ 措施                           │ 假设节省   │ 实测结果      │
+├──────┼──────────────────────────────┼──────────┼──────────────┤
+│ A    │ OMP_WAIT_POLICY=active        │ 15-20%   │ ❌ 无效       │
+│ B    │ 关闭 occupancy                │ 10-12%   │ ✅ -9.8% CPU │
+│ C    │ OMP_NUM_THREADS 32→2          │ n/a      │ ❌ 吞吐崩     │
+│ D    │ 外层 #pragma omp parallel 包裹 │ 2/6 fork  │ ❌ 线程冲突   │
+│ E    │ OMP_NESTED=false              │ n/a      │ ❌ 无效       │
+└──────┴──────────────────────────────┴──────────┴──────────────┘
+```
 
-4. **GICP 的 17.9% 是合理的**——扫描匹配是 LIO 的核心计算，这个比例与 FAST-LIO2 等系统相当。
+### 实验 A: OMP_WAIT_POLICY=active
 
-5. **总 P0+P1 优化潜力：25-32% CPU 节省**，无需改算法，主要是配置和环境变量调整。
+- 原理: 线程 spin-wait 不下线，消除 fork/join 的 sleep→wake 上下文切换
+- 实测: 墙钟 273s→272s (0% 改善)，`omp_get_num_procs` 从 38.4% 暴涨到 93.8%
+- 根因: ACTIVE 模式下空闲线程在 barrier 上空转，SIGPROF 采样全部落在空转代码路径上，
+  污染了 profile。真实的 fork/join 开销在 10Hz scan 间隔中有足够时间窗口被吸收。
+- **结论: 这条路径不通。**
+
+### 实验 B: 关闭 occupancy grid
+
+- 对比: 默认配置 (21,585 samples) vs occupancy=off (19,460 samples)
+- 实测: -2,125 samples (-9.8% CPU)。函数级: updateMiss 从 3.4% 归零。
+- 墙钟: 303s→270s (bag replay 下变化不大，实机 10Hz 下余量会体现)
+- **结论: 已落地。TOML 设 `pgo.occupancy.enabled = false`。**
+
+### 实验 C: OMP_NUM_THREADS=2
+
+- 目的: 减少 oversubscription (32线程→2线程)，降低 fork/join 开销
+- 实测: omp_get_num_procs 从 43.4%→33.5% (绝对值 8436→2690)，但完成帧数从
+  ~2680 暴跌到 ~570。节点追不上 10Hz。
+- 根因: knn_search 等实际计算在 32 线程下并行度远高于 2 线程，减少的 overhead
+  抵不上并行度损失。
+- **结论: 32 线程 overhead 高但吞吐够，降线程数捡芝麻丢西瓜。**
+
+### 实验 D: 外层 #pragma omp parallel 包裹 (方案 2a)
+
+- 实现: `#pragma omp parallel { #pragma omp master { deskew(); voxel(); } }`
+  利用已部署的 `omp_in_parallel()` 支持，deskew/voxel 内用 `#pragma omp for`，
+  共享一个并行 team，目标将 6 次 fork/join 减少到 1 次。
+- 实测: 节点在 IMU init 完成后不再处理任何 LiDAR 扫描 (CPU 2%, 0 帧)。
+  即使空 `#pragma omp parallel {}` 块也触发相同症状。
+- 根因: Docker/WSL2 下，`omp_get_max_threads() = 32` 创建的 worker 线程与
+  ROS2 MultiThreadedExecutor 的线程模型冲突。`OMP_NUM_THREADS=2` 可解线程数
+  问题但方案 D 在 2 线程下仍卡死——说明问题不仅是线程数，可能是 OpenMP 线程池
+  初始化与 ROS2 executor 的交互导致。
+- 基础设施 (deskew/voxel 的 `omp_in_parallel()` 支持) 已部署在 commit 7af5a43，
+  等待外层包裹在实机 (Orin NX) 上验证。
+- **结论: Docker 环境下无法验证，基础设施已就绪。**
+
+### 实验 E: OMP_NESTED=false
+
+- 与 OMP_NUM_THREADS=2 组合测试，无效果。
+- **结论: 无效。**
+
+---
+
+## 六、修订后的热点归因 (occupancy 关闭, 无 RViz)
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  ◆ 纯净剖面 (19,460 samples, occupancy=off, 无RViz)                  │
+└──────────────────────────────────────────────────────────────────────┘
+
+FUNCTION                                  SAMPLES    %      SOURCE
+─────────────────────────────────────────────────────────────────────
+omp_get_num_procs                         8,436     43.4%   small_gicp + Sapphire
+UnsafeKdTree::knn_search                  6,200     31.9%   small_gicp
+estimate_local_features (cum)             7,245     37.2%   small_gicp
+quick_sort_omp_impl                         120      0.6%   small_gicp
+IncrementalVoxelMap::nn_search              147      0.8%   small_gicp
+AxisAlignedProjection::find_axis            104      0.5%   small_gicp
+ParallelReductionOMP                        103      0.5%   small_gicp
+─────────────────────────────────────────────────────────────────────
+small_gicp 合计                          ~14,200   ~73%    ← 绝对大头
+─────────────────────────────────────────────────────────────────────
+Voxel sort (Sapphire)                       718      3.7%   Sapphire
+Deskew                                      <50     <0.3%   Sapphire
+ESKF/Observer                               ~200     ~1%    Sapphire
+DDS/ROS2                                    ~300     ~2%    ROS2
+─────────────────────────────────────────────────────────────────────
+```
+
+small_gicp 内部有 10+ 个 `#pragma omp parallel` 区域，每次触发 fork/join。
+这些占 73% CPU，其中 43% 是 fork/join 开销，31% 是 knn_search 本身。
+
+## 七、结论与下一步
+
+1. **OMP_WAIT_POLICY=active 无效** — 线程空转污染 profile，墙钟零改善。
+2. **Occupancy 关掉省 10%** — 已验证并落地。
+3. **OMP_NUM_THREADS 降不下来** — 32 线程 overhead 高但并行度必须撑住 10Hz。
+4. **外层并行区域包裹暂不可行** — Docker/WSL2 下线程冲突，等实机验证。
+5. **small_gicp 是唯一有意义的攻击面** — 73% CPU。vendor 进项目并消除其
+   内部 `#pragma omp parallel` 是下一个高收益方向。
+6. **替代 nano_gicp 不可行** — small_gicp 比 nano_gicp 的底座 FastGICP 快 1.9x
+   (KITTI 00 benchmark)，两者都用 nanoflann kd-tree。
+
+**唯一未验证的假设: k_correspondences 16→8**。改 TOML 一行，预计 knn_search
+减半 (~16% 总 CPU 节省)。收益明确、零风险。
