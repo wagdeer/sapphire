@@ -107,8 +107,6 @@ private:
     bool initializeFirstLidarTarget(
         double stamp, const PreprocessResult& preprocessed);
     void processLidarScan(double stamp, const PreprocessResult& preprocessed);
-    std::optional<RegistrationArtifacts> runScanRegistration(
-        const DeskewResult& deskewed);
     void maybeUpdateSubmapTarget(
         const DeskewResult& deskewed,
         const Isometry3d& T_world_lidar,

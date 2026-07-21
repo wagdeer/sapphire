@@ -110,7 +110,7 @@ map_voxel_size = 0.8
 # d = lidar-frame z along the keyframe body z-axis.
 # h_clearance ≈ sensor height above ground (vehicle Mid-360 ~2m).
 # Too small (e.g. 0.15) only keeps a thin slice at the lidar and drops trunks.
-enabled = true
+enabled = false
 resolution = 0.1
 h_clearance = 2.0
 d_max = 6.0

@@ -115,7 +115,7 @@ map_voxel_size = 0.8
 [pgo.occupancy]
 # Attitude-aware 2.5D grid from PGO keyframes (global nav).
 # d = lidar-frame z; h_clearance ≈ sensor height above ground.
-enabled = true
+enabled = false
 resolution = 0.1
 h_clearance = 2.0
 d_max = 3.0

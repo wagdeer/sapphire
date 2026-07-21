@@ -380,50 +380,6 @@ bool OdometryPipeline::initializeFirstLidarTarget(
     return true;
 }
 
-std::optional<OdometryPipeline::RegistrationArtifacts>
-OdometryPipeline::runScanRegistration(const DeskewResult& deskewed) {
-    const PointCloudConstPtr registration_source =
-        downsamplePoints(deskewed.cloud);
-    if (registration_source->size()
-        < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
-        spdlog::warn(
-            "[pipeline] skipping LiDAR scan: {} points after voxel "
-            "downsampling (minimum {}, input {})",
-            registration_source->size(),
-            config_.registration.gicp.min_num_points,
-            deskewed.cloud->size());
-        return std::nullopt;
-    }
-
-    registration_.setSource(registration_source);
-    RegistrationArtifacts artifacts;
-    artifacts.result =
-        registration_.align(deskewed.T_world_lidar_ref);
-    artifacts.corrected_source = registration_source;
-    ++registration_attempt_count_;
-    if (!artifacts.result.accepted) {
-        ++registration_reject_count_;
-    }
-    if (registration_attempt_count_ % 20 == 0) {
-        spdlog::warn(
-            "[registration] hard rejection rate: {}/{} ({:.1f}%)",
-            registration_reject_count_,
-            registration_attempt_count_,
-            100.0 * static_cast<double>(registration_reject_count_)
-                / static_cast<double>(registration_attempt_count_));
-    }
-
-    if (artifacts.result.accepted) {
-        auto transformed_source = std::make_shared<PointCloud>();
-        pcl::transformPointCloud(
-            *registration_source,
-            *transformed_source,
-            artifacts.result.T_correction.matrix());
-        artifacts.corrected_source = transformed_source;
-    }
-    return artifacts;
-}
-
 void OdometryPipeline::maybeUpdateSubmapTarget(
     const DeskewResult& deskewed,
     const Isometry3d& T_world_lidar,
@@ -464,15 +420,50 @@ void OdometryPipeline::processLidarScan(
         return;
     }
 
-    const auto artifacts = runScanRegistration(deskewed);
-    if (!artifacts.has_value()) {
+    const PointCloudConstPtr registration_source =
+        downsamplePoints(deskewed.cloud);
+    if (registration_source->size()
+        < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
+        spdlog::warn(
+            "[pipeline] skipping LiDAR scan: {} points after voxel "
+            "downsampling (minimum {}, input {})",
+            registration_source->size(),
+            config_.registration.gicp.min_num_points,
+            deskewed.cloud->size());
         return;
+    }
+
+    registration_.setSource(registration_source);
+    RegistrationArtifacts artifacts;
+    artifacts.result =
+        registration_.align(deskewed.T_world_lidar_ref);
+    artifacts.corrected_source = registration_source;
+    ++registration_attempt_count_;
+    if (!artifacts.result.accepted) {
+        ++registration_reject_count_;
+    }
+    if (registration_attempt_count_ % 20 == 0) {
+        spdlog::warn(
+            "[registration] hard rejection rate: {}/{} ({:.1f}%)",
+            registration_reject_count_,
+            registration_attempt_count_,
+            100.0 * static_cast<double>(registration_reject_count_)
+                / static_cast<double>(registration_attempt_count_));
+    }
+
+    if (artifacts.result.accepted) {
+        auto transformed_source = std::make_shared<PointCloud>();
+        pcl::transformPointCloud(
+            *registration_source,
+            *transformed_source,
+            artifacts.result.T_correction.matrix());
+        artifacts.corrected_source = transformed_source;
     }
     const Isometry3d T_world_imu_prior =
         deskewed.T_world_lidar_ref
         * config_.extrinsics.T_imu_lidar.inverse();
     const Isometry3d T_world_imu_corrected =
-        artifacts->result.T_world_lidar
+        artifacts.result.T_world_lidar
         * config_.extrinsics.T_imu_lidar.inverse();
     Eigen::Vector3d accel_bias;
     Eigen::Vector3d gyro_bias;
@@ -493,12 +484,12 @@ void OdometryPipeline::processLidarScan(
     NavigationState fused_state;
     Eigen::Vector3d fused_accel_bias;
     Eigen::Vector3d fused_gyro_bias;
-    bool fusion_accepted = artifacts->result.accepted;
+    bool fusion_accepted = artifacts.result.accepted;
 
     if (useEskf()) {
         std::optional<Eskf::Mat6> hessian;
-        if (artifacts->result.hessian_valid) {
-            hessian = artifacts->result.hessian;
+        if (artifacts.result.hessian_valid) {
+            hessian = artifacts.result.hessian;
         }
         // Hold IMU/state locks for the whole correct + bias rebase so pushImu
         // cannot interleave predicts against a mid-update filter.
@@ -512,7 +503,7 @@ void OdometryPipeline::processLidarScan(
                 deskewed.reference_stamp,
                 prior_state,
                 T_world_imu_corrected,
-                artifacts->result.accepted,
+                artifacts.result.accepted,
                 imu_buffer_,
                 hessian);
             fused_state = eskf_update.state;
@@ -550,11 +541,11 @@ void OdometryPipeline::processLidarScan(
             accel_bias,
             gyro_bias,
             config_.odometry.observer,
-            artifacts->result.accepted);
+            artifacts.result.accepted);
         fused_state = observer_update.state;
         fused_accel_bias = observer_update.accel_bias;
         fused_gyro_bias = observer_update.gyro_bias;
-        fusion_accepted = artifacts->result.accepted;
+        fusion_accepted = artifacts.result.accepted;
         rebasePropagation(
             fused_state,
             fused_accel_bias,
@@ -564,19 +555,19 @@ void OdometryPipeline::processLidarScan(
     // Observer keeps the DLIO pattern (publish/map use full GICP pose).
     // ESKF must keep map, output, and IMU state on the same fused pose;
     // otherwise the submap races ahead of the filter and drifts in seconds.
-    Isometry3d T_world_lidar_out = artifacts->result.T_world_lidar;
-    PointCloudConstPtr cloud_out = artifacts->corrected_source;
+    Isometry3d T_world_lidar_out = artifacts.result.T_world_lidar;
+    PointCloudConstPtr cloud_out = artifacts.corrected_source;
     if (useEskf()) {
         T_world_lidar_out =
             fused_state.T_world_imu * config_.extrinsics.T_imu_lidar;
-        if (artifacts->result.accepted) {
+        if (artifacts.result.accepted) {
             const Isometry3d T_align =
                 T_world_lidar_out
-                * artifacts->result.T_world_lidar.inverse();
+                * artifacts.result.T_world_lidar.inverse();
             if (!T_align.matrix().isIdentity(1e-9)) {
                 auto aligned = std::make_shared<PointCloud>();
                 pcl::transformPointCloud(
-                    *artifacts->corrected_source,
+                    *artifacts.corrected_source,
                     *aligned,
                     T_align.matrix());
                 cloud_out = aligned;

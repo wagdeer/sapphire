@@ -260,18 +260,48 @@ PointCloudPtr transformScan(
         static_cast<std::ptrdiff_t>(timeline.stamps.size());
     const bool use_parallel =
         output->points.size() >= kParallelPointThreshold && group_count > 1;
+    const bool in_parallel = omp_in_parallel();
 
-#pragma omp parallel for schedule(static) num_threads(thread_count) if(use_parallel)
-    for (std::ptrdiff_t group = 0; group < group_count; ++group) {
-        const size_t group_index = static_cast<size_t>(group);
-        const Isometry3f T_world_lidar = (
-            poseFromState(states[group_index].state) * T_imu_lidar
-        ).cast<float>();
-        const size_t begin = timeline.group_offsets[group_index];
-        const size_t end = timeline.group_offsets[group_index + 1];
-        for (size_t point_idx = begin; point_idx < end; ++point_idx) {
-            output->points[point_idx] = transformPoint(
-                timeline.sorted_scan.points[point_idx], T_world_lidar);
+    if (in_parallel) {
+#pragma omp for schedule(static)
+        for (std::ptrdiff_t group = 0; group < group_count; ++group) {
+            const size_t group_index = static_cast<size_t>(group);
+            const Isometry3f T_world_lidar = (
+                poseFromState(states[group_index].state) * T_imu_lidar
+            ).cast<float>();
+            const size_t begin = timeline.group_offsets[group_index];
+            const size_t end = timeline.group_offsets[group_index + 1];
+            for (size_t point_idx = begin; point_idx < end; ++point_idx) {
+                output->points[point_idx] = transformPoint(
+                    timeline.sorted_scan.points[point_idx], T_world_lidar);
+            }
+        }
+    } else if (use_parallel) {
+#pragma omp parallel for schedule(static) num_threads(thread_count)
+        for (std::ptrdiff_t group = 0; group < group_count; ++group) {
+            const size_t group_index = static_cast<size_t>(group);
+            const Isometry3f T_world_lidar = (
+                poseFromState(states[group_index].state) * T_imu_lidar
+            ).cast<float>();
+            const size_t begin = timeline.group_offsets[group_index];
+            const size_t end = timeline.group_offsets[group_index + 1];
+            for (size_t point_idx = begin; point_idx < end; ++point_idx) {
+                output->points[point_idx] = transformPoint(
+                    timeline.sorted_scan.points[point_idx], T_world_lidar);
+            }
+        }
+    } else {
+        for (std::ptrdiff_t group = 0; group < group_count; ++group) {
+            const size_t group_index = static_cast<size_t>(group);
+            const Isometry3f T_world_lidar = (
+                poseFromState(states[group_index].state) * T_imu_lidar
+            ).cast<float>();
+            const size_t begin = timeline.group_offsets[group_index];
+            const size_t end = timeline.group_offsets[group_index + 1];
+            for (size_t point_idx = begin; point_idx < end; ++point_idx) {
+                output->points[point_idx] = transformPoint(
+                    timeline.sorted_scan.points[point_idx], T_world_lidar);
+            }
         }
     }
 
