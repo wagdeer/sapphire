@@ -12,6 +12,24 @@ namespace {
 
 using SO3 = detail::MeanOnlyGal3Integrator::Gal3::SO3Type;
 
+/// Binary search: find first index in buf where stamp > threshold.
+/// buf must be sorted by stamp (oldest → newest).
+inline std::size_t findFirstAfter(
+    const ImuBuffer& buf, double threshold)
+{
+    if (buf.empty()) return 0;
+    std::size_t lo = 0, hi = buf.size();
+    while (lo < hi) {
+        const std::size_t mid = lo + (hi - lo) / 2;
+        if (buf[mid].stamp <= threshold) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
 Eigen::Matrix3d skew(const Eigen::Vector3d& v) {
     Eigen::Matrix3d m;
     m << 0.0, -v.z(), v.y(),
@@ -216,8 +234,9 @@ void Eskf::predict(const ImuData& imu) {
 }
 
 void Eskf::replayToLatest(const ImuBuffer& imu_buffer) {
-    for (const ImuData& imu : imu_buffer) {
-        predict(imu);
+    const std::size_t start_idx = findFirstAfter(imu_buffer, tip_state_.stamp);
+    for (std::size_t i = start_idx; i < imu_buffer.size(); ++i) {
+        predict(imu_buffer[i]);
     }
 }
 
@@ -359,11 +378,10 @@ EskfUpdate Eskf::correctAt(
     integrator_.reset();
     tip_state_ = baseline_state_;
     P_tip_ = P_baseline_;
+    const std::size_t start_idx = findFirstAfter(imu_buffer, baseline_state_.stamp);
     const ImuData* next_imu = nullptr;
-    for (const ImuData& imu : imu_buffer) {
-        if (imu.stamp <= baseline_state_.stamp) {
-            continue;
-        }
+    for (std::size_t i = start_idx; i < imu_buffer.size(); ++i) {
+        const ImuData& imu = imu_buffer[i];
         if (imu.stamp > reference_stamp) {
             next_imu = &imu;
             break;
