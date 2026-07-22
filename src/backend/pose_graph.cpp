@@ -180,12 +180,14 @@ public:
     void requestSnapshot() {
         if (config_.enabled) {
             snapshot_requested_.store(true, std::memory_order_release);
+            wake_cv_.notify_one();
         }
     }
 
     void requestGlobalMap() {
         if (config_.enabled) {
             map_requested_.store(true, std::memory_order_release);
+            wake_cv_.notify_one();
         }
     }
 
@@ -227,7 +229,10 @@ private:
         while (!stop_.load(std::memory_order_acquire)) {
             std::unique_lock<std::mutex> lock(wake_mutex_);
             wake_cv_.wait_for(lock, period, [this]() {
-                return stop_.load(std::memory_order_acquire);
+                return stop_.load(std::memory_order_acquire)
+                    || snapshot_requested_.load(std::memory_order_acquire)
+                    || map_requested_.load(std::memory_order_acquire)
+                    || occupancy_requested_.load(std::memory_order_acquire);
             });
             lock.unlock();
             if (stop_.load(std::memory_order_acquire)) {
