@@ -243,9 +243,10 @@ void OccupancyGrid::updateMiss(int gx, int gy, float d_ray) {
     if (!cell) {
         return;
     }
-    // Protect any confirmed obstacle from the first hit. Outdoor ground
-    // returns are denser than obstacle returns; allowing unrestricted free
-    // updates before hit_cnt>3 washes walls/trees out of the map.
+    // Free rays never define obstacle height (d_min). Their only role is
+    // visit counting for hit/visit occupancy, and as a dynamic-obstacle
+    // signal: a free ray below a previously observed obstacle height
+    // suggests the obstacle has been cleared.
     if (cell->hit_cnt > 0) {
         if (d_ray < cell->d_min) {
             cell->visit_cnt += 1;
@@ -253,7 +254,6 @@ void OccupancyGrid::updateMiss(int gx, int gy, float d_ray) {
         return;
     }
     cell->visit_cnt += 1;
-    cell->d_min = std::min(cell->d_min, d_ray);
 }
 
 void OccupancyGrid::castRay(
