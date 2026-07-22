@@ -45,7 +45,7 @@ sapphire/          (STATIC lib, C++17 + PCL + Eigen)
   │   ├── deskew_test.cpp        7 cases (static, velocity, yaw, lever-arm, fallback...)
   │   ├── config_test.cpp        4 cases (project config, normalization, validation)
   │   └── pipeline_test.cpp      2 cases (IMU init, first-scan deskew)
-  └── external/                  vendor deps (preintegration, lie, nanoflann)
+  └── external/                  vendor deps (preintegration, lie)
 
 sapphire_cuda/      (-DSAPPHIRE_CUDA=ON, future)
 sapphire_cli/       (standalone MCAP 直读, future)
@@ -168,7 +168,7 @@ ros2 launch sapphire_ros2 sapphire.launch.py lidar_topic:=/velodyne_points
 
 **apt 直接装:**
 - libeigen3-dev, libtbb-dev
-- libspdlog-dev, libnanoflann-dev, libomp-dev
+- libspdlog-dev, libomp-dev
 
 **sapphire core 当前已 link 的 CMake targets:**
 - `Eigen3::Eigen`, `spdlog::spdlog`, `${PCL_LIBRARIES}`

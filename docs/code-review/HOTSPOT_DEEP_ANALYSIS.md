@@ -205,11 +205,6 @@ voxel_size = 0.35  # 从 0.25 增加，source 点 ~3000
 type = "VGICP"  # ✅ 已配置
 ```
 
-**方案 D（长期）：考虑 nanoflann 替代**
-
-small_gicp 的 `UnsafeKdTree` 是 simple kd-tree。nanoflann 的 SIMD 优化版本
-在大量点查询时快 2-3×。但需要 fork small_gicp。
-
 **验证方法：**
 ```bash
 # 测试不同 k 值
@@ -681,8 +676,6 @@ small_gicp 内部有 10+ 个 `#pragma omp parallel` 区域，每次触发 fork/j
 4. **外层并行区域包裹暂不可行** — Docker/WSL2 下线程冲突，等实机验证。
 5. **small_gicp 是唯一有意义的攻击面** — 73% CPU。vendor 进项目并消除其
    内部 `#pragma omp parallel` 是下一个高收益方向。
-6. **替代 nano_gicp 不可行** — small_gicp 比 nano_gicp 的底座 FastGICP 快 1.9x
-   (KITTI 00 benchmark)，两者都用 nanoflann kd-tree。
 
 **唯一未验证的假设: k_correspondences 16→8**。改 TOML 一行，预计 knn_search
 减半 (~16% 总 CPU 节省)。收益明确、零风险。
