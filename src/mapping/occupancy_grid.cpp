@@ -344,11 +344,12 @@ void OccupancyGrid::insertScan(
     }
 
     const Eigen::Vector3d t = T_map_lidar.translation();
-    const Eigen::Vector3d z_hat = T_map_lidar.linear().col(2);
+    // 2.5D grid uses world Z for height filtering — invariant across keyframes.
+    // Body-z filtering (R.col(2)) couples obstacle selection to sensor attitude:
+    // tilted mounts or pitch/roll inject out-of-band points or miss in-band ones.
+    // World Z gives consistent height bands, and d values are cross-keyframe comparable.
     const Eigen::Vector3d sensor = t;  // lidar origin in map
-    const float d_sensor =
-        static_cast<float>(z_hat.dot(sensor - t));  // ~0
-
+    const float d_sensor = 0.0f;       // sensor defines reference height
     const float min_range = static_cast<float>(options_.min_range);
     const float max_range = static_cast<float>(options_.usable_range);
     const float h_clearance = static_cast<float>(options_.h_clearance);
@@ -402,11 +403,9 @@ void OccupancyGrid::insertScan(
         }
 
         const Eigen::Vector3d p_map = T_map_lidar * p_body;
-        // Equivalent to p_body.z when z_hat = R.col(2).
-        const float d = static_cast<float>(z_hat.dot(p_map - t));
+        const float d = static_cast<float>(p_map.z() - t.z());
         const bool hit = (d >= -h_clearance)
             && (d_max <= 0.0f || d <= d_max);
-
         ++used;
         d_min_seen = std::min(d_min_seen, d);
         d_max_seen = std::max(d_max_seen, d);
@@ -456,7 +455,7 @@ void OccupancyGrid::insertScan(
         spdlog::info(
             "[occupancy] scan rev={} points={} band_hits={} "
             "d=[{:.2f},{:.2f}] band=[{:.2f},{:.2f}] "
-            "cells(occ/free)={}/{} z_hat=({:.2f},{:.2f},{:.2f})",
+            "cells(occ/free)={}/{} world_Z=({:.2f},{:.2f},{:.2f})",
             revision_,
             used,
             casted,
@@ -466,9 +465,9 @@ void OccupancyGrid::insertScan(
             d_max <= 0.0f ? std::numeric_limits<float>::infinity() : d_max,
             occupied_cells,
             free_cells,
-            z_hat.x(),
-            z_hat.y(),
-            z_hat.z());
+            0.0,  // world Z
+            0.0,
+            1.0);
     }
 }
 
