@@ -242,9 +242,16 @@ void OccupancyGrid::updateHit(int gx, int gy, float d) {
     if (!cell) {
         return;
     }
-    // Always count hits for hit/visit occupancy. Still track the lowest
-    // observed obstacle height so free rays cannot punch through from above.
-    cell->d_min = std::min(cell->d_min, d);
+    // First hit resets d_min to the current obstacle height. Subsequent
+    // hits track the lowest observed height so free rays cannot punch
+    // through from above. Without the reset, a near-ground in-band point
+    // that lands first can permanently depress d_min, blocking all later
+    // free-ray clearing (ghost obstacles / multi-layer walls).
+    if (cell->hit_cnt == 0) {
+        cell->d_min = d;
+    } else {
+        cell->d_min = std::min(cell->d_min, d);
+    }
     cell->hit_cnt += 1;
     cell->visit_cnt += 1;
 }

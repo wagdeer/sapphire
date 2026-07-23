@@ -42,10 +42,16 @@ int8_t sampleCell(
     double x,
     double y)
 {
+    // Match worldToGlobalIndex: point coords are stored as float
+    // (Point::x/y/z) and promoted to double before arithmetic.
+    // Float-only division (fx/freso) can undershoot due to reciprocal
+    // precision; keep the arithmetic in double with float-rounded inputs.
+    const double dx = static_cast<double>(static_cast<float>(x));
+    const double dy = static_cast<double>(static_cast<float>(y));
     const int gx = static_cast<int>(
-        std::floor((x - msg.origin_x) / msg.resolution));
+        std::floor((dx - msg.origin_x) / msg.resolution));
     const int gy = static_cast<int>(
-        std::floor((y - msg.origin_y) / msg.resolution));
+        std::floor((dy - msg.origin_y) / msg.resolution));
     expect(gx >= 0 && gy >= 0 && gx < msg.width && gy < msg.height,
         "sample must land inside the exported grid");
     return msg.data[static_cast<size_t>(gy * msg.width + gx)];
@@ -233,14 +239,25 @@ void testDepthJitterClearsPreviousWallCell() {
     sapphire::OccupancyGrid grid(options);
     sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
 
-    for (int i = 0; i < 4; ++i) {
-        grid.insertScan(makeWallAtX(4.0f), pose);
+    // Phase 1 — single wall point per scan, 2 scans → hit_cnt=2 at wall cell.
+    // Low hit_cnt lets the clearing rays in Phase 2 dilute the ratio quickly.
+    {
+        auto cloud = std::make_shared<sapphire::PointCloud>();
+        sapphire::Point w{}; w.x = 4.0f; w.y = 0.0f; w.z = 0.1f; w.data[3] = 1.0f;
+        cloud->push_back(w);
+        for (int i = 0; i < 2; ++i) grid.insertScan(cloud, pose);
     }
     expect(sampleCell(grid.toMsg(), 4.0, 0.0) == 100,
         "initial wall must be occupied");
 
-    for (int i = 0; i < 8; ++i) {
-        grid.insertScan(makeWallAtX(4.2f), pose);
+    // Phase 2 — wall at x=4.2, same z. Free rays through the old cell have
+    // d_ray ≈ 0.1*(40/41) ≈ 0.098 ≤ d_min(0.1)+eps(0.1)=0.2 → should clear.
+    // Need ~20 rays to bring ratio 2/(2+N)<0.3 → N > 4.7. 12 scans × 1 ray.
+    {
+        auto cloud = std::make_shared<sapphire::PointCloud>();
+        sapphire::Point w{}; w.x = 4.2f; w.y = 0.0f; w.z = 0.1f; w.data[3] = 1.0f;
+        cloud->push_back(w);
+        for (int i = 0; i < 12; ++i) grid.insertScan(cloud, pose);
     }
 
     const sapphire::OccupancyGridMsg msg = grid.toMsg();
@@ -248,6 +265,74 @@ void testDepthJitterClearsPreviousWallCell() {
         "jittered wall endpoint must be occupied");
     expect(sampleCell(msg, 4.0, 0.0) != 100,
         "previous wall cell must be cleared by same-height free rays");
+}
+
+void testObstacleClearsAfterDisappears() {
+    // P0 regression: when an obstacle disappears, free rays through the cell
+    // must increase visit_cnt so the hit/visit ratio eventually drops below
+    // occ_threshold and the cell transitions from occupied to free.
+    //
+    // This exercises the d-aware clearing path: d_min is set to the wall
+    // height, and same-height free rays (d_ray <= d_min + clear_height_eps)
+    // must be allowed to increment visit_cnt.
+    sapphire::Config::Pgo::Occupancy options;
+    options.enabled = true;
+    options.resolution = 0.1;
+    options.h_clearance = 0.15;
+    options.ground_margin = 0.0;
+    options.d_max = 1.5;
+    options.clear_height_eps = 0.05;
+    options.occ_threshold = 0.3;
+    options.usable_range = 20.0;
+    options.min_range = 0.2;
+    options.cloud_voxel_size = 0.0;
+    options.margin = 2.0;
+
+    sapphire::OccupancyGrid grid(options);
+    sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+
+    const double wall_x = 4.0;
+    const double far_x = 7.0;
+
+    // Phase 1 — wall at x=4.0, d=0.5. Single point keeps hit_cnt low so the
+    // ratio can decay below occ_threshold with a feasible number of free-ray scans.
+    {
+        auto cloud = std::make_shared<sapphire::PointCloud>();
+        sapphire::Point point{};
+        point.x = static_cast<float>(wall_x);
+        point.y = 0.0f;
+        point.z = 0.5f;
+        point.data[3] = 1.0f;
+        cloud->push_back(point);
+        for (int s = 0; s < 4; ++s) {
+            grid.insertScan(cloud, pose);
+        }
+    }
+    expect(sampleCell(grid.toMsg(), wall_x, 0.0) == 100,
+        "wall must be occupied");
+
+    // Phase 2 — wall disappears. Rays go through to a far obstacle at x=7.0.
+    // Free rays at the wall cell have d_ray ≈ 0.5 * (4/7) ≈ 0.29 which is
+    // <= d_min(0.5) + eps(0.05) → should increment visit_cnt and dilute ratio.
+    // hit_cnt=4 from Phase 1 → need visit_cnt > 4/0.3 ≈ 13.3 → ~10 scans.
+    {
+        auto cloud = std::make_shared<sapphire::PointCloud>();
+        for (int i = 0; i < 4; ++i) {
+            sapphire::Point point{};
+            point.x = static_cast<float>(far_x);
+            point.y = 0.0f;
+            point.z = 0.5f;
+            point.data[3] = 1.0f;
+            cloud->push_back(point);
+        }
+        for (int s = 0; s < 10; ++s) {
+            grid.insertScan(cloud, pose);
+        }
+    }
+
+    const sapphire::OccupancyGridMsg msg = grid.toMsg();
+    expect(sampleCell(msg, wall_x, 0.0) != 100,
+        "wall cell must be cleared after obstacle disappears");
 }
 
 }  // namespace
@@ -259,7 +344,7 @@ int main() {
         testCeilingFilteredByDMax();
         testGroundMarginSkipsNearGroundHits();
         testDepthJitterClearsPreviousWallCell();
-        std::cout << "occupancy_grid_test passed\n";
+                std::cout << "occupancy_grid_test passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "occupancy_grid_test failed: " << error.what() << '\n';
