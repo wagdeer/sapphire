@@ -117,14 +117,18 @@ void OccupancyGrid::resizeTo(
     }
 
     if (grids_.empty()) {
-        min_x_ = static_cast<float>(min_x);
-        min_y_ = static_cast<float>(min_y);
-        max_x_ = static_cast<float>(max_x);
-        max_y_ = static_cast<float>(max_y);
+        // Snap min to SubGrid boundary so shift_x/y are exact integers on
+        // future expansions. Without snapping, the SubGrid-level data shift
+        // (1.6 m granularity) and cell-level origin change (0.1 m granularity)
+        // diverge, causing existing grid data to misalign by up to 8 cells.
+        min_x_ = std::floor(static_cast<float>(min_x / subgrid_reso_))
+            * subgrid_reso_;
+        min_y_ = std::floor(static_cast<float>(min_y / subgrid_reso_))
+            * subgrid_reso_;
         grid_size_x_ = static_cast<int>(
-            std::ceil((max_x_ - min_x_) / subgrid_reso_));
+            std::ceil((static_cast<float>(max_x) - min_x_) / subgrid_reso_));
         grid_size_y_ = static_cast<int>(
-            std::ceil((max_y_ - min_y_) / subgrid_reso_));
+            std::ceil((static_cast<float>(max_y) - min_y_) / subgrid_reso_));
         grid_size_x_ = std::max(grid_size_x_, 1);
         grid_size_y_ = std::max(grid_size_y_, 1);
         max_x_ = min_x_ + grid_size_x_ * subgrid_reso_;
@@ -138,25 +142,32 @@ void OccupancyGrid::resizeTo(
         return;
     }
 
+    // Expand to the nearest SubGrid-aligned boundary that covers the request.
     const float new_min_x = std::min(min_x_, static_cast<float>(min_x));
     const float new_min_y = std::min(min_y_, static_cast<float>(min_y));
     const float new_max_x = std::max(max_x_, static_cast<float>(max_x));
     const float new_max_y = std::max(max_y_, static_cast<float>(max_y));
 
+    const float snapped_min_x =
+        std::floor(new_min_x / subgrid_reso_) * subgrid_reso_;
+    const float snapped_min_y =
+        std::floor(new_min_y / subgrid_reso_) * subgrid_reso_;
+
     int new_size_x = static_cast<int>(
-        std::ceil((new_max_x - new_min_x) / subgrid_reso_));
+        std::ceil((new_max_x - snapped_min_x) / subgrid_reso_));
     int new_size_y = static_cast<int>(
-        std::ceil((new_max_y - new_min_y) / subgrid_reso_));
+        std::ceil((new_max_y - snapped_min_y) / subgrid_reso_));
     new_size_x = std::max(new_size_x, 1);
     new_size_y = std::max(new_size_y, 1);
 
-    const float snapped_max_x = new_min_x + new_size_x * subgrid_reso_;
-    const float snapped_max_y = new_min_y + new_size_y * subgrid_reso_;
+    const float snapped_max_x = snapped_min_x + new_size_x * subgrid_reso_;
+    const float snapped_max_y = snapped_min_y + new_size_y * subgrid_reso_;
 
+    // Both old and new corner are SubGrid multiples → division is exact.
     const int shift_x = static_cast<int>(
-        std::llround((min_x_ - new_min_x) / subgrid_reso_));
+        std::llround((min_x_ - snapped_min_x) / subgrid_reso_));
     const int shift_y = static_cast<int>(
-        std::llround((min_y_ - new_min_y) / subgrid_reso_));
+        std::llround((min_y_ - snapped_min_y) / subgrid_reso_));
 
     std::vector<SubGrid> new_grids(
         static_cast<size_t>(new_size_x * new_size_y));
@@ -173,8 +184,8 @@ void OccupancyGrid::resizeTo(
     }
 
     grids_ = std::move(new_grids);
-    min_x_ = new_min_x;
-    min_y_ = new_min_y;
+    min_x_ = snapped_min_x;
+    min_y_ = snapped_min_y;
     max_x_ = snapped_max_x;
     max_y_ = snapped_max_y;
     grid_size_x_ = new_size_x;
