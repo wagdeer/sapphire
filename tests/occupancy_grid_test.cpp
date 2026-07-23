@@ -148,6 +148,57 @@ void testCeilingFilteredByDMax() {
     }
 }
 
+void testGroundMarginSkipsNearGroundHits() {
+    // Mimic Mid-360 roof mount: h_clearance ≈ sensor height, ground at d≈-2.
+    // Without ground_margin those returns are in-band HITs and paint the floor.
+    sapphire::Config::Pgo::Occupancy options;
+    options.enabled = true;
+    options.resolution = 0.1;
+    options.h_clearance = 2.0;
+    options.ground_margin = 0.3;
+    options.d_max = 6.0;
+    options.occ_threshold = 0.3;
+    options.usable_range = 20.0;
+    options.min_range = 0.2;
+    options.cloud_voxel_size = 0.0;
+    options.margin = 2.0;
+
+    auto cloud = std::make_shared<sapphire::PointCloud>();
+    // Near-ground returns (should be out of HIT band: d < -1.7).
+    for (int i = 0; i < 40; ++i) {
+        sapphire::Point ground{};
+        ground.x = 1.0f + 0.05f * static_cast<float>(i);
+        ground.y = 0.0f;
+        ground.z = -1.95f;
+        ground.data[3] = 1.0f;
+        cloud->push_back(ground);
+    }
+    // Wall in the kept band (d = -0.5 >= -1.7).
+    for (int y = -3; y <= 3; ++y) {
+        for (int k = 0; k < 4; ++k) {
+            sapphire::Point wall{};
+            wall.x = 3.0f;
+            wall.y = 0.1f * static_cast<float>(y);
+            wall.z = -0.5f + 0.1f * static_cast<float>(k);
+            wall.data[3] = 1.0f;
+            cloud->push_back(wall);
+        }
+    }
+
+    sapphire::OccupancyGrid grid(options);
+    sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+    for (int i = 0; i < 4; ++i) {
+        grid.insertScan(cloud, pose);
+    }
+
+    const sapphire::OccupancyGridMsg msg = grid.toMsg();
+    expect(msg.width > 0 && msg.height > 0, "grid must be non-empty");
+    expect(sampleCell(msg, 3.0, 0.0) == 100,
+        "in-band wall must still become occupied");
+    expect(sampleCell(msg, 1.5, 0.0) != 100,
+        "near-ground returns must not paint occupied cells");
+}
+
 }  // namespace
 
 int main() {
@@ -155,6 +206,7 @@ int main() {
         testAttitudePlaneMarksWallOccupied();
         testGroundFreeRaysDoNotEraseWall();
         testCeilingFilteredByDMax();
+        testGroundMarginSkipsNearGroundHits();
         std::cout << "occupancy_grid_test passed\n";
         return 0;
     } catch (const std::exception& error) {

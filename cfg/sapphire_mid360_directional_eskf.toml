@@ -107,12 +107,16 @@ map_frame_stride = 3
 map_voxel_size = 0.8
 
 [pgo.occupancy]
-# d = lidar-frame z along the keyframe body z-axis.
+# d = world Z relative to sensor (≈ lidar-frame z on flat ground).
 # h_clearance ≈ sensor height above ground (vehicle Mid-360 ~2m).
-# Too small (e.g. 0.15) only keeps a thin slice at the lidar and drops trunks.
-enabled = false
+# ground_margin raises the HIT lower bound: hit iff
+#   d >= -h_clearance + ground_margin
+# so the near-ground slice is skipped (not occupied / does not lock d_min).
+# Too small h_clearance (e.g. 0.15) only keeps a thin slice at the lidar.
+enabled = true
 resolution = 0.1
 h_clearance = 2.0
+ground_margin = 0.5
 d_max = 6.0
 occ_threshold = 0.3
 usable_range = 40.0

@@ -99,10 +99,12 @@ map_frame_stride = 3
 map_voxel_size = 0.8
 
 [pgo.occupancy]
-# d = lidar-frame z; h_clearance ≈ sensor height above ground.
+# d = world Z relative to sensor; h_clearance ≈ sensor height above ground.
+# ground_margin raises HIT lower bound (see insertScan).
 enabled = true
 resolution = 0.1
 h_clearance = 2.0
+ground_margin = 0.3
 d_max = 3.0
 occ_threshold = 0.3
 usable_range = 40.0

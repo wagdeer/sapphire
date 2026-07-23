@@ -387,6 +387,10 @@ Config loadConfig(const std::filesystem::path& path) {
             root["pgo"]["occupancy"]["h_clearance"].value<double>()) {
         config.pgo.occupancy.h_clearance = *value;
     }
+    if (const auto value =
+            root["pgo"]["occupancy"]["ground_margin"].value<double>()) {
+        config.pgo.occupancy.ground_margin = *value;
+    }
     if (const auto value = root["pgo"]["occupancy"]["d_max"].value<double>()) {
         config.pgo.occupancy.d_max = *value;
     }
@@ -657,6 +661,15 @@ void validateConfig(const Config& config) {
         requireFiniteNonnegative(
             config.pgo.occupancy.h_clearance,
             "pgo.occupancy.h_clearance");
+        requireFiniteNonnegative(
+            config.pgo.occupancy.ground_margin,
+            "pgo.occupancy.ground_margin");
+        if (config.pgo.occupancy.ground_margin
+            >= config.pgo.occupancy.h_clearance
+            && config.pgo.occupancy.h_clearance > 0.0) {
+            throw std::invalid_argument(
+                "pgo.occupancy.ground_margin must be < h_clearance");
+        }
         requireFiniteNonnegative(
             config.pgo.occupancy.d_max,
             "pgo.occupancy.d_max");

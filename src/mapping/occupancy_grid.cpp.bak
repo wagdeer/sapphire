@@ -353,10 +353,6 @@ void OccupancyGrid::insertScan(
     const float min_range = static_cast<float>(options_.min_range);
     const float max_range = static_cast<float>(options_.usable_range);
     const float h_clearance = static_cast<float>(options_.h_clearance);
-    const float ground_margin = static_cast<float>(options_.ground_margin);
-    // Raise the lower HIT edge so the near-ground slice (≈ -h_clearance) does
-    // not become occupied or lock cell d_min for free-ray clearing.
-    const float d_hit_min = -h_clearance + ground_margin;
     const float d_max = static_cast<float>(options_.d_max);
 
     // Bounds from in-range points only. Using every return (including far
@@ -408,7 +404,7 @@ void OccupancyGrid::insertScan(
 
         const Eigen::Vector3d p_map = T_map_lidar * p_body;
         const float d = static_cast<float>(p_map.z() - t.z());
-        const bool hit = (d >= d_hit_min)
+        const bool hit = (d >= -h_clearance)
             && (d_max <= 0.0f || d <= d_max);
         ++used;
         d_min_seen = std::min(d_min_seen, d);
@@ -459,19 +455,19 @@ void OccupancyGrid::insertScan(
         spdlog::info(
             "[occupancy] scan rev={} points={} band_hits={} "
             "d=[{:.2f},{:.2f}] band=[{:.2f},{:.2f}] "
-            "cells(occ/free)={}/{} world_Z=({:.2f},{:.2f},{:.2f})",
+            "cells(occ/free)={}/{} z_hat=({:.2f},{:.2f},{:.2f})",
             revision_,
             used,
             casted,
             d_min_seen,
             d_max_seen,
-            d_hit_min,
+            -h_clearance,
             d_max <= 0.0f ? std::numeric_limits<float>::infinity() : d_max,
             occupied_cells,
             free_cells,
-            0.0,  // world Z
-            0.0,
-            1.0);
+            z_hat.x(),
+            z_hat.y(),
+            z_hat.z());
     }
 }
 

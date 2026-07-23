@@ -121,14 +121,17 @@ void testProjectConfig() {
     expectNear(
         config.pgo.map_voxel_size, 0.8,
         "PGO sparse-map voxel size");
-    expect(config.pgo.occupancy.enabled,
-           "occupancy grid must be enabled in Mid-360 profile");
+    expect(!config.pgo.occupancy.enabled,
+           "default Mid-360 profile keeps occupancy off");
     expectNear(
         config.pgo.occupancy.resolution, 0.1,
         "occupancy resolution");
     expectNear(
         config.pgo.occupancy.h_clearance, 2.0,
         "occupancy h_clearance");
+    expectNear(
+        config.pgo.occupancy.ground_margin, 0.3,
+        "occupancy ground_margin");
     expectNear(
         config.pgo.occupancy.d_max, 3.0,
         "occupancy d_max");
@@ -159,6 +162,11 @@ void testDirectionalEskfProfile() {
         config.odometry.eskf.bias_update_scale,
         0.0,
         "directional bring-up must initially freeze bias injection");
+    expect(config.pgo.occupancy.enabled,
+           "directional profile enables occupancy for bring-up");
+    expectNear(
+        config.pgo.occupancy.ground_margin, 0.3,
+        "directional occupancy ground_margin");
 }
 
 void testQuaternionNormalization() {

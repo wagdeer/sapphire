@@ -23,9 +23,8 @@ struct OccupancyGridMsg {
 
 /// World-Z 2.5D occupancy grid for global navigation.
 ///
-/// Height filtering uses world Z only — attitude-independent and consistent
-/// across keyframes. Points whose world Z differs from the sensor Z by more
-/// than h_clearance below or d_max above are out-of-band and skipped entirely
+/// Height filtering uses world Z (sensor-relative). Points outside
+/// [-h_clearance + ground_margin, d_max] are out-of-band and skipped entirely
 /// (neither occupied nor free-ray). In-band points cast XY Bresenham rays with
 /// linearly interpolated height for dynamic-obstacle detection.
 class OccupancyGrid {

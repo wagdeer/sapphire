@@ -231,19 +231,25 @@ struct Config {
         int map_frame_stride = 3;
         double map_voxel_size = 0.8;
 
-        /// Attitude-aware 2.5D occupancy grid built from PGO keyframes.
+        /// 2.5D occupancy grid built from PGO keyframes.
         ///
-        /// Signed distance d is body/lidar-frame z (along pose R.col(2)).
-        /// Hits are kept only for d in [-h_clearance, d_max].
+        /// Height band uses signed distance d (world Z relative to sensor, or
+        /// equivalently body-z when attitude is flat). Hits are kept only for
+        /// d in [-h_clearance + ground_margin, d_max].
         /// For a roof-mounted Mid-360, set h_clearance ≈ sensor height above
         /// ground (e.g. 1.5–2.5 m); 0.15 m only keeps a thin slice at the
         /// sensor and will miss tree trunks / curbs below the lidar.
+        /// Use ground_margin > 0 to keep the near-ground slice out of HIT
+        /// (avoids flooring the map and locking d_min for clearing).
         struct Occupancy {
             bool enabled = false;
             double resolution = 0.1;
-            /// Keep hits with body-z >= -h_clearance (≈ sensor mount height).
+            /// Lower band edge before ground_margin (≈ sensor mount height).
             double h_clearance = 2.0;
-            /// Drop hits with body-z > d_max (ceilings / high canopy). <=0 disables.
+            /// Raise the HIT lower bound by this many meters:
+            /// hit iff d >= -h_clearance + ground_margin. 0 keeps legacy band.
+            double ground_margin = 0.0;
+            /// Drop hits with d > d_max (ceilings / high canopy). <=0 disables.
             double d_max = 3.0;
             double occ_threshold = 0.3;
             double usable_range = 40.0;
