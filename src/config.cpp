@@ -395,6 +395,10 @@ Config loadConfig(const std::filesystem::path& path) {
         config.pgo.occupancy.d_max = *value;
     }
     if (const auto value =
+            root["pgo"]["occupancy"]["clear_height_eps"].value<double>()) {
+        config.pgo.occupancy.clear_height_eps = *value;
+    }
+    if (const auto value =
             root["pgo"]["occupancy"]["occ_threshold"].value<double>()) {
         config.pgo.occupancy.occ_threshold = *value;
     }
@@ -673,6 +677,9 @@ void validateConfig(const Config& config) {
         requireFiniteNonnegative(
             config.pgo.occupancy.d_max,
             "pgo.occupancy.d_max");
+        requireFiniteNonnegative(
+            config.pgo.occupancy.clear_height_eps,
+            "pgo.occupancy.clear_height_eps");
         if (config.pgo.occupancy.occ_threshold <= 0.0
             || config.pgo.occupancy.occ_threshold > 1.0
             || !std::isfinite(config.pgo.occupancy.occ_threshold)) {

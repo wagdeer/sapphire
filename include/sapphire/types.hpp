@@ -251,6 +251,10 @@ struct Config {
             double ground_margin = 0.0;
             /// Drop hits with d > d_max (ceilings / high canopy). <=0 disables.
             double d_max = 3.0;
+            /// Free rays may clear a hit cell when d_ray <= d_min + clear_height_eps.
+            /// Strict d_ray < d_min blocks same-height pass-through, so a wall that
+            /// jitters by one cell along the ray leaves a permanent occupied layer.
+            double clear_height_eps = 0.05;
             double occ_threshold = 0.3;
             double usable_range = 40.0;
             double min_range = 0.5;

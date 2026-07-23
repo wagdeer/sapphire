@@ -105,6 +105,7 @@ enabled = true
 resolution = 0.1
 h_clearance = 2.0
 ground_margin = 0.3
+clear_height_eps = 0.1
 d_max = 3.0
 occ_threshold = 0.3
 usable_range = 40.0

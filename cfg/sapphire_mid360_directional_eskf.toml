@@ -117,6 +117,8 @@ enabled = true
 resolution = 0.1
 h_clearance = 2.0
 ground_margin = 0.5
+# Same-height free rays can clear hit cells (pose jitter / wall moved along ray).
+clear_height_eps = 0.1
 d_max = 6.0
 occ_threshold = 0.3
 usable_range = 40.0

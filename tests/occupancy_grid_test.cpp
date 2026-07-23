@@ -199,6 +199,57 @@ void testGroundMarginSkipsNearGroundHits() {
         "near-ground returns must not paint occupied cells");
 }
 
+sapphire::PointCloudPtr makeWallAtX(float x) {
+    auto cloud = std::make_shared<sapphire::PointCloud>();
+    for (int z = 0; z < 8; ++z) {
+        for (int y = -3; y <= 3; ++y) {
+            sapphire::Point wall{};
+            wall.x = x;
+            wall.y = 0.15f * static_cast<float>(y);
+            wall.z = 0.1f + 0.15f * static_cast<float>(z);
+            wall.data[3] = 1.0f;
+            cloud->push_back(wall);
+        }
+    }
+    return cloud;
+}
+
+void testDepthJitterClearsPreviousWallCell() {
+    // Pose / ranging jitter moves the wall endpoint one cell farther. The old
+    // cell lies on the new ray as a same-height miss; without clear_height_eps
+    // it stays permanently occupied → multi-layer walls.
+    sapphire::Config::Pgo::Occupancy options;
+    options.enabled = true;
+    options.resolution = 0.1;
+    options.h_clearance = 0.15;
+    options.clear_height_eps = 0.1;
+    options.d_max = 1.5;
+    options.occ_threshold = 0.3;
+    options.usable_range = 20.0;
+    options.min_range = 0.2;
+    options.cloud_voxel_size = 0.0;
+    options.margin = 2.0;
+
+    sapphire::OccupancyGrid grid(options);
+    sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+
+    for (int i = 0; i < 4; ++i) {
+        grid.insertScan(makeWallAtX(4.0f), pose);
+    }
+    expect(sampleCell(grid.toMsg(), 4.0, 0.0) == 100,
+        "initial wall must be occupied");
+
+    for (int i = 0; i < 8; ++i) {
+        grid.insertScan(makeWallAtX(4.2f), pose);
+    }
+
+    const sapphire::OccupancyGridMsg msg = grid.toMsg();
+    expect(sampleCell(msg, 4.2, 0.0) == 100,
+        "jittered wall endpoint must be occupied");
+    expect(sampleCell(msg, 4.0, 0.0) != 100,
+        "previous wall cell must be cleared by same-height free rays");
+}
+
 }  // namespace
 
 int main() {
@@ -207,6 +258,7 @@ int main() {
         testGroundFreeRaysDoNotEraseWall();
         testCeilingFilteredByDMax();
         testGroundMarginSkipsNearGroundHits();
+        testDepthJitterClearsPreviousWallCell();
         std::cout << "occupancy_grid_test passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -245,10 +245,16 @@ void OccupancyGrid::updateMiss(int gx, int gy, float d_ray) {
     }
     // Free rays never define obstacle height (d_min). Their only role is
     // visit counting for hit/visit occupancy, and as a dynamic-obstacle
-    // signal: a free ray below a previously observed obstacle height
-    // suggests the obstacle has been cleared.
+    // signal: a free ray at/below the recorded underside suggests the
+    // obstacle has been cleared or the hit endpoint jittered along the ray.
+    //
+    // Use <= d_min + eps (not strict < d_min): same-height pass-through is
+    // exactly what happens when a wall endpoint moves one cell farther —
+    // strict < left the old cell permanently occupied (multi-layer walls).
     if (cell->hit_cnt > 0) {
-        if (d_ray < cell->d_min) {
+        const float clear_ceiling = cell->d_min
+            + static_cast<float>(options_.clear_height_eps);
+        if (d_ray <= clear_ceiling) {
             cell->visit_cnt += 1;
         }
         return;
