@@ -114,6 +114,14 @@ private:
     float subgrid_reso_ = 0.0f;  // resolution * 16
     std::vector<SubGrid> grids_;
     size_t revision_ = 0;
+
+    // Incremental statistics to avoid O(N_cells) scans in toMsg/logging.
+    static constexpr float kUnvisitedSentinel = -1e10f;
+    float visited_max_wx_ = kUnvisitedSentinel;
+    float visited_max_wy_ = kUnvisitedSentinel;
+    size_t occupied_cells_ = 0;
+    size_t free_cells_ = 0;
+
     mutable std::mutex mutex_;
 };
 

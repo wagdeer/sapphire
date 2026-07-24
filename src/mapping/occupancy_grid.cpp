@@ -78,6 +78,10 @@ void OccupancyGrid::clear() {
     grid_size_y_ = 0;
     min_x_ = min_y_ = 0.0f;
     max_x_ = max_y_ = 0.0f;
+    visited_max_wx_ = kUnvisitedSentinel;
+    visited_max_wy_ = kUnvisitedSentinel;
+    occupied_cells_ = 0;
+    free_cells_ = 0;
     ++revision_;
 }
 
@@ -242,6 +246,19 @@ void OccupancyGrid::updateHit(int gx, int gy, float d) {
     if (!cell) {
         return;
     }
+
+    // Track visited bounds in world coordinates (invariant under grid expansion).
+    const float wx = min_x_ + (static_cast<float>(gx) + 0.5f)
+        * static_cast<float>(options_.resolution);
+    const float wy = min_y_ + (static_cast<float>(gy) + 0.5f)
+        * static_cast<float>(options_.resolution);
+    visited_max_wx_ = std::max(visited_max_wx_, wx);
+    visited_max_wy_ = std::max(visited_max_wy_, wy);
+
+    // Snapshot occupancy state before mutation for incremental counters.
+    const bool was_occupied = isOccupied(*cell);
+    const bool was_free = isFree(*cell);
+
     // First hit resets d_min to the current obstacle height. Subsequent
     // hits track the lowest observed height so free rays cannot punch
     // through from above. Without the reset, a near-ground in-band point
@@ -254,6 +271,14 @@ void OccupancyGrid::updateHit(int gx, int gy, float d) {
     }
     cell->hit_cnt += 1;
     cell->visit_cnt += 1;
+
+    // Apply counter deltas.
+    const bool now_occupied = isOccupied(*cell);
+    const bool now_free = isFree(*cell);
+    if (!was_occupied && now_occupied) { ++occupied_cells_; }
+    if (was_occupied && !now_occupied) { --occupied_cells_; }
+    if (!was_free && now_free) { ++free_cells_; }
+    if (was_free && !now_free) { --free_cells_; }
 }
 
 void OccupancyGrid::updateMiss(int gx, int gy, float d_ray) {
@@ -261,6 +286,19 @@ void OccupancyGrid::updateMiss(int gx, int gy, float d_ray) {
     if (!cell) {
         return;
     }
+
+    // Track visited bounds in world coordinates (invariant under grid expansion).
+    const float wx = min_x_ + (static_cast<float>(gx) + 0.5f)
+        * static_cast<float>(options_.resolution);
+    const float wy = min_y_ + (static_cast<float>(gy) + 0.5f)
+        * static_cast<float>(options_.resolution);
+    visited_max_wx_ = std::max(visited_max_wx_, wx);
+    visited_max_wy_ = std::max(visited_max_wy_, wy);
+
+    // Snapshot occupancy state before mutation for incremental counters.
+    const bool was_occupied = isOccupied(*cell);
+    const bool was_free = isFree(*cell);
+
     // Free rays never define obstacle height (d_min). Their only role is
     // visit counting for hit/visit occupancy, and as a dynamic-obstacle
     // signal: a free ray at/below the recorded underside suggests the
@@ -275,9 +313,17 @@ void OccupancyGrid::updateMiss(int gx, int gy, float d_ray) {
         if (d_ray <= clear_ceiling) {
             cell->visit_cnt += 1;
         }
-        return;
+    } else {
+        cell->visit_cnt += 1;
     }
-    cell->visit_cnt += 1;
+
+    // Apply counter deltas.
+    const bool now_occupied = isOccupied(*cell);
+    const bool now_free = isFree(*cell);
+    if (!was_occupied && now_occupied) { ++occupied_cells_; }
+    if (was_occupied && !now_occupied) { --occupied_cells_; }
+    if (!was_free && now_free) { ++free_cells_; }
+    if (was_free && !now_free) { --free_cells_; }
 }
 
 void OccupancyGrid::castRay(
@@ -466,26 +512,6 @@ void OccupancyGrid::insertScan(
     ++revision_;
 
     if (used > 0 && (revision_ <= 3 || revision_ % 20 == 0)) {
-        size_t occupied_cells = 0;
-        size_t free_cells = 0;
-        for (const SubGrid& sub : grids_) {
-            if (!sub.allocated()) {
-                continue;
-            }
-            for (int j = 0; j < kSubGridWidth; ++j) {
-                for (int i = 0; i < kSubGridWidth; ++i) {
-                    const CellData* cell = sub.cell(i, j);
-                    if (!cell || cell->visit_cnt == 0) {
-                        continue;
-                    }
-                    if (isOccupied(*cell)) {
-                        ++occupied_cells;
-                    } else {
-                        ++free_cells;
-                    }
-                }
-            }
-        }
         spdlog::info(
             "[occupancy] scan rev={} points={} band_hits={} "
             "d=[{:.2f},{:.2f}] band=[{:.2f},{:.2f}] "
@@ -497,8 +523,8 @@ void OccupancyGrid::insertScan(
             d_max_seen,
             d_hit_min,
             d_max <= 0.0f ? std::numeric_limits<float>::infinity() : d_max,
-            occupied_cells,
-            free_cells,
+            occupied_cells_,
+            free_cells_,
             0.0,  // world Z
             0.0,
             1.0);
@@ -511,44 +537,19 @@ OccupancyGridMsg OccupancyGrid::toMsg() const {
     OccupancyGridMsg msg;
     msg.resolution = options_.resolution;
     msg.revision = revision_;
-    if (grids_.empty()) {
-        return msg;
-    }
-
-    // Keep export origin locked to the internal map origin (min_x_/min_y_).
-    // Cropping to the visited min corner made origin_x/y jump every time a
-    // new extreme cell was touched, which looks like the grid "shaking" in
-    // RViz even though cell contents were mostly right.
-    // Only trim the unused +x/+y margin beyond the visited max indices.
-    int max_gx = -1;
-    int max_gy = -1;
-    for (int sy = 0; sy < grid_size_y_; ++sy) {
-        for (int sx = 0; sx < grid_size_x_; ++sx) {
-            const SubGrid& sub =
-                grids_[static_cast<size_t>(sy * grid_size_x_ + sx)];
-            if (!sub.allocated()) {
-                continue;
-            }
-            for (int j = 0; j < kSubGridWidth; ++j) {
-                for (int i = 0; i < kSubGridWidth; ++i) {
-                    const CellData* cell = sub.cell(i, j);
-                    if (!cell || cell->visit_cnt == 0) {
-                        continue;
-                    }
-                    max_gx = std::max(max_gx, (sx << kSubGridBits) + i);
-                    max_gy = std::max(max_gy, (sy << kSubGridBits) + j);
-                }
-            }
-        }
-    }
-    if (max_gx < 0 || max_gy < 0) {
+    if (grids_.empty() || visited_max_wx_ <= kUnvisitedSentinel + 1.0f) {
         return msg;
     }
 
     msg.origin_x = static_cast<double>(min_x_);
     msg.origin_y = static_cast<double>(min_y_);
-    msg.width = max_gx + 1;
-    msg.height = max_gy + 1;
+    // Cell-center tracking: ceil maps 0.5 → 1 cell, 99.5 → 100 cells.
+    msg.width = static_cast<int>(
+        std::ceil((static_cast<double>(visited_max_wx_) - msg.origin_x)
+            / options_.resolution));
+    msg.height = static_cast<int>(
+        std::ceil((static_cast<double>(visited_max_wy_) - msg.origin_y)
+            / options_.resolution));
     msg.data.assign(
         static_cast<size_t>(msg.width * msg.height),
         static_cast<int8_t>(-1));
