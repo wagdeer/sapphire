@@ -1,6 +1,8 @@
 #include <sapphire/odometry/submap.hpp>
 #include <sapphire/odometry/voxel_filter.hpp>
 
+#include <SO3.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -23,10 +25,8 @@ bool SubmapManager::shouldAddKeyframe(
 
     const Isometry3d delta =
         keyframes_.back().T_world_lidar.inverse() * T_world_lidar;
-    Eigen::Quaterniond rotation(delta.rotation());
-    rotation.normalize();
     const double angle =
-        2.0 * std::atan2(rotation.vec().norm(), std::abs(rotation.w()));
+        lie::SO3d::log(lie::SO3d(delta.rotation())).norm();
 
     constexpr double kThresholdTolerance = 1e-12;
     return delta.translation().norm()

@@ -40,14 +40,21 @@
   ✅ **P1-5 FIXED**: Submap keyframes 永不淘汰
      文件: src/odometry/submap.cpp:47
      原: keyframes_.push_back(...) 只有 add 没有 remove，
-         selectNearest 每帧 O(N) 扫描，长航时线性增长
+        selectNearest 每帧 O(N) 扫描，长航时线性增长
      修复: 新增 pruneStaleKeyframes()，addKeyframe() 末尾调用
-         触发条件: keyframes_.size() > max_keyframes × 3
-         保留策略: 只保留 active_indices_ 中的帧，其余 compact 移除
-         重映射: 维护 new_index[] 映射表，compact 后重算 active_indices_
-         效果: 内存 O(N)→O(1)，selectNearest O(N)→O(1)
-         缓冲因子 3× 避免机器人在边界来回时的抖动
+        触发条件: keyframes_.size() > max_keyframes × 3
+        保留策略: 只保留 active_indices_ 中的帧，其余 compact 移除
+        重映射: 维护 new_index[] 映射表，compact 后重算 active_indices_
+        效果: 内存 O(N)→O(1)，selectNearest O(N)→O(1)
+        缓冲因子 3× 避免机器人在边界来回时的抖动
      新增测试: testPrunesStaleKeyframes + testPrunePreservesActiveIndices
+
+  ✅ **§2.1 FIXED**: 几何观测器四元数修正 → lie::SO3d exponential map
+     文件: src/odometry/observer.cpp:57-62
+     原: 手动构造非单位四元数 + 线性加法 + normalize 硬拉
+     修复: lie::SO3d::log() 提取误差 → scale gain → lie::SO3d::exp() 合成
+     关联: CMakeLists.txt 新增 external/lie include path
+     详情: docs/code-review/REVIEW_2026-07-25_lie_unification.md
 
   ✅ **P2-1, P2-2 FIXED**: castRay 边界精度 + 死分支
      文件: src/mapping/occupancy_grid.cpp:299-308, 321-323

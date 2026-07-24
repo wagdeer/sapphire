@@ -2,6 +2,8 @@
 #include <sapphire/mapping/occupancy_grid.hpp>
 #include <sapphire/odometry/voxel_filter.hpp>
 
+#include <SO3.hpp>
+
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/nonlinear/ISAM2.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
@@ -29,10 +31,7 @@ namespace sapphire {
 namespace {
 
 double rotationAngle(const Isometry3d& transform) {
-    Eigen::Quaterniond rotation(transform.rotation());
-    rotation.normalize();
-    return 2.0 * std::atan2(
-        rotation.vec().norm(), std::abs(rotation.w()));
+    return lie::SO3d::log(lie::SO3d(transform.rotation())).norm();
 }
 
 gtsam::Pose3 toGtsam(const Isometry3d& pose) {

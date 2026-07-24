@@ -1,6 +1,8 @@
 #include <sapphire/odometry/registration.hpp>
 #include <spdlog/spdlog.h>
 
+#include <SO3.hpp>
+
 #include <Eigen/Geometry>
 #include <cmath>
 #include <limits>
@@ -73,10 +75,8 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
     double corr_rot_deg = std::numeric_limits<double>::infinity();
     if (finite) {
         corr_trans_m = T_correction.translation().norm();
-        Eigen::Quaterniond q_corr(T_correction.rotation());
-        q_corr.normalize();
         corr_rot_deg =
-            2.0 * std::atan2(q_corr.vec().norm(), std::abs(q_corr.w()))
+            lie::SO3d::log(lie::SO3d(T_correction.rotation())).norm()
             * (180.0 / M_PI);
     }
 
