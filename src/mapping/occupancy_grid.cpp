@@ -363,29 +363,45 @@ void OccupancyGrid::castRay(
         return;
     }
 
+    // Integer Bresenham DDA — no float multiplication or rounding per step.
+    // Error term tracks the sub-axis drift in fixed-point (×2 scaling).
     if (std::abs(dy) > std::abs(dx)) {
-        if (dy == 0) {
-            return;
-        }
-        const float k = static_cast<float>(dx) / static_cast<float>(dy);
         const float d_step =
             (d_end - d_sensor) / static_cast<float>(dy);
-        const int sign = dy > 0 ? 1 : -1;
-        for (int j = sign; j != dy; j += sign) {
-            const int i = static_cast<int>(std::lround(j * k));
-            updateMiss(x0 + i, y0 + j, d_sensor + j * d_step);
+        const int sign_y = (dy > 0) - (dy < 0);
+        const int sign_x = (dx > 0) - (dx < 0);
+        const int adx = std::abs(dx);
+        const int ady = std::abs(dy);
+        int error = 2 * adx - ady;
+        int i = 0;
+        float d_ray = d_sensor;
+        for (int j = sign_y; j != dy; j += sign_y) {
+            d_ray += d_step;
+            if (error > 0) {
+                i += sign_x;
+                error -= 2 * ady;
+            }
+            error += 2 * adx;
+            updateMiss(x0 + i, y0 + j, d_ray);
         }
     } else {
-        if (dx == 0) {
-            return;
-        }
-        const float k = static_cast<float>(dy) / static_cast<float>(dx);
         const float d_step =
             (d_end - d_sensor) / static_cast<float>(dx);
-        const int sign = dx > 0 ? 1 : -1;
-        for (int i = sign; i != dx; i += sign) {
-            const int j = static_cast<int>(std::lround(i * k));
-            updateMiss(x0 + i, y0 + j, d_sensor + i * d_step);
+        const int sign_x = (dx > 0) - (dx < 0);
+        const int sign_y = (dy > 0) - (dy < 0);
+        const int adx = std::abs(dx);
+        const int ady = std::abs(dy);
+        int error = 2 * ady - adx;
+        int j = 0;
+        float d_ray = d_sensor;
+        for (int i = sign_x; i != dx; i += sign_x) {
+            d_ray += d_step;
+            if (error > 0) {
+                j += sign_y;
+                error -= 2 * adx;
+            }
+            error += 2 * ady;
+            updateMiss(x0 + i, y0 + j, d_ray);
         }
     }
 
