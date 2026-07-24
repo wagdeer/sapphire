@@ -587,7 +587,7 @@ EskfUpdate Eskf::correctAt(
 
     Mat15 Jr = Mat15::Identity();
     Jr.block<3, 3>(0, 0) =
-        Eigen::Matrix3d::Identity() - 0.5 * SO3::wedge(dx.segment<3>(0));
+        lie::SO3d::invLeftJacobian(-dx.segment<3>(0));
     P_tip_ = Jr * P_upd * Jr.transpose();
     P_tip_ = 0.5 * (P_tip_ + P_tip_.transpose());
 
