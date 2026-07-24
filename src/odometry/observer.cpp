@@ -41,7 +41,7 @@ ObserverUpdate applyGeometricObserver(
     update.accel_bias -=
         dt * config.accel_bias_gain * body_position_error;
     update.gyro_bias -=
-        dt * config.gyro_bias_gain * q_error.w() * q_error.vec();
+        dt * config.gyro_bias_gain * lie::SO3d::log(lie::SO3d(q_error));
     update.accel_bias = update.accel_bias.array()
         .min(config.accel_bias_max)
         .max(-config.accel_bias_max);
