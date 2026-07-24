@@ -383,39 +383,22 @@ void OccupancyGrid::insertScan(
     const float d_hit_min = -h_clearance + ground_margin;
     const float d_max = static_cast<float>(options_.d_max);
 
-    // Bounds from in-range points only. Using every return (including far
-    // outliers beyond usable_range) previously inflated the dense export.
+    // Single-pass: collect map-frame XY + filtered height per in-range point.
+    // Bounds are accumulated in the same loop. The cached (x,y,d,hit) tuple
+    // feeds ray casting after resizeTo so T_map_lidar * p_body is computed once.
+    struct MappedPoint {
+        float x;
+        float y;
+        float d;
+        bool hit;
+    };
+    std::vector<MappedPoint> mapped;
+    mapped.reserve(cloud->points.size());
+
     double scan_min_x = t.x();
     double scan_min_y = t.y();
     double scan_max_x = t.x();
     double scan_max_y = t.y();
-    for (const Point& point : cloud->points) {
-        if (!std::isfinite(point.x) || !std::isfinite(point.y)
-            || !std::isfinite(point.z)) {
-            continue;
-        }
-        const Eigen::Vector3d p_body(point.x, point.y, point.z);
-        const float range = static_cast<float>(p_body.norm());
-        if (range < min_range || range > max_range) {
-            continue;
-        }
-        const Eigen::Vector3d p_map = T_map_lidar * p_body;
-        scan_min_x = std::min(scan_min_x, p_map.x());
-        scan_min_y = std::min(scan_min_y, p_map.y());
-        scan_max_x = std::max(scan_max_x, p_map.x());
-        scan_max_y = std::max(scan_max_y, p_map.y());
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    resizeTo(
-        scan_min_x - options_.margin,
-        scan_min_y - options_.margin,
-        scan_max_x + options_.margin,
-        scan_max_y + options_.margin);
-
-    size_t used = 0;
-    size_t in_band = 0;
-    size_t casted = 0;
     float d_min_seen = std::numeric_limits<float>::max();
     float d_max_seen = std::numeric_limits<float>::lowest();
 
@@ -431,13 +414,36 @@ void OccupancyGrid::insertScan(
         }
 
         const Eigen::Vector3d p_map = T_map_lidar * p_body;
+        const double px = p_map.x();
+        const double py = p_map.y();
         const float d = static_cast<float>(p_map.z() - t.z());
         const bool hit = (d >= d_hit_min)
             && (d_max <= 0.0f || d <= d_max);
-        ++used;
+
+        scan_min_x = std::min(scan_min_x, px);
+        scan_min_y = std::min(scan_min_y, py);
+        scan_max_x = std::max(scan_max_x, px);
+        scan_max_y = std::max(scan_max_y, py);
         d_min_seen = std::min(d_min_seen, d);
         d_max_seen = std::max(d_max_seen, d);
-        if (!hit) {
+
+        mapped.push_back(
+            {static_cast<float>(px), static_cast<float>(py), d, hit});
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    resizeTo(
+        scan_min_x - options_.margin,
+        scan_min_y - options_.margin,
+        scan_max_x + options_.margin,
+        scan_max_y + options_.margin);
+
+    size_t used = mapped.size();
+    size_t in_band = 0;
+    size_t casted = 0;
+
+    for (const MappedPoint& mp : mapped) {
+        if (!mp.hit) {
             // Out-of-band returns (ground / high canopy) must NOT cast long
             // free rays. Mid-360 ground density otherwise floods every cell
             // between the sensor and the return, diluting real obstacles to
@@ -451,10 +457,10 @@ void OccupancyGrid::insertScan(
         castRay(
             sensor.x(),
             sensor.y(),
-            p_map.x(),
-            p_map.y(),
+            static_cast<double>(mp.x),
+            static_cast<double>(mp.y),
             d_sensor,
-            d,
+            mp.d,
             true);
     }
     ++revision_;
@@ -498,6 +504,7 @@ void OccupancyGrid::insertScan(
             1.0);
     }
 }
+
 
 OccupancyGridMsg OccupancyGrid::toMsg() const {
     std::lock_guard<std::mutex> lock(mutex_);
