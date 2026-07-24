@@ -48,13 +48,17 @@ bool SubmapManager::addKeyframe(
     stored_point_count_ += cloud_world->size();
     const std::vector<size_t> selected =
         selectNearest(T_world_lidar.translation());
-    if (selected == active_indices_) {
-        return false;
+
+    bool target_changed = false;
+    if (selected != active_indices_) {
+        active_indices_ = selected;
+        rebuildTarget();
+        target_changed = true;
     }
 
-    active_indices_ = selected;
-    rebuildTarget();
-    return true;
+    pruneStaleKeyframes();
+
+    return target_changed;
 }
 
 std::vector<size_t> SubmapManager::selectNearest(
@@ -103,6 +107,44 @@ void SubmapManager::rebuildTarget() {
 
     target_ = deterministicVoxelDownsample(*merged, config_.voxel_size);
     ++target_revision_;
+}
+
+void SubmapManager::pruneStaleKeyframes() {
+    // Keep a buffer of 3× the active window to avoid thrashing under
+    // back-and-forth motion while still bounding memory growth.
+    constexpr size_t kBufferFactor = 3;
+    const size_t limit =
+        static_cast<size_t>(config_.max_keyframes) * kBufferFactor;
+    if (keyframes_.size() <= limit) {
+        return;
+    }
+
+    // Mark every keyframe that participates in the current active window.
+    std::vector<bool> keep(keyframes_.size(), false);
+    for (size_t idx : active_indices_) {
+        keep[idx] = true;
+    }
+
+    // Compact: move kept elements to the front, track old→new mapping.
+    std::vector<size_t> new_index(keyframes_.size());
+    size_t write = 0;
+    for (size_t i = 0; i < keyframes_.size(); ++i) {
+        if (keep[i]) {
+            new_index[i] = write;
+            if (write != i) {
+                keyframes_[write] = std::move(keyframes_[i]);
+            }
+            ++write;
+        } else {
+            stored_point_count_ -= keyframes_[i].cloud_world->size();
+        }
+    }
+    keyframes_.resize(write);
+
+    // Remap active_indices_ to the compacted vector.
+    for (size_t& idx : active_indices_) {
+        idx = new_index[idx];
+    }
 }
 
 }  // namespace sapphire

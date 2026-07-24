@@ -104,6 +104,60 @@ void testNearestSelectionAndStableTarget() {
            "continuous sub-threshold motion must keep the target stable");
 }
 
+void testPrunesStaleKeyframes() {
+    // max_keyframes=3 → buffer limit is 9.  With enough frames the
+    // 3-frame active window slides forward and frames far behind are
+    // evicted.
+    sapphire::Config config;
+    config.odometry.submap.max_keyframes = 3;
+    config.odometry.submap.voxel_size = 0.01;
+    sapphire::SubmapManager manager(config.odometry.submap);
+
+    // Add enough keyframes to guarantee pruning fires at least twice
+    // so the stored set stabilises at exactly the active-window size.
+    for (size_t i = 0; i < 24; ++i) {
+        const double x = static_cast<double>(i) * 5.0;
+        manager.addKeyframe(
+            makePose(x), makeCloud(static_cast<float>(x)), x);
+    }
+
+    const auto active = manager.activeKeyframeIndices();
+    expect(active.size() == 3,
+           "active window must be bounded by max_keyframes");
+    expect(manager.keyframeCount() == active.size(),
+           "stale keyframes must be evicted, not just hidden");
+    expect(manager.storedPointCount() == manager.keyframeCount(),
+           "stored point count must match retained keyframe count");
+}
+
+void testPrunePreservesActiveIndices() {
+    // After pruning, active_indices_ must still point to the correct
+    // keyframes inside the compacted vector.
+    sapphire::Config config;
+    config.odometry.submap.max_keyframes = 2;
+    config.odometry.submap.voxel_size = 0.01;
+    sapphire::SubmapManager manager(config.odometry.submap);
+
+    // Add 8 keyframes.
+    for (size_t i = 0; i < 8; ++i) {
+        const double x = static_cast<double>(i) * 5.0;
+        manager.addKeyframe(
+            makePose(x), makeCloud(static_cast<float>(x)), x);
+    }
+
+    // pruning limit = 3×2 = 6, and 8 > 6 so pruning fired.
+    expect(manager.activeKeyframeIndices().size() == 2,
+           "2-frame window must be maintained after pruning");
+    // Each active index must be a valid subscript into keyframes_.
+    for (size_t idx : manager.activeKeyframeIndices()) {
+        expect(idx < manager.keyframeCount(),
+               "remapped index must stay in bounds");
+    }
+    // The target must still resolve.
+    expect(manager.target() != nullptr,
+           "target must be valid after pruning");
+}
+
 void testVoxelDownsampling() {
     sapphire::Config config;
     config.odometry.submap.voxel_size = 0.25;
@@ -128,6 +182,8 @@ int main() {
     testKeyframeThresholds();
     testNearestSelectionAndStableTarget();
     testVoxelDownsampling();
+    testPrunesStaleKeyframes();
+    testPrunePreservesActiveIndices();
     std::cout << "All submap tests passed\n";
     return EXIT_SUCCESS;
 }
