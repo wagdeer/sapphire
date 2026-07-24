@@ -159,7 +159,7 @@ Gal3 interpolateState(
     const lie::SO3d start_so3(start.q());
     const lie::SO3d end_so3(end.q());
     const Eigen::Vector3d omega = lie::SO3d::log(start_so3.inv() * end_so3);
-    const Eigen::Quaterniond rotation = (start_so3 * lie::SO3d::exp(alpha * omega)).q();
+    const lie::SO3d rotation_so3 = start_so3 * lie::SO3d::exp(alpha * omega);
     const Eigen::Vector3d velocity =
         (1.0 - alpha) * start.v() + alpha * end.v();
 
@@ -178,7 +178,7 @@ Gal3 interpolateState(
         + h11 * interval_dt * end.v();
 
     Gal3::IsometriesType isometries{velocity, position};
-    return Gal3(rotation, isometries, 0.0);
+    return Gal3(rotation_so3, isometries, 0.0);
 }
 
 std::vector<TimedState> integrateTimeline(
@@ -268,46 +268,31 @@ PointCloudPtr transformScan(
         output->points.size() >= kParallelPointThreshold && group_count > 1;
     const bool in_parallel = omp_in_parallel();
 
+    auto process_group = [&](size_t group_index) {
+        const Isometry3f T_world_lidar = (
+            poseFromState(states[group_index].state) * T_imu_lidar
+        ).cast<float>();
+        const size_t begin = timeline.group_offsets[group_index];
+        const size_t end = timeline.group_offsets[group_index + 1];
+        for (size_t point_idx = begin; point_idx < end; ++point_idx) {
+            output->points[point_idx] = transformPoint(
+                timeline.sorted_scan.points[point_idx], T_world_lidar);
+        }
+    };
+
     if (in_parallel) {
 #pragma omp for schedule(static)
         for (std::ptrdiff_t group = 0; group < group_count; ++group) {
-            const size_t group_index = static_cast<size_t>(group);
-            const Isometry3f T_world_lidar = (
-                poseFromState(states[group_index].state) * T_imu_lidar
-            ).cast<float>();
-            const size_t begin = timeline.group_offsets[group_index];
-            const size_t end = timeline.group_offsets[group_index + 1];
-            for (size_t point_idx = begin; point_idx < end; ++point_idx) {
-                output->points[point_idx] = transformPoint(
-                    timeline.sorted_scan.points[point_idx], T_world_lidar);
-            }
+            process_group(static_cast<size_t>(group));
         }
     } else if (use_parallel) {
 #pragma omp parallel for schedule(static) num_threads(thread_count)
         for (std::ptrdiff_t group = 0; group < group_count; ++group) {
-            const size_t group_index = static_cast<size_t>(group);
-            const Isometry3f T_world_lidar = (
-                poseFromState(states[group_index].state) * T_imu_lidar
-            ).cast<float>();
-            const size_t begin = timeline.group_offsets[group_index];
-            const size_t end = timeline.group_offsets[group_index + 1];
-            for (size_t point_idx = begin; point_idx < end; ++point_idx) {
-                output->points[point_idx] = transformPoint(
-                    timeline.sorted_scan.points[point_idx], T_world_lidar);
-            }
+            process_group(static_cast<size_t>(group));
         }
     } else {
         for (std::ptrdiff_t group = 0; group < group_count; ++group) {
-            const size_t group_index = static_cast<size_t>(group);
-            const Isometry3f T_world_lidar = (
-                poseFromState(states[group_index].state) * T_imu_lidar
-            ).cast<float>();
-            const size_t begin = timeline.group_offsets[group_index];
-            const size_t end = timeline.group_offsets[group_index + 1];
-            for (size_t point_idx = begin; point_idx < end; ++point_idx) {
-                output->points[point_idx] = transformPoint(
-                    timeline.sorted_scan.points[point_idx], T_world_lidar);
-            }
+            process_group(static_cast<size_t>(group));
         }
     }
 

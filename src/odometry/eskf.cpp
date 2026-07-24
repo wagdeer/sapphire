@@ -158,6 +158,22 @@ void Eskf::propagateCovariance(
         return;
     }
 
+    // The mean path uses a first-order Φ = I + F·dt discretization.
+    //
+    // Noise discretization uses Qd = Φ · G·Qc·G^T · Φ^T · dt, which is a
+    // conservative (over-estimating) choice compared to the standard first-order
+    // formulas:
+    //
+    //   Euler-Maruyama:  Qd = G·Qc·G^T · dt
+    //   Trapezoidal:     Qd = ½ (Φ·G·Qc·G^T + G·Qc·G^T·Φ^T) · dt
+    //
+    // The extra Φ factors inflate the process noise covariance.  This is
+    // deliberate: it trades optimality for robustness.  Under-estimating
+    // covariance risks filter divergence (the estimator trusts its model too
+    // much and stops listening to measurements); over-estimating only makes
+    // it slightly more cautious, which is preferable for a SLAM estimator
+    // that must handle aggressive motion and variable sensor quality.
+
     // Match MeanOnlyGal3Integrator: subdivide large gaps so the first-order
     // Φ = I + F dt discretization stays consistent with the mean path.
     constexpr double kMaxStepSec = 0.02;
@@ -456,6 +472,15 @@ EskfUpdate Eskf::correctAt(
     const Vec6 Sinv_nu = ldlt.solve(nu);
     update.mahalanobis = nu.dot(Sinv_nu);
     update.normalized_nis = update.mahalanobis / 6.0;
+
+    // Sliding-window mean of normalized NIS for real-time filter health
+    // monitoring.  The window size (100) is chosen empirically: large enough
+    // to smooth out single-frame noise, small enough to react to divergence
+    // within a few seconds (at ~10–20 Hz correction rate).  Note that the
+    // mean is computed over a trailing window, not a full-run average — early
+    // frames (before the window fills) only reflect a partial sample and
+    // should not be treated as a statistically rigorous estimate.  The value
+    // is primarily used as a diagnostic gauge, not as a gate threshold.
     constexpr std::size_t kNisWindowSize = 100;
     normalized_nis_window_.push_back(update.normalized_nis);
     normalized_nis_sum_ += update.normalized_nis;
