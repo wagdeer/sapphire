@@ -37,12 +37,19 @@
      ICP fitness (MSE m²) 被等权注入旋转和平移轴
      影响: 回环边在旋转轴上信息权重偏高
 
-  ❌ **P1-5 OPEN**: Submap keyframes 永不淘汰
+  ✅ **P1-5 FIXED**: Submap keyframes 永不淘汰
      文件: src/odometry/submap.cpp:47
-     keyframes_.push_back(...) 只有 add 没有 remove
-     selectNearest 每帧 O(N) 扫描，长航时线性增长
+     原: keyframes_.push_back(...) 只有 add 没有 remove，
+         selectNearest 每帧 O(N) 扫描，长航时线性增长
+     修复: 新增 pruneStaleKeyframes()，addKeyframe() 末尾调用
+         触发条件: keyframes_.size() > max_keyframes × 3
+         保留策略: 只保留 active_indices_ 中的帧，其余 compact 移除
+         重映射: 维护 new_index[] 映射表，compact 后重算 active_indices_
+         效果: 内存 O(N)→O(1)，selectNearest O(N)→O(1)
+         缓冲因子 3× 避免机器人在边界来回时的抖动
+     新增测试: testPrunesStaleKeyframes + testPrunePreservesActiveIndices
 
-  ❌ **P2-1, P2-2 OPEN**: castRay 边界精度 + 死分支
+  ✅ **P2-1, P2-2 FIXED**: castRay 边界精度 + 死分支
      文件: src/mapping/occupancy_grid.cpp:299-308, 321-323
 
 ═══════════════════════════════════════════════════════════════════════
@@ -242,7 +249,7 @@
   ✅ 增量 occupied/free 计数器
   ✅ 单遍点云遍历 (已优化)
   ❌ P1: toMsg 遍历所有 SubGrid
-  🟡 P2: castRay 边界精度 + 死分支
+  🟡 P2: castRay 边界精度 + 死分支 ✅ 已修复
   🟡 P2: 日志 world_Z 硬编码
   📊 质量: B+
 
@@ -305,8 +312,8 @@
 
 🟡 P2 — 下个迭代
 
-  P2-1  castRay d_end 与 clamped 路径不匹配 → 修复边界 d_step
-  P2-2  castRay 死分支清理 (dy==0)
+  P2-1  ✅ castRay d_end 与 clamped 路径不匹配 → 已修复 (按实际路径比例重算 d_end)
+  P2-2  ✅ castRay 死分支清理 (dy==0) → 已修复 (添加水平线特化路径)
   P2-3  Config 加载器代码熵 → 考虑 table-driven 或重构
   P2-4  Voxel filter 三路分支去重 → 提取 lambda
   P2-5  ESKF 多标志交互防冲突 → 添加 static_assert

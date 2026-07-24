@@ -371,6 +371,16 @@ void OccupancyGrid::castRay(
         if (!worldToGlobalIndex(cx, cy, x1, y1)) {
             return;
         }
+        // Recompute d_end for the clamped endpoint so that d_step
+        // matches the actual Bresenham path length. Without this,
+        // d_end corresponds to the original (out-of-bounds) endpoint
+        // and each cell's interpolated d_ray is biased.
+        const double orig_len = std::hypot(end_x - origin_x, end_y - origin_y);
+        const double clamped_len = std::hypot(cx - origin_x, cy - origin_y);
+        if (orig_len > 1e-9) {
+            const double t = clamped_len / orig_len;
+            d_end = d_sensor + static_cast<float>(t) * (d_end - d_sensor);
+        }
         mark_hit = false;
     }
 
@@ -383,9 +393,17 @@ void OccupancyGrid::castRay(
         return;
     }
 
-    // Integer Bresenham DDA — no float multiplication or rounding per step.
-    // Error term tracks the sub-axis drift in fixed-point (×2 scaling).
-    if (std::abs(dy) > std::abs(dx)) {
+    // Horizontal line: simple scan, no Bresenham overhead.
+    if (dy == 0) {
+        const float d_step =
+            (d_end - d_sensor) / static_cast<float>(dx);
+        const int sign_x = (dx > 0) - (dx < 0);
+        float d_ray = d_sensor;
+        for (int i = sign_x; i != dx; i += sign_x) {
+            d_ray += d_step;
+            updateMiss(x0 + i, y0, d_ray);
+        }
+    } else if (std::abs(dy) > std::abs(dx)) {
         const float d_step =
             (d_end - d_sensor) / static_cast<float>(dy);
         const int sign_y = (dy > 0) - (dy < 0);
