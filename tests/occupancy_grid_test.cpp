@@ -344,7 +344,8 @@ int main() {
         testCeilingFilteredByDMax();
         testGroundMarginSkipsNearGroundHits();
         testDepthJitterClearsPreviousWallCell();
-                std::cout << "occupancy_grid_test passed\n";
+        testObstacleClearsAfterDisappears();
+        std::cout << "occupancy_grid_test passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "occupancy_grid_test failed: " << error.what() << '\n';
