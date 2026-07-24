@@ -1,6 +1,8 @@
 #include <sapphire/odometry/deskew.hpp>
 #include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
 
+#include <SO3.hpp>
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -152,8 +154,12 @@ Gal3 interpolateState(
     double interval_dt)
 {
     alpha = std::clamp(alpha, 0.0, 1.0);
-    const Eigen::Quaterniond rotation =
-        start.q().slerp(alpha, end.q()).normalized();
+    // Lie algebra interpolation: R(α) = R_start · exp(α · log(R_start⁻¹ · R_end))
+    // Equivalent to SLERP but uses the project's unified lie algebra infrastructure.
+    const lie::SO3d start_so3(start.q());
+    const lie::SO3d end_so3(end.q());
+    const Eigen::Vector3d omega = lie::SO3d::log(start_so3.inv() * end_so3);
+    const Eigen::Quaterniond rotation = (start_so3 * lie::SO3d::exp(alpha * omega)).q();
     const Eigen::Vector3d velocity =
         (1.0 - alpha) * start.v() + alpha * end.v();
 
