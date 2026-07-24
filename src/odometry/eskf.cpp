@@ -30,14 +30,6 @@ inline std::size_t findFirstAfter(
     return lo;
 }
 
-Eigen::Matrix3d skew(const Eigen::Vector3d& v) {
-    Eigen::Matrix3d m;
-    m << 0.0, -v.z(), v.y(),
-         v.z(), 0.0, -v.x(),
-        -v.y(), v.x(), 0.0;
-    return m;
-}
-
 Eigen::Vector3d so3Log(const Eigen::Matrix3d& R) {
     return SO3::log(SO3(R));
 }
@@ -47,20 +39,7 @@ Eigen::Matrix3d so3Exp(const Eigen::Vector3d& omega) {
 }
 
 Eigen::Matrix3d so3RightJacobianInverse(const Eigen::Vector3d& phi) {
-    const double theta = phi.norm();
-    const Eigen::Matrix3d Phi = skew(phi);
-    if (theta < 1e-6) {
-        return Eigen::Matrix3d::Identity()
-            + 0.5 * Phi
-            + (1.0 / 12.0) * Phi * Phi;
-    }
-    const double coefficient =
-        1.0 / (theta * theta)
-        - (1.0 + std::cos(theta))
-            / (2.0 * theta * std::sin(theta));
-    return Eigen::Matrix3d::Identity()
-        + 0.5 * Phi
-        + coefficient * Phi * Phi;
+    return SO3::invRightJacobian(phi);
 }
 
 }  // namespace
@@ -187,9 +166,9 @@ void Eskf::propagateCovariance(
     const double step_dt = dt / static_cast<double>(steps);
 
     Eigen::Matrix<double, 15, 15> F = Eigen::Matrix<double, 15, 15>::Zero();
-    F.block<3, 3>(0, 0) = -skew(omega);
+    F.block<3, 3>(0, 0) = -SO3::wedge(omega);
     F.block<3, 3>(0, 12) = -Eigen::Matrix3d::Identity();
-    F.block<3, 3>(3, 0) = -R_world_imu * skew(accel);
+    F.block<3, 3>(3, 0) = -R_world_imu * SO3::wedge(accel);
     F.block<3, 3>(3, 9) = -R_world_imu;
     F.block<3, 3>(6, 3) = Eigen::Matrix3d::Identity();
 
@@ -266,7 +245,7 @@ Eskf::Mat6 Eskf::registrationToInnovationJacobian(
     J.block<3, 3>(0, 0) =
         so3RightJacobianInverse(rotation_innovation) * R_prior.transpose();
     J.block<3, 3>(3, 0) =
-        -R_correction * skew(T_world_imu_prior.translation());
+        -R_correction * SO3::wedge(T_world_imu_prior.translation());
     J.block<3, 3>(3, 3) = R_correction;
     return J;
 }
@@ -608,7 +587,7 @@ EskfUpdate Eskf::correctAt(
 
     Mat15 Jr = Mat15::Identity();
     Jr.block<3, 3>(0, 0) =
-        Eigen::Matrix3d::Identity() - 0.5 * skew(dx.segment<3>(0));
+        Eigen::Matrix3d::Identity() - 0.5 * SO3::wedge(dx.segment<3>(0));
     P_tip_ = Jr * P_upd * Jr.transpose();
     P_tip_ = 0.5 * (P_tip_ + P_tip_.transpose());
 
