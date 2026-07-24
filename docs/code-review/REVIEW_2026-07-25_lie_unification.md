@@ -158,19 +158,19 @@
   invLeftJacobian 计算逆左雅可比精确闭式，大角度修正下协方差传播更准确。
 
 ═══════════════════════════════════════════════════════════════════════
-七、待统一清单 — 按影响优先级
+七、已完成修复：剩余统一项 (P2/P3 → RESOLVED)
 ═══════════════════════════════════════════════════════════════════════
 
-7.1 imu_init.cpp 重力对齐 — FromTwoVectors → SO3 构造 (P2)
+7.1 imu_init.cpp 重力对齐 — FromTwoVectors → SO3 构造 (P2 ✅)
 
   文件: src/imu_init.cpp:222-226
 
-  当前:
+  修改前:
     Eigen::Quaterniond q_gravity =
         Eigen::Quaterniond::FromTwoVectors(grav_imu, grav_world);
     q_gravity.normalize();
 
-  建议:
+  修改后:
     lie::SO3d so3_gravity(grav_imu, grav_world);
     Eigen::Quaterniond q_gravity = so3_gravity.q();
 
@@ -179,28 +179,75 @@
 
 ───────────────────────────────────────────────────────────────────────
 
-7.2 deskew.cpp SLERP → Lie 代数插值 (P3)
+7.2 deskew.cpp SLERP → Lie 代数插值 (P3 ✅)
 
   文件: src/odometry/deskew.cpp:155-156
 
-  当前:
+  修改前:
     start.q().slerp(alpha, end.q()).normalized();
 
-  Lie 代数插值在正确性上等效于 SLERP:
-    Eigen::Vector3d omega = lie::SO3d::log(start_so3 * end_so3.inv());
-    lie::SO3d::exp(alpha * omega) * start_so3;
+  修改后:
+    const lie::SO3d start_so3(start.q());
+    const lie::SO3d end_so3(end.q());
+    const Eigen::Vector3d omega = lie::SO3d::log(start_so3.inv() * end_so3);
+    const Eigen::Quaterniond rotation = (start_so3 * lie::SO3d::exp(alpha * omega)).q();
 
-  收益较小（功能等价），留待后续统一。
+  数学形式 R(α) = R_start · exp(α · log(R_start⁻¹ · R_end))，与 SLERP 等价。
+  消除了手动 normalized() 调用。
 
 ───────────────────────────────────────────────────────────────────────
 
-7.3 测试文件中的 AngleAxis (P3)
+7.3 测试文件中的 AngleAxis (P3 ✅)
 
   文件: tests/eskf_test.cpp, observer_test.cpp, submap_test.cpp,
         deskew_test.cpp, mean_only_gal3_integrator_test.cpp
 
-  测试中的 Eigen::AngleAxisd 构造可统一为 lie::SO3d::exp()。
-  不影响生产行为，但可以当 lie::SO3d 的正确使用示例。
+  全部 Eigen::AngleAxisd 构造已统一为 sapphire::lie::SO3d::exp():
+    - expSo3()/logSo3() 辅助函数改用 SO3d 静态方法
+    - AngleAxisd(θ, axis).toRotationMatrix() → SO3d::exp(θ * axis).R()
+    - AngleAxisd(rotation).angle() → SO3d::log(SO3d(rotation)).norm()
+
+  测试文件使用匿名 namespace 而不在 sapphire:: 内，需使用全限定名
+  sapphire::lie::SO3d。另 deskew_test.cpp 中 T_imu_lidar.translation()
+  返回 Eigen::Block 类型，显式转为 Eigen::Vector3d 以消除 operator* 歧义。
+
+  这些测试现在成为 sapphire::lie::SO3d 正确用法的自文档化示例。
+
+───────────────────────────────────────────────────────────────────────
+
+7.4 observer.cpp 四元数全链路统一 (P2 ✅)
+
+  文件: src/odometry/observer.cpp:29-62
+
+  observer.cpp 此前混用了原始 Eigen::Quaterniond（手动归一化、conjugate、
+  w<0 符号检查）和 lie::SO3d，存在冗余构造。
+
+  修改前:
+    Eigen::Quaterniond q_prior(prior_state.T_world_imu.rotation());
+    q_prior.normalize();
+    Eigen::Quaterniond q_error =
+        q_prior.conjugate()
+        * Eigen::Quaterniond(T_world_imu_measurement.rotation());
+    q_error.normalize();
+    if (q_error.w() < 0.0) { q_error.coeffs() *= -1.0; }
+    // ... 后续从 q_error 两次构造 lie::SO3d ...
+    lie::SO3d so3_error(q_error);   // 第一次
+    Lie::SO3d::log(lie::SO3d(q_error)); // 第二次（gyro bias 行）
+    update.state.T_world_imu.linear() =
+        (q_prior * so3_inc.q()).toRotationMatrix();  // 混用 quaternion + SO3
+
+  修改后:
+    const lie::SO3d so3_prior(prior_state.T_world_imu.rotation());
+    const lie::SO3d so3_measurement(T_world_imu_measurement.rotation());
+    const lie::SO3d so3_error = so3_prior.inv() * so3_measurement;
+    // ... 所有后续操作复用同一个 so3_error ...
+    update.state.T_world_imu.linear() = (so3_prior * so3_inc).R();
+
+  效果:
+    - 消除 2 处手动 normalize() 和 1 处 w<0 符号检查
+    - 消除 2 次冗余 lie::SO3d 构造
+    - 消除 1 处 toRotationMatrix() 混用
+    - 全链路在 SO(3) 群运算下完成，不再出现原始四元数语义
 
 ═══════════════════════════════════════════════════════════════════════
 八、汇总

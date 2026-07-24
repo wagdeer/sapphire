@@ -1,5 +1,7 @@
 #include <sapphire/odometry/submap.hpp>
 
+#include <SO3.hpp>
+
 #include <Eigen/Geometry>
 
 #include <cmath>
@@ -37,8 +39,7 @@ sapphire::Isometry3d makePose(
     sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
     pose.translation().x() = x;
     pose.linear() =
-        Eigen::AngleAxisd(angle_radians, Eigen::Vector3d::UnitZ())
-            .toRotationMatrix();
+        sapphire::lie::SO3d::exp(angle_radians * Eigen::Vector3d::UnitZ()).R();
     return pose;
 }
 

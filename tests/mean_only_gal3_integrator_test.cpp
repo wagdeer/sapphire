@@ -1,6 +1,8 @@
 #include <sapphire/odometry/detail/integrate_measurement.hpp>
 #include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
 
+#include <SO3.hpp>
+
 #include <preintegration.hpp>
 
 #include <cmath>
@@ -70,8 +72,7 @@ void testRecoveryMatchesPimFormula() {
         Eigen::Vector3d(3.0, 4.0, -1.0),
     };
     const FastIntegrator::Gal3 initial_state(
-        Eigen::AngleAxisd(0.4, Eigen::Vector3d::UnitY())
-            .toRotationMatrix(),
+        sapphire::lie::SO3d::exp(0.4 * Eigen::Vector3d::UnitY()).R(),
         initial_isometries,
         0.0);
 

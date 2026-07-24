@@ -1,5 +1,7 @@
 #include <sapphire/odometry/deskew.hpp>
 
+#include <SO3.hpp>
+
 #include <Eigen/Geometry>
 
 #include <cmath>
@@ -207,8 +209,8 @@ void testRotatingLeverArmExtrinsic() {
     for (size_t i = 0; i < cloud->size(); ++i) {
         const double angle = yaw_rate * cloud->points[i].timestamp;
         const Eigen::Vector3d expected =
-            Eigen::AngleAxisd(angle, Eigen::Vector3d::UnitZ())
-            * T_imu_lidar.translation();
+            sapphire::lie::SO3d::exp(angle * Eigen::Vector3d::UnitZ())
+            * Eigen::Vector3d(T_imu_lidar.translation());
         expectNear(result.cloud->points[i].x, expected.x(), "lever-arm x");
         expectNear(result.cloud->points[i].y, expected.y(), "lever-arm y");
         expectNear(result.cloud->points[i].z, expected.z(), "lever-arm z");

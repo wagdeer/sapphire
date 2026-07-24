@@ -1,5 +1,7 @@
 #include <sapphire/odometry/observer.hpp>
 
+#include <SO3.hpp>
+
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -63,7 +65,7 @@ void testRotationUpdatesOrientationAndGyroBias() {
     const sapphire::NavigationState prior = makePrior(0.1);
     sapphire::Isometry3d measurement = sapphire::Isometry3d::Identity();
     measurement.linear() =
-        Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+        sapphire::lie::SO3d::exp(0.2 * Eigen::Vector3d::UnitZ()).R();
     const sapphire::Config::Odometry::Observer config;
 
     const auto update = sapphire::applyGeometricObserver(
@@ -75,9 +77,9 @@ void testRotationUpdatesOrientationAndGyroBias() {
         config,
         true);
 
-    const Eigen::AngleAxisd corrected_rotation(
-        update.state.T_world_imu.rotation());
-    expect(corrected_rotation.angle() > 0.0,
+    const Eigen::Vector3d omega = sapphire::lie::SO3d::log(
+        sapphire::lie::SO3d(update.state.T_world_imu.rotation()));
+    expect(omega.norm() > 0.0,
            "orientation gain must rotate state toward GICP measurement");
     expect(update.gyro_bias.z() < 0.0,
            "positive yaw innovation must update gyroscope bias");
