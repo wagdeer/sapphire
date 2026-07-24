@@ -1,5 +1,7 @@
 #include <sapphire/imu_init.hpp>
 
+#include <SO3.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -217,13 +219,12 @@ ImuInitializer::Result ImuInitializer::computeResult() {
 
     // ── Gravity alignment: IMU accel direction → world Z-up ────
     //    At rest, accel measures support force = −g.
-    //    FromTwoVectors maps measured-up to world-up, giving R_imu_world.
-    //    q_gravity = R_imu_world expressed as quaternion.
+    //    lie::SO3d(u, v) constructs the rotation mapping measured-up to world-up,
+    //    with built-in handling of parallel/anti-parallel edge cases.
     Eigen::Vector3d grav_imu = accel_mean.normalized();
     Eigen::Vector3d grav_world(0.0, 0.0, 1.0);  // world Z = up
-    Eigen::Quaterniond q_gravity =
-        Eigen::Quaterniond::FromTwoVectors(grav_imu, grav_world);
-    q_gravity.normalize();
+    lie::SO3d so3_gravity(grav_imu, grav_world);
+    Eigen::Quaterniond q_gravity = so3_gravity.q();
 
     // Bias = mean(meas) − gravity_vector_in_imu_frame
     // Gravity in IMU frame = q_gravity.inverse() * (0,0,g_mag)
