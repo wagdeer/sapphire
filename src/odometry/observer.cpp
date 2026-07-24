@@ -1,6 +1,6 @@
 #include <sapphire/odometry/observer.hpp>
 
-#include <cmath>
+#include <SO3.hpp>
 
 namespace sapphire {
 
@@ -54,19 +54,12 @@ ObserverUpdate applyGeometricObserver(
     update.state.v_world +=
         dt * config.velocity_gain * position_error;
 
-    Eigen::Quaterniond q_correction(
-        1.0 - std::abs(q_error.w()),
-        q_error.x(),
-        q_error.y(),
-        q_error.z());
-    q_correction = q_prior * q_correction;
-    Eigen::Quaterniond q_observer(
-        q_prior.w() + dt * config.orientation_gain * q_correction.w(),
-        q_prior.x() + dt * config.orientation_gain * q_correction.x(),
-        q_prior.y() + dt * config.orientation_gain * q_correction.y(),
-        q_prior.z() + dt * config.orientation_gain * q_correction.z());
-    q_observer.normalize();
-    update.state.T_world_imu.linear() = q_observer.toRotationMatrix();
+    lie::SO3d so3_error(q_error);
+    Eigen::Vector3d omega = lie::SO3d::log(so3_error);
+    omega *= dt * config.orientation_gain;
+    lie::SO3d so3_inc = lie::SO3d::exp(omega);
+    update.state.T_world_imu.linear() =
+        (q_prior * so3_inc.q()).toRotationMatrix();
 
     return update;
 }

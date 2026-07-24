@@ -71,6 +71,7 @@ add_library(sapphire STATIC
 target_include_directories(sapphire PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/preintegration>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/lie>
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(sapphire PUBLIC
