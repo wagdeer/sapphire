@@ -74,6 +74,7 @@ OccupancyGrid::~OccupancyGrid() = default;
 void OccupancyGrid::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     grids_.clear();
+    allocated_subgrids_.clear();
     grid_size_x_ = 0;
     grid_size_y_ = 0;
     min_x_ = min_y_ = 0.0f;
@@ -139,6 +140,7 @@ void OccupancyGrid::resizeTo(
         max_y_ = min_y_ + grid_size_y_ * subgrid_reso_;
         grids_.assign(
             static_cast<size_t>(grid_size_x_ * grid_size_y_), SubGrid{});
+        allocated_subgrids_.clear();
         return;
     }
 
@@ -194,6 +196,16 @@ void OccupancyGrid::resizeTo(
     max_y_ = snapped_max_y;
     grid_size_x_ = new_size_x;
     grid_size_y_ = new_size_y;
+
+    // Rebuild allocated SubGrid index after grid remapping.
+    allocated_subgrids_.clear();
+    const size_t total = static_cast<size_t>(grid_size_x_ * grid_size_y_);
+    allocated_subgrids_.reserve(total);
+    for (size_t i = 0; i < total; ++i) {
+        if (grids_[i].allocated()) {
+            allocated_subgrids_.push_back(i);
+        }
+    }
 }
 
 bool OccupancyGrid::worldToGlobalIndex(
@@ -225,7 +237,15 @@ OccupancyGrid::CellData* OccupancyGrid::mutableCell(int gx, int gy) {
     }
     const int sub_x = gx & (kSubGridWidth - 1);
     const int sub_y = gy & (kSubGridWidth - 1);
-    return grids_[static_cast<size_t>(sy * grid_size_x_ + sx)].cell(sub_x, sub_y);
+    const size_t idx =
+        static_cast<size_t>(sy * grid_size_x_ + sx);
+    SubGrid& sub = grids_[idx];
+    const bool was_allocated = sub.allocated();
+    CellData* cell = sub.cell(sub_x, sub_y);
+    if (!was_allocated && sub.allocated()) {
+        allocated_subgrids_.push_back(idx);
+    }
+    return cell;
 }
 
 bool OccupancyGrid::isOccupied(const CellData& cell) const {
@@ -570,31 +590,27 @@ OccupancyGridMsg OccupancyGrid::toMsg() const {
         static_cast<size_t>(msg.width * msg.height),
         static_cast<int8_t>(-1));
 
-    for (int sy = 0; sy < grid_size_y_; ++sy) {
-        for (int sx = 0; sx < grid_size_x_; ++sx) {
-            const SubGrid& sub =
-                grids_[static_cast<size_t>(sy * grid_size_x_ + sx)];
-            if (!sub.allocated()) {
-                continue;
-            }
-            for (int j = 0; j < kSubGridWidth; ++j) {
-                for (int i = 0; i < kSubGridWidth; ++i) {
-                    const CellData* cell = sub.cell(i, j);
-                    if (!cell || cell->visit_cnt == 0) {
-                        continue;
-                    }
-                    const int gx = (sx << kSubGridBits) + i;
-                    const int gy = (sy << kSubGridBits) + j;
-                    if (gx >= msg.width || gy >= msg.height) {
-                        continue;
-                    }
-                    const size_t index =
-                        static_cast<size_t>(gy * msg.width + gx);
-                    if (isOccupied(*cell)) {
-                        msg.data[index] = 100;
-                    } else if (isFree(*cell)) {
-                        msg.data[index] = 0;
-                    }
+    for (size_t idx : allocated_subgrids_) {
+        const SubGrid& sub = grids_[idx];
+        const int sy = static_cast<int>(idx / static_cast<size_t>(grid_size_x_));
+        const int sx = static_cast<int>(idx % static_cast<size_t>(grid_size_x_));
+        for (int j = 0; j < kSubGridWidth; ++j) {
+            for (int i = 0; i < kSubGridWidth; ++i) {
+                const CellData* cell = sub.cell(i, j);
+                if (!cell || cell->visit_cnt == 0) {
+                    continue;
+                }
+                const int gx = (sx << kSubGridBits) + i;
+                const int gy = (sy << kSubGridBits) + j;
+                if (gx >= msg.width || gy >= msg.height) {
+                    continue;
+                }
+                const size_t index =
+                    static_cast<size_t>(gy * msg.width + gx);
+                if (isOccupied(*cell)) {
+                    msg.data[index] = 100;
+                } else if (isFree(*cell)) {
+                    msg.data[index] = 0;
                 }
             }
         }

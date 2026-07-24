@@ -113,6 +113,9 @@ private:
     int grid_size_y_ = 0;
     float subgrid_reso_ = 0.0f;  // resolution * 16
     std::vector<SubGrid> grids_;
+    /// Flat indices of SubGrids that have been lazily allocated.
+    /// toMsg() only iterates over this subset instead of the full grid.
+    std::vector<size_t> allocated_subgrids_;
     size_t revision_ = 0;
 
     // Incremental statistics to avoid O(N_cells) scans in toMsg/logging.
