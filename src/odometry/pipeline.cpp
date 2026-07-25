@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <omp.h>
 
 namespace sapphire {
 
@@ -412,7 +413,22 @@ void OdometryPipeline::processLidarScan(
         return;
     }
 
-    DeskewResult deskewed = deskewPointcloud(stamp, preprocessed.cloud);
+    // ── Phase 1: deskew + voxel (shared parallel team, zero fork/join) ──
+    DeskewResult deskewed;
+    PointCloudConstPtr registration_source;
+#pragma omp parallel
+    {
+#pragma omp master
+        { deskewed = deskewPointcloud(stamp, preprocessed.cloud); }
+#pragma omp barrier
+#pragma omp master
+        {
+            if (deskewed.status == DeskewStatus::Success) {
+                registration_source = downsamplePoints(deskewed.cloud);
+            }
+        }
+    }
+
     if (deskewed.status != DeskewStatus::Success) {
         spdlog::warn(
             "[pipeline] skipping LiDAR scan: deskew failed with status {}",
@@ -420,8 +436,6 @@ void OdometryPipeline::processLidarScan(
         return;
     }
 
-    const PointCloudConstPtr registration_source =
-        downsamplePoints(deskewed.cloud);
     if (registration_source->size()
         < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
         spdlog::warn(
