@@ -38,7 +38,6 @@ Point transformPoint(const Point& source, const Isometry3f& transform) {
 DeskewResult makeFallback(
     const PointCloudConstPtr& scan,
     const Isometry3d& T_world_imu,
-    const Eigen::Vector3d& v_world,
     const Isometry3d& T_imu_lidar,
     double reference_stamp,
     DeskewStatus status)
@@ -321,7 +320,7 @@ DeskewResult deskew(
     if (!scan || scan->empty()) {
         spdlog::warn("[deskew] empty scan");
         return makeFallback(
-            scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
+            scan, T_world_imu_prev, T_imu_lidar, prev_stamp,
             DeskewStatus::EmptyScan);
     }
 
@@ -330,7 +329,7 @@ DeskewResult deskew(
         buildScanTimeline(*scan, scan_stamp, time_offset, timeline);
     if (status != DeskewStatus::Success) {
         return makeFallback(
-            scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
+            scan, T_world_imu_prev, T_imu_lidar, prev_stamp,
             status);
     }
     size_t imu_start = imu_buf.size();
@@ -342,7 +341,7 @@ DeskewResult deskew(
         imu_start);
     if (status != DeskewStatus::Success) {
         return makeFallback(
-            scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
+            scan, T_world_imu_prev, T_imu_lidar, prev_stamp,
             status);
     }
 
@@ -356,7 +355,7 @@ DeskewResult deskew(
         gravity_world);
     if (states.size() != timeline.stamps.size()) {
         return makeFallback(
-            scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
+            scan, T_world_imu_prev, T_imu_lidar, prev_stamp,
             DeskewStatus::InsufficientImuCoverage);
     }
 
