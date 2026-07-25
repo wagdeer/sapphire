@@ -306,6 +306,20 @@ void OccupancyGrid::updateMiss(int gx, int gy, float d_ray) {
     if (!cell) {
         return;
     }
+    updateMissUnsafe(cell, gx, gy, d_ray);
+}
+
+void OccupancyGrid::updateMissUnsafe(
+    CellData* cell, int gx, int gy, float d_ray)
+{
+    // Fast path: first-visit cell — no prior state to snapshot, no hit-count
+    // ceiling to check, and the occupancy transition is deterministic
+    // (free_cells_ always increments by 1, occupied state unchanged).
+    if (cell->visit_cnt == 0) [[likely]] {
+        cell->visit_cnt = 1;
+        ++free_cells_;
+        return;
+    }
 
     // Track visited bounds in world coordinates (invariant under grid expansion).
     const float wx = min_x_ + (static_cast<float>(gx) + 0.5f)
@@ -315,9 +329,9 @@ void OccupancyGrid::updateMiss(int gx, int gy, float d_ray) {
     visited_max_wx_ = std::max(visited_max_wx_, wx);
     visited_max_wy_ = std::max(visited_max_wy_, wy);
 
-    // Snapshot occupancy state before mutation for incremental counters.
+    // Cache isOccupied result — avoids redundant isOccupied inside isFree().
     const bool was_occupied = isOccupied(*cell);
-    const bool was_free = isFree(*cell);
+    const bool was_free = cell->visit_cnt > 0 && !was_occupied;
 
     // Free rays never define obstacle height (d_min). Their only role is
     // visit counting for hit/visit occupancy, and as a dynamic-obstacle
@@ -337,9 +351,8 @@ void OccupancyGrid::updateMiss(int gx, int gy, float d_ray) {
         cell->visit_cnt += 1;
     }
 
-    // Apply counter deltas.
     const bool now_occupied = isOccupied(*cell);
-    const bool now_free = isFree(*cell);
+    const bool now_free = cell->visit_cnt > 0 && !now_occupied;
     if (!was_occupied && now_occupied) { ++occupied_cells_; }
     if (was_occupied && !now_occupied) { --occupied_cells_; }
     if (!was_free && now_free) { ++free_cells_; }
@@ -393,6 +406,39 @@ void OccupancyGrid::castRay(
         return;
     }
 
+    // Bresenham step is at most ±1 in x and y, so SubGrid (16×16) changes
+    // only every ~16 steps. Cache the SubGrid pointer to skip bounds checks,
+    // grids_ indexing, and allocation tracking across adjacent cells.
+    int cache_sx = -1;
+    int cache_sy = -1;
+    SubGrid* cache_sub = nullptr;
+    size_t cache_idx = 0;
+
+    auto missCell = [&](int gx, int gy, float d_ray) {
+        const int sx = gx >> kSubGridBits;
+        const int sy = gy >> kSubGridBits;
+        if (sx != cache_sx || sy != cache_sy) {
+            if (__builtin_expect(
+                    sx < 0 || sy < 0
+                        || sx >= grid_size_x_
+                        || sy >= grid_size_y_,
+                    0)) {
+                return;
+            }
+            cache_sx = sx;
+            cache_sy = sy;
+            cache_idx = static_cast<size_t>(sy * grid_size_x_ + sx);
+            cache_sub = &grids_[cache_idx];
+            if (!cache_sub->allocated()) {
+                allocated_subgrids_.push_back(cache_idx);
+            }
+        }
+        const int sub_x = gx & (kSubGridWidth - 1);
+        const int sub_y = gy & (kSubGridWidth - 1);
+        CellData* cell = cache_sub->unsafeCell(sub_x, sub_y);
+        updateMissUnsafe(cell, gx, gy, d_ray);
+    };
+
     // Horizontal line: simple scan, no Bresenham overhead.
     if (dy == 0) {
         const float d_step =
@@ -401,7 +447,7 @@ void OccupancyGrid::castRay(
         float d_ray = d_sensor;
         for (int i = sign_x; i != dx; i += sign_x) {
             d_ray += d_step;
-            updateMiss(x0 + i, y0, d_ray);
+            missCell(x0 + i, y0, d_ray);
         }
     } else if (std::abs(dy) > std::abs(dx)) {
         const float d_step =
@@ -420,7 +466,7 @@ void OccupancyGrid::castRay(
                 error -= 2 * ady;
             }
             error += 2 * adx;
-            updateMiss(x0 + i, y0 + j, d_ray);
+            missCell(x0 + i, y0 + j, d_ray);
         }
     } else {
         const float d_step =
@@ -439,7 +485,7 @@ void OccupancyGrid::castRay(
                 error -= 2 * adx;
             }
             error += 2 * ady;
-            updateMiss(x0 + i, y0 + j, d_ray);
+            missCell(x0 + i, y0 + j, d_ray);
         }
     }
 

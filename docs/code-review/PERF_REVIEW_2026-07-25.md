@@ -62,43 +62,15 @@ DLIO (observer) 路径行为完全不变，下游消费者 `maybeUpdateSubmapTar
 
 ---
 
-### 🔴 缺陷 2：`propagateCovariance` 每 IMU 样本重复构造常量矩阵 `Qc`
+### ~~🔴 缺陷 2：`propagateCovariance` 每 IMU 样本重复构造常量矩阵 `Qc`~~ ✅ 已修复
 
-**文件**: `src/odometry/eskf.cpp`  
-**位置**: 行 198-206
-
-```198:206:src/odometry/eskf.cpp
-    Eigen::Matrix<double, 12, 12> Qc = Eigen::Matrix<double, 12, 12>::Zero();
-    const double sg = noise_.gyro_noise_density;
-    const double sa = noise_.accel_noise_density;
-    const double sba = biasRwAccel();
-    const double sbg = biasRwGyro();
-    Qc.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * sg * sg;
-    Qc.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * sa * sa;
-    Qc.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() * sba * sba;
-    Qc.block<3, 3>(9, 9) = Eigen::Matrix3d::Identity() * sbg * sbg;
-```
+**文件**: `src/odometry/eskf.cpp`、`src/odometry/eskf.hpp`
 
 `Qc` 是一个 12x12 对角矩阵，其对角值仅依赖 IMU 噪声参数（在构造时确定）。该矩阵在每次 `predict()` 调用中被重新分配、清零并填充——即每 IMU 样本（200 Hz）执行一次。12x12 的 `Eigen::Matrix` 初始化为零有 ~144 次赋值（编译器可能优化部分），但 12x12 Identity 矩阵与标量平方相乘又产生 9 次乘法，合计每样本约 20-30 个标量操作。
 
 200 Hz × 20 操作/样本 = 4000 操作/秒，数值上不算大，但与 `F`、`G` 矩阵不同，`Qc` 在滤波器生命周期内完全不变。
 
-**修复建议**: 在构造函数中预计算 `precomputed_Qc_` 成员变量，`propagateCovariance` 中直接引用。
-
-```cpp
-// 在 Eskf::Eskf 构造函数中添加：
-void Eskf::precomputeNoiseMatrices() {
-    const double sg = noise_.gyro_noise_density;
-    const double sa = noise_.accel_noise_density;
-    const double sba = biasRwAccel();
-    const double sbg = biasRwGyro();
-    precomputed_Qc_.setZero();
-    precomputed_Qc_.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * sg * sg;
-    precomputed_Qc_.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * sa * sa;
-    precomputed_Qc_.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() * sba * sba;
-    precomputed_Qc_.block<3, 3>(9, 9) = Eigen::Matrix3d::Identity() * sbg * sbg;
-}
-```
+**修复**: 头文件新增 `precomputed_Qc_` 成员变量并在类内初始化为零矩阵；构造函数体内预计算四个对角块；`propagateCovariance` 中替换为 `const auto& Qc = precomputed_Qc_`。修改涉及 `eskf.hpp`（1 行新增）和 `eskf.cpp`（构造函数 +9 行，`propagateCovariance` -9 行 / +1 行）。
 
 ---
 
@@ -273,7 +245,7 @@ Bresenham 线光栅化算法内部每个步长都需要 `updateMiss` → `mutabl
 | 优先级 | 缺陷 | 预计收益 | 风险 | 建议时间 |
 |--------|------|----------|------|----------|
 | ~~P0~~ | ~~#1 点云双重变换~~ | ~~ESKF 路径每帧节省 1 次完整点云变换~~ | — | ✅ 已修复 |
-| P1 | #2 Qc 预计算 | 每 IMU 样本节省 ~20 FLOPs（微） | 极低（纯重构） | 本周 |
+| ~~P1~~ | ~~#2 Qc 预计算~~ | ~~每 IMU 样本节省 ~20 FLOPs（微）~~ | — | ✅ 已修复 |
 | P2 | #3 propagateCovariance 快速路径 | 每 IMU 样本节省 ~5 分支/转换 | 极低 | 本周 |
 | P3 | #5 submap 合并策略 | 关键帧变更时减少内存复制 | 中（涉及接口改动） | 可选 |
 | P4 | #7 voxel_filter float 精度 | ~1% CPU（热路径微优化） | 低 | 可选 |

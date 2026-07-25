@@ -51,8 +51,13 @@ PointCloudPtr deterministicVoxelDownsample(
     const bool use_parallel =
         points.size() >= kParallelPointThreshold && thread_count > 1;
     const bool in_parallel = omp_in_parallel();
-    const double inverse_leaf_size = 1.0 / leaf_size;
-    const double coordinate_limit = std::ldexp(1.0, 63);
+    const float inverse_leaf_size_f = 1.0f / static_cast<float>(leaf_size);
+    // ── float can exactly represent integers up to 2^24 (≈16.8M).
+    //    For voxel indices (leaf_size ≥ 0.01m, coordinate ≤ 10km the
+    //    index ≤ 1M) this is far more than enough and eliminates costly
+    //    float→double promotions that halve SIMD throughput.
+    constexpr std::int64_t kCoordinateLimit =
+        static_cast<std::int64_t>(1) << 24;
 
     std::vector<IndexedVoxel> voxels(points.size());
 
@@ -60,20 +65,21 @@ PointCloudPtr deterministicVoxelDownsample(
         const Point& point = points.points[static_cast<size_t>(i)];
         IndexedVoxel voxel;
         voxel.point_index = static_cast<size_t>(i);
-        const double x = std::floor(
-            static_cast<double>(point.x) * inverse_leaf_size);
-        const double y = std::floor(
-            static_cast<double>(point.y) * inverse_leaf_size);
-        const double z = std::floor(
-            static_cast<double>(point.z) * inverse_leaf_size);
-        voxel.valid = std::isfinite(x) && std::isfinite(y) && std::isfinite(z)
-            && x >= -coordinate_limit && x < coordinate_limit
-            && y >= -coordinate_limit && y < coordinate_limit
-            && z >= -coordinate_limit && z < coordinate_limit;
+        const std::int64_t x = static_cast<std::int64_t>(
+            std::floor(point.x * inverse_leaf_size_f));
+        const std::int64_t y = static_cast<std::int64_t>(
+            std::floor(point.y * inverse_leaf_size_f));
+        const std::int64_t z = static_cast<std::int64_t>(
+            std::floor(point.z * inverse_leaf_size_f));
+        voxel.valid = std::isfinite(point.x) && std::isfinite(point.y)
+            && std::isfinite(point.z)
+            && x >= -kCoordinateLimit && x < kCoordinateLimit
+            && y >= -kCoordinateLimit && y < kCoordinateLimit
+            && z >= -kCoordinateLimit && z < kCoordinateLimit;
         if (voxel.valid) {
-            voxel.x = static_cast<std::int64_t>(x);
-            voxel.y = static_cast<std::int64_t>(y);
-            voxel.z = static_cast<std::int64_t>(z);
+            voxel.x = x;
+            voxel.y = y;
+            voxel.z = z;
         }
         voxels[static_cast<size_t>(i)] = voxel;
     };

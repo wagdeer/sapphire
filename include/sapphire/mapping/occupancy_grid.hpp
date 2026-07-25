@@ -76,6 +76,14 @@ private:
         void clear();
         CellData* cell(int sub_x, int sub_y);
         const CellData* cell(int sub_x, int sub_y) const;
+
+        /// 无边界检查访问：调用者保证 sub_x, sub_y ∈ [0, kSubGridWidth)。
+        /// Bresenham 内层使用，由 mutableCell 的位掩码保证合法性。
+        CellData* unsafeCell(int sub_x, int sub_y) {
+            mallocIfNeeded();
+            return &data_[sub_y * kSubGridWidth + sub_x];
+        }
+
         bool allocated() const { return data_ != nullptr; }
 
     private:
@@ -87,6 +95,10 @@ private:
     CellData* mutableCell(int gx, int gy);
     void updateHit(int gx, int gy, float d);
     void updateMiss(int gx, int gy, float d_ray);
+
+    /// Per-cell updateMiss body — CellData* already resolved by caller.
+    /// Used by both updateMiss() and the SubGrid-cached path in castRay().
+    void updateMissUnsafe(CellData* cell, int gx, int gy, float d_ray);
     void castRay(
         double origin_x,
         double origin_y,
