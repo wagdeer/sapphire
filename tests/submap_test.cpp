@@ -39,7 +39,7 @@ sapphire::Isometry3d makePose(
     sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
     pose.translation().x() = x;
     pose.linear() =
-        sapphire::lie::SO3d::exp(angle_radians * Eigen::Vector3d::UnitZ()).R();
+        lie::SO3d::exp(angle_radians * Eigen::Vector3d::UnitZ()).R();
     return pose;
 }
 

@@ -41,11 +41,11 @@ Eigen::Matrix3d skew(const Eigen::Vector3d& v) {
 }
 
 Eigen::Matrix3d expSo3(const Eigen::Vector3d& omega) {
-    return sapphire::lie::SO3d::exp(omega).R();
+    return lie::SO3d::exp(omega).R();
 }
 
 Eigen::Vector3d logSo3(const Eigen::Matrix3d& rotation) {
-    return sapphire::lie::SO3d::log(sapphire::lie::SO3d(rotation));
+    return lie::SO3d::log(lie::SO3d(rotation));
 }
 
 sapphire::Isometry3d expSe3(
@@ -226,14 +226,14 @@ void testRotationMeasurementUpdatesOrientation() {
     auto buffer = makeStationaryBuffer(0.0, 0.10, 0.01, 9.80665);
     sapphire::Isometry3d measurement = sapphire::Isometry3d::Identity();
     measurement.linear() =
-        sapphire::lie::SO3d::exp(0.1 * Eigen::Vector3d::UnitZ()).R();
+        lie::SO3d::exp(0.1 * Eigen::Vector3d::UnitZ()).R();
 
     const auto update = eskf.correctAt(
         0.10, makeState(0.10), measurement, true, buffer, std::nullopt);
     expect(update.accepted, "rotation measurement must be accepted");
 
     const Eigen::Vector3d omega =
-        sapphire::lie::SO3d::log(sapphire::lie::SO3d(update.state.T_world_imu.rotation()));
+        lie::SO3d::log(lie::SO3d(update.state.T_world_imu.rotation()));
     expectNear(omega.norm(), 0.1, 1e-9,
                "inject_full_pose must adopt the ICP orientation");
 }
@@ -374,13 +374,13 @@ void testPositionInnovationUpdatesAccelBias() {
 void testRegistrationJacobianMatchesFiniteDifference() {
     sapphire::Isometry3d prior = sapphire::Isometry3d::Identity();
     prior.linear() =
-        (sapphire::lie::SO3d::exp(0.35 * Eigen::Vector3d::UnitZ())
-         * sapphire::lie::SO3d::exp(-0.2 * Eigen::Vector3d::UnitY())).R();
+        (lie::SO3d::exp(0.35 * Eigen::Vector3d::UnitZ())
+         * lie::SO3d::exp(-0.2 * Eigen::Vector3d::UnitY())).R();
     prior.translation() = Eigen::Vector3d(4.0, -2.0, 1.5);
 
     sapphire::Isometry3d correction = sapphire::Isometry3d::Identity();
     correction.linear() =
-        sapphire::lie::SO3d::exp(0.08 * Eigen::Vector3d(1.0, 2.0, -1.0).normalized()).R();
+        lie::SO3d::exp(0.08 * Eigen::Vector3d(1.0, 2.0, -1.0).normalized()).R();
     correction.translation() = Eigen::Vector3d(0.1, -0.03, 0.04);
     const sapphire::Isometry3d measured = correction * prior;
 

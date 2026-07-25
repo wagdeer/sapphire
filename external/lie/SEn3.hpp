@@ -19,7 +19,6 @@
 
 #include "SO3.hpp"
 
-namespace sapphire {
 namespace lie {
 /**
  * @brief the Special Eucldean group with n multiple isometries (SEn3)
@@ -578,6 +577,5 @@ using SE23d = SEn3<double, 2>;  //!< The SE23 group with double precision floati
 using SE23f = SEn3<float, 2>;   //!< The SE23 group with single precision floating point
 
 }  // namespace lie
-}  // namespace sapphire
 
 #endif  // SEn3_HPP

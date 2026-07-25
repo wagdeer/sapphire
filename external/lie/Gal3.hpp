@@ -17,7 +17,6 @@
 
 #include "SO3.hpp"
 
-namespace sapphire {
 namespace lie {
 /**
  * @brief the Galilean group Gal(3). This is the Lie group of 3D rotations,
@@ -589,6 +588,5 @@ using Gal3d = Gal3<double>;  //!< The Gal3 group with double precision floating 
 using Gal3f = Gal3<float>;   //!< The Gal3 group with single precision floating point
 
 }  // namespace lie
-}  // namespace sapphire
 
 #endif  // GAL3_HPP

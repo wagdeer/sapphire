@@ -32,7 +32,7 @@ namespace preintegration {
   public:
     using Vec10 = Eigen::Vector<FPType, 10>;
     using Mat5 = Eigen::Matrix<FPType, 5, 5>;
-    using Gal3 = sapphire::lie::Gal3<FPType>;
+    using Gal3 = lie::Gal3<FPType>;
 
     /**
      * @brief Default constructor initializing state with default values.

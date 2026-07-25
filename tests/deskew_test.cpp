@@ -209,7 +209,7 @@ void testRotatingLeverArmExtrinsic() {
     for (size_t i = 0; i < cloud->size(); ++i) {
         const double angle = yaw_rate * cloud->points[i].timestamp;
         const Eigen::Vector3d expected =
-            sapphire::lie::SO3d::exp(angle * Eigen::Vector3d::UnitZ())
+            lie::SO3d::exp(angle * Eigen::Vector3d::UnitZ())
             * Eigen::Vector3d(T_imu_lidar.translation());
         expectNear(result.cloud->points[i].x, expected.x(), "lever-arm x");
         expectNear(result.cloud->points[i].y, expected.y(), "lever-arm y");

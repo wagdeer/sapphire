@@ -618,9 +618,12 @@ EskfUpdate Eskf::correctAt(
             * (I - K_effective * H).transpose()
         + K_effective * R * K_effective.transpose();
 
+    // Reset Jacobian: right-error ESKF with R = R_bar * Exp(dtheta).
+    // BCH: Exp(-dtheta_hat)*Exp(dtheta_old) gives J_r = invRightJacobian(-dtheta_hat).
+    // Equivalently invLeftJacobian(+dtheta_hat) since invRight(u) = invLeft(-u).
     Mat15 Jr = Mat15::Identity();
     Jr.block<3, 3>(0, 0) =
-        lie::SO3d::invLeftJacobian(-dx.segment<3>(0));
+        lie::SO3d::invRightJacobian(-dx.segment<3>(0));
     P_tip_ = Jr * P_upd * Jr.transpose();
     P_tip_ = 0.5 * (P_tip_ + P_tip_.transpose());
 

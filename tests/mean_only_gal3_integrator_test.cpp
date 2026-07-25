@@ -72,7 +72,7 @@ void testRecoveryMatchesPimFormula() {
         Eigen::Vector3d(3.0, 4.0, -1.0),
     };
     const FastIntegrator::Gal3 initial_state(
-        sapphire::lie::SO3d::exp(0.4 * Eigen::Vector3d::UnitY()).R(),
+        lie::SO3d::exp(0.4 * Eigen::Vector3d::UnitY()).R(),
         initial_isometries,
         0.0);
 
