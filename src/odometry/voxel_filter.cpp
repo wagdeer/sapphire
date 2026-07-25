@@ -56,81 +56,44 @@ PointCloudPtr deterministicVoxelDownsample(
 
     std::vector<IndexedVoxel> voxels(points.size());
 
+    auto compute_voxel = [&](std::int64_t i) {
+        const Point& point = points.points[static_cast<size_t>(i)];
+        IndexedVoxel voxel;
+        voxel.point_index = static_cast<size_t>(i);
+        const double x = std::floor(
+            static_cast<double>(point.x) * inverse_leaf_size);
+        const double y = std::floor(
+            static_cast<double>(point.y) * inverse_leaf_size);
+        const double z = std::floor(
+            static_cast<double>(point.z) * inverse_leaf_size);
+        voxel.valid = std::isfinite(x) && std::isfinite(y) && std::isfinite(z)
+            && x >= -coordinate_limit && x < coordinate_limit
+            && y >= -coordinate_limit && y < coordinate_limit
+            && z >= -coordinate_limit && z < coordinate_limit;
+        if (voxel.valid) {
+            voxel.x = static_cast<std::int64_t>(x);
+            voxel.y = static_cast<std::int64_t>(y);
+            voxel.z = static_cast<std::int64_t>(z);
+        }
+        voxels[static_cast<size_t>(i)] = voxel;
+    };
+
     // Dispatch: use outer parallel team when already inside a parallel
     // region, otherwise create one. This avoids nested fork/join overhead.
+    const std::int64_t n = static_cast<std::int64_t>(points.size());
     if (in_parallel) {
 #pragma omp for schedule(static)
-        for (std::int64_t i = 0;
-             i < static_cast<std::int64_t>(points.size());
-             ++i) {
-            const Point& point = points.points[static_cast<size_t>(i)];
-            IndexedVoxel voxel;
-            voxel.point_index = static_cast<size_t>(i);
-            const double x = std::floor(
-                static_cast<double>(point.x) * inverse_leaf_size);
-            const double y = std::floor(
-                static_cast<double>(point.y) * inverse_leaf_size);
-            const double z = std::floor(
-                static_cast<double>(point.z) * inverse_leaf_size);
-            voxel.valid = std::isfinite(x) && std::isfinite(y) && std::isfinite(z)
-                && x >= -coordinate_limit && x < coordinate_limit
-                && y >= -coordinate_limit && y < coordinate_limit
-                && z >= -coordinate_limit && z < coordinate_limit;
-            if (voxel.valid) {
-                voxel.x = static_cast<std::int64_t>(x);
-                voxel.y = static_cast<std::int64_t>(y);
-                voxel.z = static_cast<std::int64_t>(z);
-            }
-            voxels[static_cast<size_t>(i)] = voxel;
+        for (std::int64_t i = 0; i < n; ++i) {
+            compute_voxel(i);
         }
     } else if (use_parallel) {
 #pragma omp parallel for schedule(static) num_threads(thread_count)
-        for (std::int64_t i = 0;
-             i < static_cast<std::int64_t>(points.size());
-             ++i) {
-            const Point& point = points.points[static_cast<size_t>(i)];
-            IndexedVoxel voxel;
-            voxel.point_index = static_cast<size_t>(i);
-            const double x = std::floor(
-                static_cast<double>(point.x) * inverse_leaf_size);
-            const double y = std::floor(
-                static_cast<double>(point.y) * inverse_leaf_size);
-            const double z = std::floor(
-                static_cast<double>(point.z) * inverse_leaf_size);
-            voxel.valid = std::isfinite(x) && std::isfinite(y) && std::isfinite(z)
-                && x >= -coordinate_limit && x < coordinate_limit
-                && y >= -coordinate_limit && y < coordinate_limit
-                && z >= -coordinate_limit && z < coordinate_limit;
-            if (voxel.valid) {
-                voxel.x = static_cast<std::int64_t>(x);
-                voxel.y = static_cast<std::int64_t>(y);
-                voxel.z = static_cast<std::int64_t>(z);
-            }
-            voxels[static_cast<size_t>(i)] = voxel;
+        for (std::int64_t i = 0; i < n; ++i) {
+            compute_voxel(i);
         }
     } else {
-        for (std::int64_t i = 0;
-             i < static_cast<std::int64_t>(points.size());
-             ++i) {
-            const Point& point = points.points[static_cast<size_t>(i)];
-            IndexedVoxel voxel;
-            voxel.point_index = static_cast<size_t>(i);
-            const double x = std::floor(
-                static_cast<double>(point.x) * inverse_leaf_size);
-            const double y = std::floor(
-                static_cast<double>(point.y) * inverse_leaf_size);
-            const double z = std::floor(
-                static_cast<double>(point.z) * inverse_leaf_size);
-            voxel.valid = std::isfinite(x) && std::isfinite(y) && std::isfinite(z)
-                && x >= -coordinate_limit && x < coordinate_limit
-                && y >= -coordinate_limit && y < coordinate_limit
-                && z >= -coordinate_limit && z < coordinate_limit;
-            if (voxel.valid) {
-                voxel.x = static_cast<std::int64_t>(x);
-                voxel.y = static_cast<std::int64_t>(y);
-                voxel.z = static_cast<std::int64_t>(z);
-            }
-            voxels[static_cast<size_t>(i)] = voxel;
+        for (std::int64_t i = 0; i < n; ++i) {
+            compute_voxel(i);
         }
     }
 

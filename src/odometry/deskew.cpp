@@ -59,7 +59,7 @@ DeskewResult makeFallback(
     DeskewResult result;
     result.cloud = out;
     result.T_world_lidar_ref = T_world_lidar;
-    result.v_world_ref = v_world;
+    result.v_world_ref = Eigen::Vector3d::Zero();
     result.reference_stamp = reference_stamp;
     result.status = status;
     return result;
