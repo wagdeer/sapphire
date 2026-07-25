@@ -18,15 +18,19 @@
 
 ## 二、性能缺陷详情
 
-### 🔴 缺陷 1：ESKF 路径点云双重变换
+### ✅ 缺陷 1：ESKF 路径点云双重变换（已修复，2026-07-25）
 
 **文件**: `src/odometry/pipeline.cpp`  
-**位置**: 行 469-475 和 行 581-588
+**位置**: 行 466-473 和 行 572-588
 
-`processLidarScan` 在 ESKF 模式下对同一帧点云执行了两次完整变换：
+`processLidarScan` 在 ESKF 模式下对同一帧点云执行了两次完整变换。第一次将降采样后的 source 从 IMU 先验位姿变换到 GICP 优化后的位姿（DLIO 路径需要）。第二次再将其从 GICP 位姿对齐到 ESKF 融合位姿。对于 Mid-360 扫描（~24000 点），每次 `transformPointCloud` 做 4x4 矩阵乘每个 3D 点，总计 ~96k 标量乘加运算。在 10 Hz 扫描频率下，这相当于每秒多做一次 240000 点的变换。
 
-```469:475:src/odometry/pipeline.cpp
-    if (artifacts.result.accepted) {
+**修复**: 数学上 `T_align × T_correction = T_world_lidar_out × T_world_lidar_ref⁻¹`，`T_correction` 可消掉。两处修改：
+
+1. **L466**: 第一次变换增加 `&& !useEskf()` 条件，ESKF 路径跳过该变换，`artifacts.corrected_source` 保持为 `registration_source`。
+
+```466:473:src/odometry/pipeline.cpp
+    if (artifacts.result.accepted && !useEskf()) {
         auto transformed_source = std::make_shared<PointCloud>();
         pcl::transformPointCloud(
             *registration_source,
@@ -36,38 +40,25 @@
     }
 ```
 
-```581:588:src/odometry/pipeline.cpp
-            if (!T_align.matrix().isIdentity(1e-9)) {
+2. **L575-588**: ESKF 输出段改为单次合成变换 `T_combined = T_world_lidar_out × T_world_lidar_ref⁻¹`，变换源从 `artifacts.corrected_source` 改为 `registration_source`。
+
+```575:588:src/odometry/pipeline.cpp
+        if (artifacts.result.accepted) {
+            const Isometry3d T_combined =
+                T_world_lidar_out
+                * deskewed.T_world_lidar_ref.inverse();
+            if (!T_combined.matrix().isIdentity(1e-9)) {
                 auto aligned = std::make_shared<PointCloud>();
                 pcl::transformPointCloud(
-                    *artifacts.corrected_source,
+                    *registration_source,
                     *aligned,
-                    T_align.matrix());
+                    T_combined.matrix());
                 cloud_out = aligned;
             }
+        }
 ```
 
-第一次将降采样后的 source 从 IMU 先验位姿变换到 GICP 优化后的位姿（DLIO 路径需要）。第二次再将其从 GICP 位姿对齐到 ESKF 融合位姿。对于 Mid-360 扫描（~24000 点），每次 `transformPointCloud` 做 4x4 矩阵乘每个 3D 点，总计 ~96k 标量乘加运算。在 10 Hz 扫描频率下，这相当于每秒多做一次 240000 点的变换。
-
-**修复建议**: 在 ESKF 路径中跳过第一次变换，直接计算 `T_align = T_world_lidar_out * T_world_lidar_ref.inverse()` 并对原始 `registration_source` 做单次变换。需验证 `artifacts.corrected_source` 在 ESKF 路径外的使用（`maybeUpdateSubmapTarget` 和 `pgo_backend_.addFrame` 的参数 `cloud_out` 已有覆盖）。
-
-```cpp
-// 修复示意（替换 line 450-475 和 574-590 逻辑）
-if (useEskf()) {
-    // 跳过 DLIO 格式的独立变换，直接计算对齐
-    T_world_lidar_out = fused_state.T_world_imu * config_.extrinsics.T_imu_lidar;
-    if (artifacts.result.accepted) {
-        const Isometry3d T_align = T_world_lidar_out * deskewed.T_world_lidar_ref.inverse();
-        auto aligned = std::make_shared<PointCloud>();
-        pcl::transformPointCloud(*registration_source, *aligned, T_align.matrix());
-        cloud_out = aligned;
-    } else {
-        cloud_out = registration_source;  // fallback: 未对齐
-    }
-} else {
-    // 原有 DLIO 路径不变
-}
-```
+DLIO (observer) 路径行为完全不变，下游消费者 `maybeUpdateSubmapTarget` 和 `pgo_backend_.addFrame` 语义一致。
 
 ---
 
@@ -281,7 +272,7 @@ Bresenham 线光栅化算法内部每个步长都需要 `updateMiss` → `mutabl
 
 | 优先级 | 缺陷 | 预计收益 | 风险 | 建议时间 |
 |--------|------|----------|------|----------|
-| P0 | #1 点云双重变换 | ESKF 路径每帧节省 1 次完整点云变换 | 低（逻辑隔离良好） | 立即 |
+| ~~P0~~ | ~~#1 点云双重变换~~ | ~~ESKF 路径每帧节省 1 次完整点云变换~~ | — | ✅ 已修复 |
 | P1 | #2 Qc 预计算 | 每 IMU 样本节省 ~20 FLOPs（微） | 极低（纯重构） | 本周 |
 | P2 | #3 propagateCovariance 快速路径 | 每 IMU 样本节省 ~5 分支/转换 | 极低 | 本周 |
 | P3 | #5 submap 合并策略 | 关键帧变更时减少内存复制 | 中（涉及接口改动） | 可选 |

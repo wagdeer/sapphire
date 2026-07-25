@@ -53,6 +53,18 @@ Eskf::Eskf(
     , noise_(noise)
     , gravity_world_(gravity_world)
 {
+    const double sg = noise_.gyro_noise_density;
+    const double sa = noise_.accel_noise_density;
+    const double sba = biasRwAccel();
+    const double sbg = biasRwGyro();
+    precomputed_Qc_.block<3, 3>(0, 0) =
+        Eigen::Matrix3d::Identity() * sg * sg;
+    precomputed_Qc_.block<3, 3>(3, 3) =
+        Eigen::Matrix3d::Identity() * sa * sa;
+    precomputed_Qc_.block<3, 3>(6, 6) =
+        Eigen::Matrix3d::Identity() * sba * sba;
+    precomputed_Qc_.block<3, 3>(9, 9) =
+        Eigen::Matrix3d::Identity() * sbg * sbg;
 }
 
 double Eskf::biasRwAccel() const {
@@ -195,15 +207,7 @@ void Eskf::propagateCovariance(
     G.block<3, 3>(9, 6) = Eigen::Matrix3d::Identity();
     G.block<3, 3>(12, 9) = Eigen::Matrix3d::Identity();
 
-    Eigen::Matrix<double, 12, 12> Qc = Eigen::Matrix<double, 12, 12>::Zero();
-    const double sg = noise_.gyro_noise_density;
-    const double sa = noise_.accel_noise_density;
-    const double sba = biasRwAccel();
-    const double sbg = biasRwGyro();
-    Qc.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * sg * sg;
-    Qc.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * sa * sa;
-    Qc.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() * sba * sba;
-    Qc.block<3, 3>(9, 9) = Eigen::Matrix3d::Identity() * sbg * sbg;
+    const auto& Qc = precomputed_Qc_;
 
     const Mat15 Phi = Mat15::Identity() + F * step_dt;
     const Mat15 Qd =

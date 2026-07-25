@@ -236,6 +236,10 @@ private:
     Eigen::Vector3d gyro_bias_ = Eigen::Vector3d::Zero();
     Mat15 P_baseline_ = Mat15::Zero();
     Mat15 P_tip_ = Mat15::Zero();
+    /// Precomputed IMU noise continuous covariance Qc (12×12 diagonal).
+    /// Invariant across the filter lifetime; computed once in the constructor.
+    Eigen::Matrix<double, 12, 12> precomputed_Qc_ =
+        Eigen::Matrix<double, 12, 12>::Zero();
     detail::MeanOnlyGal3Integrator integrator_;
     std::size_t correction_count_ = 0;
     std::deque<double> normalized_nis_window_;
