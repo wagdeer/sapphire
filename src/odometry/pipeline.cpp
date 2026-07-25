@@ -413,20 +413,18 @@ void OdometryPipeline::processLidarScan(
         return;
     }
 
-    // ── Phase 1: deskew + voxel (shared parallel team, zero fork/join) ──
+    // ── Phase 1: deskew ──
     DeskewResult deskewed;
+    try {
+        deskewed = deskewPointcloud(stamp, preprocessed.cloud);
+    } catch (const std::exception& e) {
+        spdlog::error("[pipeline] deskewPointcloud threw: {}", e.what());
+    }
+
+    // ── Phase 2: voxel downsampling ──
     PointCloudConstPtr registration_source;
-#pragma omp parallel
-    {
-#pragma omp master
-        { deskewed = deskewPointcloud(stamp, preprocessed.cloud); }
-#pragma omp barrier
-#pragma omp master
-        {
-            if (deskewed.status == DeskewStatus::Success) {
-                registration_source = downsamplePoints(deskewed.cloud);
-            }
-        }
+    if (deskewed.status == DeskewStatus::Success) {
+        registration_source = downsamplePoints(deskewed.cloud);
     }
 
     if (deskewed.status != DeskewStatus::Success) {
