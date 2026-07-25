@@ -1,6 +1,7 @@
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  ◆ SAPPHIRE  ::  深度代码审查 (独立验证)                                   │
 │  DATE       ::  2026-07-25                                               │
+│  UPDATED    ::  2026-07-25 (P1 修复完成: 2.4, 4.4, 7.1)                  │
 │  SCOPE      ::  全库 (~4000行 C++) — 算法正确性、线程安全、数值稳定性、性能  │
 │  METHOD     ::  逐文件阅读，不依赖已有文档，独立验证所有声明                  │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -82,39 +83,74 @@
 第二部分：已有审查遗漏的新发现
 ═══════════════════════════════════════════════════════════════════════════
 
-2.1 【严重】SO3.hpp FromTwoVectors 构造函数中反平行情况的非确定性 ⚠️
+2.1 【严重】SO3.hpp FromTwoVectors 构造函数中反平行情况的非确定性 ✅ 已修复
 
-  位置: external/lie/SO3.hpp:95-98
+  位置: external/lie/SO3.hpp:95-98 (库代码) / imu_init.cpp:222-238 (修复)
 
-  if (std::abs(1 + c) < eps_) {            // u 和 v 反平行 (180°)
-      ax = un.cross(VectorType::Random()); // ← 使用随机向量！
-      ax.normalize();
-      q_ = QuaternionType(0.0, ax(0), ax(1), ax(2));
-  }
+  问题:
+    if (std::abs(1 + c) < eps_) {            // u 和 v 反平行 (180°)
+        ax = un.cross(VectorType::Random()); // ← 使用随机向量！
+        ax.normalize();
+        q_ = QuaternionType(0.0, ax(0), ax(1), ax(2));
+    }
 
   VectorType::Random() 产生非确定性结果。如果 imu_init.cpp 中的重力和世界
   Z 轴恰好反平行 (IMU 倒置)，重力对齐结果将在不同运行间不一致。
-  
-  虽然在 Mid-360 正常安装姿态下不会触发 (重力指向 -Z，世界 Z+ 向上，不反平行)，
-  但作为一个通用库方法，这不符合确定性要求。
 
-  建议: 使用固定的备用轴，例如 un.cross(VectorType::UnitX())，当与 UnitX 平行时
-  回退到 UnitY。
+  修复详情 (imu_init.cpp:222-238):
+    // 在调用 lie::SO3d 前检测反平行情况，使用确定性固定轴
+    if (grav_imu.dot(grav_world) < -0.999999) {  // 反平行（IMU倒置）
+        Eigen::Vector3d axis = grav_imu.cross(Eigen::Vector3d::UnitX());
+        if (axis.norm() < 1e-9) {                // 如果与X轴平行，回退到Y轴
+            axis = grav_imu.cross(Eigen::Vector3d::UnitY());
+        }
+        axis.normalize();
+        q_gravity = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, axis));
+    } else {
+        q_gravity = lie::SO3d(grav_imu, grav_world).q();  // 正常情况
+    }
 
-2.2 【中等】deskew.cpp transformScan 三处重复代码
+  修复效果: IMU 倒置时重力对齐结果完全确定，不再依赖随机数。
 
-  位置: deskew.cpp:270-312
+2.2 【中等】deskew.cpp transformScan 三处重复代码 ✅ 已修复
 
-  transformPoint / poseFromState 调用在三个分支 (in_parallel / use_parallel / else)
+  位置: deskew.cpp:270-312 → deskew.cpp:271-295 (修复后)
+
+  问题: transformPoint / poseFromState 调用在三个分支 (in_parallel / use_parallel / else)
   中完全重复。虽然性能影响可以忽略，但增加了维护负担。
 
-  建议: 统一为宏或 lambda，在一个地方定义转换逻辑。
+  修复详情 (deskew.cpp:271-295):
+    // 提取 lambda，三处分支共用
+    auto process_group = [&](size_t group_index) {
+        const Isometry3f T_world_lidar = (
+            poseFromState(states[group_index].state) * T_imu_lidar
+        ).cast<float>();
+        const size_t begin = timeline.group_offsets[group_index];
+        const size_t end = timeline.group_offsets[group_index + 1];
+        for (size_t point_idx = begin; point_idx < end; ++point_idx) {
+            output->points[point_idx] = transformPoint(
+                timeline.sorted_scan.points[point_idx], T_world_lidar);
+        }
+    };
 
-2.3 【中等】eskf.cpp propagateCovariance 噪声离散化公式非标准
+    if (in_parallel) {
+        #pragma omp for schedule(static)
+        for (...) process_group(group);
+    } else if (use_parallel) {
+        #pragma omp parallel for schedule(static) num_threads(thread_count)
+        for (...) process_group(group);
+    } else {
+        for (...) process_group(group);
+    }
 
-  位置: eskf.cpp:192-193
+  修复效果: 代码从 ~45 行缩减到 ~31 行，消除 triplicate code，维护负担降低。
 
-  const Mat15 Qd = Phi * G * Qc * G.transpose() * Phi.transpose() * step_dt;
+2.3 【中等】eskf.cpp propagateCovariance 噪声离散化公式非标准 ✅ 已修复 (文档化)
+
+  位置: eskf.cpp:158-176 (新增注释)
+
+  问题:
+    const Mat15 Qd = Phi * G * Qc * G.transpose() * Phi.transpose() * step_dt;
 
   标准一阶离散化公式为:
     Qd = G * Qc * G^T * dt                    (Euler-Maruyama)
@@ -124,11 +160,28 @@
   当前公式 Qd = Φ G Qc G^T Φ^T * dt 是保守的 (在高频/大噪声下会过估计)。
   注释称"一阶 Φ = I + F dt 离散化"，实际噪声离散化使用了更高阶近似。
 
-  建议: 需要文档说明选择此保守公式的理由 (例如避免低估协方差导致滤波器发散)。
+  修复详情 (eskf.cpp:158-176 新增注释):
+    // The mean path uses a first-order Φ = I + F·dt discretization.
+    //
+    // Noise discretization uses Qd = Φ · G·Qc·G^T · Φ^T · dt, which is a
+    // conservative (over-estimating) choice compared to the standard first-order
+    // formulas:
+    //
+    //   Euler-Maruyama:  Qd = G·Qc·G^T · dt
+    //   Trapezoidal:     Qd = ½ (Φ·G·Qc·G^T + G·Qc·G^T·Φ^T) · dt
+    //
+    // The extra Φ factors inflate the process noise covariance.  This is
+    // deliberate: it trades optimality for robustness.  Under-estimating
+    // covariance risks filter divergence (the estimator trusts its model too
+    // much and stops listening to measurements); over-estimating only makes
+    // it slightly more cautious, which is preferable for a SLAM estimator
+    // that must handle aggressive motion and variable sensor quality.
 
-2.4 【中等】eskf.cpp correctAt 中 partial interval 的 IMU 数据使用
+  修复效果: 设计决策现在有完整文档说明，解释了保守公式的理由（鲁棒性优于最优性）。
 
-  位置: eskf.cpp:375-396
+2.4 【中等】eskf.cpp correctAt 中 partial interval 的 IMU 数据使用 ✅ 已修复 (注释)
+
+  位置: eskf.cpp:387-420
 
   if (remaining_dt > kStampToleranceSec) {
       if (next_imu != nullptr) {
@@ -142,7 +195,15 @@
   此处假设 next_imu 的测量在 remaining_dt 区间内是常数。当 IMU 频率为 200Hz 时，
   next_imu 的测量可能来自参考时间戳之后，最差情况下偏离 5ms。
 
-  影响: 协方差传播的微小误差。对 200Hz IMU 可忽略；若 IMU 频率更低则需关注。
+  修复详情 (eskf.cpp:388-398 新增注释):
+    // NOTE: next_imu holds the first IMU sample *after* reference_stamp.
+    // We use its gyro/accel as a piecewise-constant approximation over the
+    // partial interval [tip_stamp, reference_stamp].  At 200 Hz this assumes
+    // the measurement stays valid for at most 5 ms; at lower IMU rates the
+    // constant-measurement bias grows proportionally and may introduce
+    // observable error in the propagated covariance.
+
+  修复效果: 隐含的常数测量假设现在有明确的文档说明，标注了 IMU 频率依赖的误差特性。
 
 2.5 【低】deskew.cpp deskew 函数中 noise 参数未使用
 
@@ -199,15 +260,22 @@
 
   建议: 在 debug 模式下检查非对称性的大小，记录超过阈值 (如 1e-10) 的情况。
 
-2.10 【低】eskf.cpp NIS 滑动窗口统计的启动问题
+2.10 【低】eskf.cpp NIS 滑动窗口统计的启动问题 ✅ 已修复 (注释)
 
-  位置: eskf.cpp:459-468
+  位置: eskf.cpp:476-483
 
   在启动阶段，NIS 窗口未满 (少于 100 帧)，mean_normalized_nis 的计算
   和报告会使用较少的样本。这本身是正确的，但启动阶段的均值可能不具
   代表性。
 
-  建议: 在文档中说明前 100 帧的 NIS 统计不应用于评估滤波器性能。
+  修复详情 (eskf.cpp:476-483 已有注释):
+    // Sliding-window mean of normalized NIS for real-time filter health
+    // monitoring.  The window size (100) is chosen empirically: ...
+    // ... early frames (before the window fills) only reflect a partial
+    // sample and should not be treated as a statistically rigorous estimate.
+    // The value is primarily used as a diagnostic gauge, not as a gate threshold.
+
+  修复效果: 窗口预热期的统计局限性已明确记录。
 
 ═══════════════════════════════════════════════════════════════════════════
 第三部分：线程安全审查
@@ -313,14 +381,33 @@
   仅在 preintegration.hpp 的 EquivariantPreintegration 中使用。
   当前 Sapphire 不调用这些函数。通过。
 
-4.4 协方差矩阵正定性 — ⚠️ 未显式保护
+4.4 协方差矩阵正定性 — ✅ 已修复 (debug 检查)
 
-  在 Joseph 更新后 (eskf.cpp line 588-592)，协方差通过 Jr * P_upd * Jr^T 传播。
+  在 Joseph 更新后 (eskf.cpp line 624-625)，协方差通过 Jr * P_upd * Jr^T 传播。
   如果 invLeftJacobian 计算有误或旋转误差过大，协方差可能失去正定性。
   当前代码通过强制对称来掩盖，但未检查正定性。
 
-  建议: 在 debug 模式下对 P_tip_ 做 Cholesky 分解检查，记录失败时的
-  NIS 和 innovation 值。
+  修复详情 (eskf.cpp:627-647 新增):
+    #ifndef NDEBUG
+    // Positive-definiteness check: a non-PD covariance signals divergence or
+    // a numerical breakdown in the Joseph / reset-Jacobian step.
+    {
+        Eigen::LLT<Mat15> llt(P_tip_);
+        if (llt.info() != Eigen::Success) {
+            spdlog::error(
+                "[eskf] covariance not positive-definite after Joseph update "
+                "#{}: NIS/6={:.2f} nu_rot={:.4f}rad nu_pos={:.3f}m "
+                "||dx||={:.3f} bias_scale={:.2f}",
+                correction_count_, update.normalized_nis,
+                nu.segment<3>(0).norm(), nu.segment<3>(3).norm(),
+                dx.norm(), bias_scale);
+        }
+    }
+    #endif
+
+  修复效果: Debug 构建中每次 Joseph 更新后自动验证协方差正定性，输出详细的
+  诊断信息 (correction 编号、NIS、innovation 大小、bias_scale)，Release
+  构建中零开销。
 
 ═══════════════════════════════════════════════════════════════════════════
 第五部分：性能审查
@@ -456,7 +543,7 @@
 第七部分：架构与设计观察
 ═══════════════════════════════════════════════════════════════════════════
 
-7.1 ESKF 的 "pose gain" 机制 — ⚠️ 复杂度较高
+7.1 ESKF 的 "pose gain" 机制 — ✅ 已修复 (设计文档)
 
   correctAt() 中有三种位姿增益机制:
   - 标准卡尔曼增益 (K)
@@ -468,7 +555,20 @@
   例如: inject_full_pose = true 时，inject_directional_pose 被覆盖。
   velocity_correction_gain > 0 时，位置部分使用观测器风格而非卡尔曼。
 
-  建议: 编写设计文档说明这些模式的使用场景和约束条件。
+  修复详情 (eskf.hpp:37-100 新增约 50 行文档):
+    Pose-injection modes — interaction semantics 文档块，包含:
+    • 优先级层次: inject_full_pose > inject_directional_pose > Kalman rows
+    • 组合真值表: 列出 4 种典型配置组合的结果
+    • 注意事项: inject_full_pose 覆盖 inject_directional_pose、Hessian 依赖
+    • 使用场景指南: 纯 Kalman / observer 速度 / 方向性注入 / 全位姿注入
+
+  correctAt() 注释中添加了交叉引用:
+    The effective measurement gain is controlled by three config flags —
+    see the pose-injection priority table in EskfConfig for their
+    interaction semantics.
+
+  修复效果: 三种增益模式的优先级、交互行为和使用场景现在有完整的头文件文档，
+  配置人员可直接查阅 EskfConfig 结构体确定合适的组合。
 
 7.2 observer 与 ESKF 共享的架构 — ✅ 接口设计良好
 
@@ -504,19 +604,20 @@
 
 │ 优先级 │ 问题编号 │ 简述                                        │ 影响               │
 ├────────┼──────────┼─────────────────────────────────────────────┼────────────────────┤
-│ 🔴 P0  │ 2.1      │ SO3(u,v) 反平行非确定性                     │ 极少数场景下        │
-│        │          │                                             │ 复现性不确定        │
+│ 🔴 P0  │ 2.1      │ SO3(u,v) 反平行非确定性                     │ ✅ 已修复            │
 ├────────┼──────────┼─────────────────────────────────────────────┼────────────────────┤
-│ 🟡 P1  │ 2.3      │ ESKF 噪声离散化公式选择                     │ 需要理论验证        │
-│ 🟡 P1  │ 4.4      │ 协方差正定性未保护                          │ 极端场景下潜在发散   │
-│ 🟡 P1  │ 7.1      │ ESKF pose gain 交互需文档化                 │ 配置错误难以排查     │
+│ 🟡 P1  │ 2.3      │ ESKF 噪声离散化公式选择                     │ ✅ 已修复 (注释)    │
+│ 🟡 P1  │ 2.4      │ partial interval IMU 常数假设               │ ✅ 已修复 (注释)    │
+│ 🟡 P1  │ 4.4      │ 协方差正定性未保护                          │ ✅ 已修复 (debug)   │
+│ 🟡 P1  │ 7.1      │ ESKF pose gain 交互需文档化                 │ ✅ 已修复 (文档)    │
 ├────────┼──────────┼─────────────────────────────────────────────┼────────────────────┤
-│ 🟢 P2  │ 2.2      │ transformScan 代码重复                      │ 维护性              │
-│ 🟢 P2  │ 2.4      │ partial interval IMU 近似                   │ 极低 IMU 频率时      │
+│ 🟢 P2  │ 2.2      │ transformScan 代码重复                      │ ✅ 已修复            │
+│ 🟢 P2  │ 2.5      │ deskew noise 参数未使用                     │ 维护性              │
 │ 🟢 P2  │ 6.1      │ 去畸变时间戳分组粒度                        │ 未来硬件升级时       │
 │ 🟢 P2  │ 7.2      │ frames_ 内存持续增长                        │ 长时间运行时         │
 ├────────┼──────────┼─────────────────────────────────────────────┼────────────────────┤
-│ 🔵 P3  │ 2.5-2.10 │ 注释、文档、代码风格改进                    │ 可维护性/可理解性    │
+│ 🔵 P3  │ 2.5-2.9  │ 注释、文档、代码风格改进                    │ 可维护性/可理解性    │
+│        │          │                                             │ 2.10 ✅ 已修复       │
 │ 🔵 P3  │ 4.3      │ Gal3 雅可比高次幂 (当前未使用)              │ 将来使用 Gal3 时     │
 │ 🔵 P3  │ 7.4      │ 许可证审查                                  │ 合规性              │
 
@@ -541,8 +642,17 @@
 本次审查独立验证了 REVIEW_2026-07-25_lie_unification.md 中的所有 9 项声明。
 全部声明均正确，代码修改与文档描述一致。
 
-新发现 1 个 P0 问题 (SO3 构造函数的非确定性)、3 个 P1 问题、4 个 P2 问题、
-以及若干 P3 改进建议。所有新发现均已在上述章节中详述。
+新发现 1 个 P0 问题 (SO3 构造函数的非确定性)、4 个 P1 问题、4 个 P2 问题、
+以及若干 P3 改进建议。所有 P0 和 P1 问题已修复，P2 和 P3 待处理。
+
+已修复 (截至 2026-07-25):
+  - P0 2.1: SO3 反平行非确定性 → imu_init.cpp 确定性回退
+  - P1 2.3: 噪声离散化公式 → eskf.cpp 新增注释说明保守选择理由
+  - P1 2.4: partial interval IMU 常数假设 → eskf.cpp 新增注释
+  - P1 4.4: 协方差正定性 → eskf.cpp NDEBUG LLT 检查
+  - P1 7.1: pose gain 交互文档 → eskf.hpp 新增优先级表和场景指南
+  - P2 2.2: transformScan 代码重复 → deskew.cpp lambda 提取
+  - P3 2.10: NIS 窗口预热 → eskf.cpp 已有注释记录
 
 整体而言，Sapphire 的代码质量较高：线程安全设计正确、Gal(3) 预积分框架干净、
 内存管理良好、算法实现与理论一致。主要风险集中在极端边界条件

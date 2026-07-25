@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <Eigen/Cholesky>
 #include <Eigen/LU>
 
 #include <algorithm>
@@ -388,6 +389,13 @@ EskfUpdate Eskf::correctAt(
     // interpolates its mean to that exact time, so propagate P through the
     // remaining partial interval with the same interval-end measurement
     // convention before replacing the mean with prior_mean.
+    //
+    // NOTE: next_imu holds the first IMU sample *after* reference_stamp.
+    // We use its gyro/accel as a piecewise-constant approximation over the
+    // partial interval [tip_stamp, reference_stamp].  At 200 Hz this assumes
+    // the measurement stays valid for at most 5 ms; at lower IMU rates the
+    // constant-measurement bias grows proportionally and may introduce
+    // observable error in the propagated covariance.
     const double remaining_dt = reference_stamp - tip_state_.stamp;
     constexpr double kStampToleranceSec = 1e-9;
     if (remaining_dt > kStampToleranceSec) {
@@ -615,6 +623,28 @@ EskfUpdate Eskf::correctAt(
         lie::SO3d::invLeftJacobian(-dx.segment<3>(0));
     P_tip_ = Jr * P_upd * Jr.transpose();
     P_tip_ = 0.5 * (P_tip_ + P_tip_.transpose());
+
+#ifndef NDEBUG
+    // Positive-definiteness check: a non-PD covariance signals divergence or
+    // a numerical breakdown in the Joseph / reset-Jacobian step.  Cholesky
+    // is the cheapest definitive test and the one the covariance is actually
+    // expected to satisfy.
+    {
+        Eigen::LLT<Mat15> llt(P_tip_);
+        if (llt.info() != Eigen::Success) {
+            spdlog::error(
+                "[eskf] covariance not positive-definite after Joseph update "
+                "#{}: NIS/6={:.2f} nu_rot={:.4f}rad nu_pos={:.3f}m "
+                "||dx||={:.3f} bias_scale={:.2f}",
+                correction_count_,
+                update.normalized_nis,
+                nu.segment<3>(0).norm(),
+                nu.segment<3>(3).norm(),
+                dx.norm(),
+                bias_scale);
+        }
+    }
+#endif
 
     ++correction_count_;
     if (correction_count_ % 10 == 0 || dx.segment<3>(3).norm() > 0.25) {

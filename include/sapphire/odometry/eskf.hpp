@@ -34,6 +34,55 @@ struct EskfConfig {
     /// only: a tight Mahalanobis gate rejects good ICP and opens an IMU-only
     /// death spiral within seconds.
     double mahalanobis_threshold = -1.0;
+    /// Pose-injection modes — interaction semantics
+    /// ============================================
+    /// correctAt() evaluates three gain-modifying flags in a fixed order.
+    /// Because later blocks unconditionally overwrite rows of K_effective,
+    /// the flags follow an explicit priority hierarchy:
+    ///
+    ///    inject_full_pose  >  inject_directional_pose  >  Kalman rows
+    ///   (highest priority)                              (lowest priority)
+    ///
+    /// ── Priority table ─────────────────────────────────────────────────
+    /// | velocity_correction_gain? | inject_directional? | inject_full? | Result                             |
+    /// |---------------------------|---------------------|--------------|------------------------------------|
+    /// | 0                         | false               | false        | Pure Kalman on all 15 states       |
+    /// | >0                        | false               | false        | Kalman orientation + biases;       |
+    /// |                           |                     |              | velocity via position-observer     |
+    /// | any                       | true                | false        | Kalman velocity + biases; pose     |
+    /// |                           |                     |              | rows projected by Hessian obs.     |
+    /// | any                       | any                 | true         | Pose = ICP measurement (identity   |
+    /// |                           |                     |              | gain); velocity/biases via Kalman  |
+    /// |---------------------------|---------------------|--------------|------------------------------------|
+    ///
+    /// Note: inject_full_pose overwrites the rot/pos rows that may have been
+    /// set by inject_directional_pose or the baseline Kalman gain.  Enabling
+    /// both directional and full pose injection simultaneously is wasteful
+    /// (directional rows are computed but immediately discarded).
+    ///
+    /// Note: inject_directional_pose requires use_hessian = true and a valid
+    /// Hessian to produce meaningful observability weights.  Without those,
+    /// directional_observability remains identity and the flag is a no-op.
+    ///
+    /// velocity_correction_gain also interacts with inject_directional_pose
+    /// when use_hessian is enabled: the velocity observer is projected through
+    /// position observability extracted from the Hessian, so weak directions
+    /// receive proportional rather than full velocity updates.
+    ///
+    /// ── When to use each mode ──────────────────────────────────────────
+    ///   • Pure Kalman (all false): highest theoretical accuracy when ICP
+    ///     covariance is well-calibrated and biases are known.
+    ///   • velocity_correction_gain > 0: recommended when ICP gives sharp
+    ///     pose jumps that would otherwise mislead velocity differencing.
+    ///     The observer acts as a low-pass on velocity while avoiding
+    ///     Jacobian-based coupling that may be too weak in practice.
+    ///   • inject_directional_pose: useful when ICP is only partially
+    ///     observable (e.g. long corridors) — lets ICP correct the strong
+    ///     eigen-directions while the IMU prior stabilizes the weak ones.
+    ///   • inject_full_pose: simplest / most robust.  ICP owns pose; Kalman
+    ///     only refines velocity, accel bias, and gyro bias.  This matches
+    ///     the observer frontend's correction semantics and is the default.
+    ///
     /// If true, accepted updates set R/p exactly to the ICP pose. Velocity and
     /// biases still come from the Kalman update (bias optionally damped).
     bool inject_full_pose = true;
@@ -46,6 +95,8 @@ struct EskfConfig {
     /// Optional position-innovation velocity correction [1/s]. This avoids
     /// differentiating noisy ICP poses while keeping scan-to-scan prediction
     /// responsive. Set 0 to use the unconstrained Kalman velocity rows.
+    /// See the pose-injection priority table above for interaction with
+    /// inject_directional_pose / inject_full_pose.
     double velocity_correction_gain = 0.0;
     double accel_bias_max = 10.0;      // m/s²
     double gyro_bias_max = 0.5;        // rad/s
@@ -113,6 +164,11 @@ public:
     /// On return, tip_state_/tipCovariance() hold the reference posterior, but
     /// the committed baseline is NOT updated. After optional IMU-buffer bias
     /// adjustment, the caller must setBaseline(...) + replayToLatest(...).
+    ///
+    /// The effective measurement gain is controlled by three config flags —
+    /// see the pose-injection priority table in EskfConfig for their
+    /// interaction semantics (inject_full_pose > inject_directional_pose >
+    /// velocity_correction_gain > Kalman rows).
     ///
     /// @param prior_mean  deskew prior at reference_stamp (authoritative mean)
     /// @param T_world_imu_measured  GICP-corrected IMU pose
