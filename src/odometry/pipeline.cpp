@@ -463,7 +463,7 @@ void OdometryPipeline::processLidarScan(
                 / static_cast<double>(registration_attempt_count_));
     }
 
-    if (artifacts.result.accepted) {
+    if (artifacts.result.accepted && !useEskf()) {
         auto transformed_source = std::make_shared<PointCloud>();
         pcl::transformPointCloud(
             *registration_source,
@@ -573,15 +573,15 @@ void OdometryPipeline::processLidarScan(
         T_world_lidar_out =
             fused_state.T_world_imu * config_.extrinsics.T_imu_lidar;
         if (artifacts.result.accepted) {
-            const Isometry3d T_align =
+            const Isometry3d T_combined =
                 T_world_lidar_out
-                * artifacts.result.T_world_lidar.inverse();
-            if (!T_align.matrix().isIdentity(1e-9)) {
+                * deskewed.T_world_lidar_ref.inverse();
+            if (!T_combined.matrix().isIdentity(1e-9)) {
                 auto aligned = std::make_shared<PointCloud>();
                 pcl::transformPointCloud(
-                    *artifacts.corrected_source,
+                    *registration_source,
                     *aligned,
-                    T_align.matrix());
+                    T_combined.matrix());
                 cloud_out = aligned;
             }
         }
