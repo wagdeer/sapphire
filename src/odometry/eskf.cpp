@@ -410,10 +410,25 @@ EskfUpdate Eskf::correctAt(
                 next_imu->accel,
                 remaining_dt,
                 P_tip_);
+        } else if (!imu_buffer.empty()) {
+            // Fallback: buffer ends before reference_stamp.  Use the last
+            // available IMU sample as a piecewise-constant approximation
+            // (same constant-measurement assumption as the normal path).
+            const ImuData& last_imu = imu_buffer.back();
+            const Eigen::Matrix3d R_before =
+                tip_state_.T_world_imu.rotation();
+            integrator_.integrate(last_imu, remaining_dt);
+            recoverTipLocked(reference_stamp);
+            propagateCovariance(
+                R_before,
+                last_imu.gyro,
+                last_imu.accel,
+                remaining_dt,
+                P_tip_);
         } else {
             spdlog::warn(
                 "[eskf] covariance not propagated to reference stamp: "
-                "tip={:.6f}, reference={:.6f}",
+                "tip={:.6f}, reference={:.6f}, no IMU available",
                 tip_state_.stamp,
                 reference_stamp);
         }
