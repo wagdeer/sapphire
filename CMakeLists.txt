@@ -1,211 +1,90 @@
-cmake_minimum_required(VERSION 3.16)
-project(sapphire VERSION 0.1.0 LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.8)
+project(sapphire)
 
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING
-        "Choose the type of build." FORCE)
-endif()
-
+set(CMAKE_BUILD_TYPE "Release")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions" )
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -pthread -fexceptions")
 
-option(SAPPHIRE_ENABLE_LTO
-    "Enable IPO/LTO for Sapphire Release targets when supported" ON)
-
-set(SAPPHIRE_IPO_SUPPORTED FALSE)
-if(SAPPHIRE_ENABLE_LTO)
-    include(CheckIPOSupported)
-    check_ipo_supported(RESULT SAPPHIRE_IPO_SUPPORTED
-        OUTPUT SAPPHIRE_IPO_ERROR LANGUAGES CXX)
-    if(NOT SAPPHIRE_IPO_SUPPORTED)
-        message(WARNING
-            "SAPPHIRE_ENABLE_LTO is ON, but IPO/LTO is unavailable: "
-            "${SAPPHIRE_IPO_ERROR}")
-    endif()
-endif()
-
-function(sapphire_enable_release_ipo target)
-    if(SAPPHIRE_ENABLE_LTO AND SAPPHIRE_IPO_SUPPORTED)
-        set_property(TARGET ${target}
-            PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-    endif()
-endfunction()
-
-# Dependencies (only what the skeleton actually uses)
-find_package(Eigen3 REQUIRED)
-find_package(spdlog REQUIRED)
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
-find_package(GTSAM REQUIRED)
+find_package(Eigen3 REQUIRED)
 find_package(OpenMP REQUIRED)
-find_package(Threads REQUIRED)
-
 find_package(small_gicp REQUIRED)
+find_package(Threads REQUIRED)
+find_package(spdlog REQUIRED)
+find_package(SQLite3 REQUIRED)
 
-# TOML configuration parser. Prefer a system package and fall back to the
-# pinned upstream release for environments where Ubuntu does not package it.
-find_package(tomlplusplus 3.4.0 QUIET)
-if(NOT tomlplusplus_FOUND)
-    include(FetchContent)
-    FetchContent_Declare(tomlplusplus
-        GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
-        GIT_TAG v3.4.0
-        GIT_SHALLOW TRUE
-    )
-    FetchContent_MakeAvailable(tomlplusplus)
-endif()
+set(GTSAM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GTSAM_BUILD_EXAMPLES_ALWAYS OFF CACHE BOOL "" FORCE)
+set(GTSAM_BUILD_TIMING_ALWAYS OFF CACHE BOOL "" FORCE)
+set(GTSAM_BUILD_UNSTABLE OFF CACHE BOOL "" FORCE)
+set(GTSAM_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
+set(GTSAM_INSTALL_MATLAB_TOOLBOX OFF CACHE BOOL "" FORCE)
+set(GTSAM_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GTSAM_ENABLE_BOOST_SERIALIZATION OFF CACHE BOOL "" FORCE)
+set(GTSAM_USE_BOOST_FEATURES OFF CACHE BOOL "" FORCE)
+set(GTSAM_USE_SYSTEM_EIGEN ON CACHE BOOL "" FORCE)
+set(GTSAM_WITH_TBB OFF CACHE BOOL "" FORCE)
+set(GTSAM_SUPPORT_NESTED_DISSECTION OFF CACHE BOOL "" FORCE)
+set(GTSAM_FORCE_STATIC_LIB ON CACHE BOOL "" FORCE)
 
-# Library
-add_library(sapphire STATIC
-    src/config.cpp
-    src/backend/pose_graph.cpp
-    src/mapping/occupancy_grid.cpp
-    src/odometry/pipeline.cpp
-    src/odometry/deskew.cpp
-    src/odometry/eskf.cpp
-    src/odometry/observer.cpp
-    src/odometry/registration.cpp
-    src/odometry/submap.cpp
-    src/odometry/voxel_filter.cpp
-    src/imu_init.cpp
+include(thirdparty/gtsam-4.3a2/minimal.cmake)
+
+set(ROS_DEPENDENCIES
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  nav_msgs
+  tf2
+  tf2_ros
+  pcl_conversions
 )
-target_include_directories(sapphire PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/preintegration>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/lie>
-    $<INSTALL_INTERFACE:include>
+
+include_directories(
+  src
+  src/common
+  src/odometry
+  src/mapping
+  ${PCL_INCLUDE_DIRS}
 )
-target_link_libraries(sapphire PUBLIC
-    Eigen3::Eigen
-    spdlog::spdlog
-    ${PCL_LIBRARIES}
-    gtsam
-    OpenMP::OpenMP_CXX
-    small_gicp::small_gicp
-    Threads::Threads
-    tomlplusplus::tomlplusplus
+
+add_executable(sapphire
+  src/pipeline.cpp
+  src/mapping/pose_graph.cpp
 )
-sapphire_enable_release_ipo(sapphire)
-
-include(CTest)
-if(BUILD_TESTING)
-    add_executable(sapphire_config_test
-        tests/config_test.cpp
-    )
-    target_link_libraries(sapphire_config_test PRIVATE sapphire)
-    target_compile_definitions(sapphire_config_test PRIVATE
-        SAPPHIRE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-    )
-    sapphire_enable_release_ipo(sapphire_config_test)
-    add_test(NAME sapphire_config_test COMMAND sapphire_config_test)
-
-    add_executable(sapphire_deskew_test
-        tests/deskew_test.cpp
-    )
-    target_link_libraries(sapphire_deskew_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_deskew_test)
-    add_test(NAME sapphire_deskew_test COMMAND sapphire_deskew_test)
-
-    add_executable(sapphire_ring_buffer_test
-        tests/ring_buffer_test.cpp
-    )
-    target_link_libraries(sapphire_ring_buffer_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_ring_buffer_test)
-    add_test(
-        NAME sapphire_ring_buffer_test
-        COMMAND sapphire_ring_buffer_test
-    )
-
-    add_executable(sapphire_preintegration_test
-        tests/preintegration_test.cpp
-    )
-    target_link_libraries(sapphire_preintegration_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_preintegration_test)
-    add_test(
-        NAME sapphire_preintegration_test
-        COMMAND sapphire_preintegration_test
-    )
-
-    add_executable(sapphire_mean_only_gal3_integrator_test
-        tests/mean_only_gal3_integrator_test.cpp
-    )
-    target_link_libraries(
-        sapphire_mean_only_gal3_integrator_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_mean_only_gal3_integrator_test)
-    add_test(
-        NAME sapphire_mean_only_gal3_integrator_test
-        COMMAND sapphire_mean_only_gal3_integrator_test
-    )
-
-    add_executable(sapphire_pipeline_test
-        tests/pipeline_test.cpp
-    )
-    target_link_libraries(sapphire_pipeline_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_pipeline_test)
-    add_test(NAME sapphire_pipeline_test COMMAND sapphire_pipeline_test)
-
-    add_executable(sapphire_pose_graph_test
-        tests/pose_graph_test.cpp
-    )
-    target_link_libraries(sapphire_pose_graph_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_pose_graph_test)
-    add_test(NAME sapphire_pose_graph_test COMMAND sapphire_pose_graph_test)
-
-    add_executable(sapphire_occupancy_grid_test
-        tests/occupancy_grid_test.cpp
-    )
-    target_link_libraries(sapphire_occupancy_grid_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_occupancy_grid_test)
-    add_test(
-        NAME sapphire_occupancy_grid_test
-        COMMAND sapphire_occupancy_grid_test
-    )
-
-    add_executable(sapphire_observer_test
-        tests/observer_test.cpp
-    )
-    target_link_libraries(sapphire_observer_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_observer_test)
-    add_test(NAME sapphire_observer_test COMMAND sapphire_observer_test)
-
-    add_executable(sapphire_eskf_test
-        tests/eskf_test.cpp
-    )
-    target_link_libraries(sapphire_eskf_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_eskf_test)
-    add_test(NAME sapphire_eskf_test COMMAND sapphire_eskf_test)
-
-    add_executable(sapphire_registration_test
-        tests/registration_test.cpp
-    )
-    target_link_libraries(sapphire_registration_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_registration_test)
-    add_test(NAME sapphire_registration_test COMMAND sapphire_registration_test)
-
-    add_executable(sapphire_submap_test
-        tests/submap_test.cpp
-    )
-    target_link_libraries(sapphire_submap_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_submap_test)
-    add_test(NAME sapphire_submap_test COMMAND sapphire_submap_test)
-
-    add_executable(sapphire_voxel_filter_test
-        tests/voxel_filter_test.cpp
-    )
-    target_link_libraries(sapphire_voxel_filter_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_voxel_filter_test)
-    add_test(
-        NAME sapphire_voxel_filter_test
-        COMMAND sapphire_voxel_filter_test
-    )
-endif()
-
-# TODO: add as modules are implemented:
-#   find_package(TBB)        → submap/odometry parallelism
-# Install
-install(TARGETS sapphire EXPORT sapphireTargets)
-install(DIRECTORY include/ DESTINATION include)
-install(DIRECTORY cfg/ DESTINATION share/sapphire/cfg)
-install(EXPORT sapphireTargets
-    FILE sapphireTargets.cmake
-    DESTINATION lib/cmake/sapphire
+ament_target_dependencies(sapphire ${ROS_DEPENDENCIES})
+target_link_libraries(sapphire
+  ${PCL_LIBRARIES}
+  Eigen3::Eigen
+  gtsam
+  OpenMP::OpenMP_CXX
+  small_gicp::small_gicp
+  Threads::Threads
+  spdlog::spdlog
+  SQLite::SQLite3
 )
+
+install(TARGETS
+  sapphire
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY
+  config
+  launch
+  rviz_cfg
+  DESTINATION share/${PROJECT_NAME}
+)
+
+ament_package()

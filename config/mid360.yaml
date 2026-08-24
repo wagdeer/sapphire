@@ -1,0 +1,90 @@
+cmn_sapphire:
+  ros__parameters:
+    finish: false
+    General:
+      lidar_topic: "/front_lidar"
+      imu_topic: "/front_lidar/imu"
+      save_path: "/userdata/software/map/lio_map/"
+      save_map: 1   # 1: save map, 0: not save map
+
+    Sensor:
+      lidar_type: 0
+      blind: 0.10
+      point_filter_num: 1
+      extrinsic_tran: [-0.011, -0.02329, 0.04412]
+      extrinsic_rota: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+
+    Initializer:
+      imu_init_samples: 30
+      down_size: 0.5
+      max_iterations: 10
+      min_plane_factors: 10
+      ba_iterations: 3
+      convergence_threshold: 0.05
+      refined_convergence_threshold: 0.01
+      degeneracy_threshold: 15.0
+      min_eigen_value: 0.02
+      plane_eigen_value_thre: 4.0
+
+    Odometry:
+      cov_gyr: 0.1
+      cov_acc: 1.0
+      rdw_gyr: 0.0001
+      rdw_acc: 0.0001
+      down_size: 0.1
+      dept_err: 0.02
+      beam_err: 0.05
+      voxel_size: 1.0
+      min_eigen_value: 0.0025
+      degrade_bound: 10
+
+    LocalSubmap:
+      win_size: 10
+      max_layer: 2
+      cov_gyr: 0.01
+      cov_acc: 2.0
+      rdw_gyr: 0.0001
+      rdw_acc: 0.0001
+      plane_eigen_value_thre: [4.0, 4.0, 4.0, 4.0]
+      imu_coef: 0.0002
+      thread_num: 5
+
+    PoseGraph:
+      enabled: false
+      loop_min_time_separation: 30.0
+      loop_min_travel_distance: 30.0
+      loop_max_rotation: 3.14
+      loop_search_radius: 15.0
+      loop_search_stride: 1
+      target_frame_count: 20
+      keyframe_voxel_size: 0.25
+      fitness_threshold: 0.5
+      update_period_sec: 1.0
+      map_frame_stride: 3
+      map_voxel_size: 0.8
+      memory_stm_size: 30
+      memory_wm_size: 200
+      gicp:
+        gicp_max_iterations: 32
+        gicp_k_correspondences: 16
+        gicp_min_inliers: 64
+        gicp_num_threads: 2
+        gicp_max_correspondence_distance: 2.0
+        gicp_transformation_epsilon: 0.01
+        gicp_rotation_epsilon: 0.01
+
+    NaviMap:
+      enabled: false
+      resolution: 0.1
+      h_clearance: 2.0
+      ground_margin: 0.5
+      clear_height_eps: 0.1
+      d_max: 6.0
+      occ_threshold: 0.3
+      usable_range: 40.0
+      min_range: 0.5
+      margin: 5.0
+      hit_probability: 0.7
+      miss_probability: 0.4
+      clamp_min_probability: 0.1192
+      clamp_max_probability: 0.971
