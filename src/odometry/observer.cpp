@@ -1,6 +1,6 @@
 #include <sapphire/odometry/observer.hpp>
 
-#include <cmath>
+#include <SO3.hpp>
 
 namespace sapphire {
 
@@ -26,22 +26,17 @@ ObserverUpdate applyGeometricObserver(
     const Eigen::Vector3d position_error =
         T_world_imu_measurement.translation()
         - prior_state.T_world_imu.translation();
-    Eigen::Quaterniond q_prior(prior_state.T_world_imu.rotation());
-    q_prior.normalize();
-    Eigen::Quaterniond q_error =
-        q_prior.conjugate()
-        * Eigen::Quaterniond(T_world_imu_measurement.rotation());
-    q_error.normalize();
-    if (q_error.w() < 0.0) {
-        q_error.coeffs() *= -1.0;
-    }
+
+    const lie::SO3d so3_prior(prior_state.T_world_imu.rotation());
+    const lie::SO3d so3_measurement(T_world_imu_measurement.rotation());
+    const lie::SO3d so3_error = so3_prior.inv() * so3_measurement;
 
     const Eigen::Vector3d body_position_error =
-        q_prior.conjugate() * position_error;
+        so3_prior.inv() * position_error;
     update.accel_bias -=
         dt * config.accel_bias_gain * body_position_error;
     update.gyro_bias -=
-        dt * config.gyro_bias_gain * q_error.w() * q_error.vec();
+        dt * config.gyro_bias_gain * lie::SO3d::log(so3_error);
     update.accel_bias = update.accel_bias.array()
         .min(config.accel_bias_max)
         .max(-config.accel_bias_max);
@@ -54,19 +49,11 @@ ObserverUpdate applyGeometricObserver(
     update.state.v_world +=
         dt * config.velocity_gain * position_error;
 
-    Eigen::Quaterniond q_correction(
-        1.0 - std::abs(q_error.w()),
-        q_error.x(),
-        q_error.y(),
-        q_error.z());
-    q_correction = q_prior * q_correction;
-    Eigen::Quaterniond q_observer(
-        q_prior.w() + dt * config.orientation_gain * q_correction.w(),
-        q_prior.x() + dt * config.orientation_gain * q_correction.x(),
-        q_prior.y() + dt * config.orientation_gain * q_correction.y(),
-        q_prior.z() + dt * config.orientation_gain * q_correction.z());
-    q_observer.normalize();
-    update.state.T_world_imu.linear() = q_observer.toRotationMatrix();
+    Eigen::Vector3d omega = lie::SO3d::log(so3_error);
+    omega *= dt * config.orientation_gain;
+    const lie::SO3d so3_inc = lie::SO3d::exp(omega);
+    update.state.T_world_imu.linear() =
+        (so3_prior * so3_inc).R();
 
     return update;
 }

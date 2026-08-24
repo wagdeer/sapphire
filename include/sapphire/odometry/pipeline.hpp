@@ -6,6 +6,7 @@
 #include <sapphire/odometry/registration.hpp>
 #include <sapphire/odometry/deskew.hpp>
 #include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
+#include <sapphire/odometry/eskf.hpp>
 #include <sapphire/odometry/observer.hpp>
 #include <sapphire/odometry/submap.hpp>
 #include <Eigen/Core>
@@ -87,6 +88,10 @@ public:
     PointCloudConstPtr latestPoseGraphMap() const {
         return pgo_backend_.latestGlobalMap();
     }
+    void requestOccupancyGrid() { pgo_backend_.requestOccupancyGrid(); }
+    std::shared_ptr<const OccupancyGridMsg> latestOccupancyGrid() const {
+        return pgo_backend_.latestOccupancyGrid();
+    }
 
 private:
     struct PreprocessResult {
@@ -102,11 +107,10 @@ private:
     bool initializeFirstLidarTarget(
         double stamp, const PreprocessResult& preprocessed);
     void processLidarScan(double stamp, const PreprocessResult& preprocessed);
-    std::optional<RegistrationArtifacts> runScanRegistration(
-        const DeskewResult& deskewed);
     void maybeUpdateSubmapTarget(
         const DeskewResult& deskewed,
-        const RegistrationArtifacts& artifacts);
+        const Isometry3d& T_world_lidar,
+        const PointCloudConstPtr& cloud);
     void finalizeImuInitialization(
         ImuInitializer::Result&& result,
         const ImuData& trigger_sample);
@@ -139,6 +143,12 @@ private:
     /// state_mutex_ must be held by the caller.
     void recoverPropagatedStateLocked(double stamp);
 
+    bool useEskf() const {
+        return config_.odometry.fusion == "eskf";
+    }
+
+    static EskfConfig makeEskfConfig(const Config& config);
+
     Config config_;
 
     // ── Initialization ──────────────────────────────────────────
@@ -160,6 +170,7 @@ private:
     NavigationState imu_state_;
     NavigationState propagated_state_;
     detail::MeanOnlyGal3Integrator propagation_integrator_;
+    Eskf eskf_;
     Eigen::Vector3d accel_bias_ = Eigen::Vector3d::Zero();
     Eigen::Vector3d gyro_bias_ = Eigen::Vector3d::Zero();
     mutable std::mutex state_mutex_;
@@ -172,6 +183,8 @@ private:
 
     // ── GICP Registration ─────────────────────────────────────────
     Registration registration_;
+    std::size_t registration_attempt_count_ = 0;
+    std::size_t registration_reject_count_ = 0;
 
     // TODO v0.1:
     //   std::unique_ptr<VoxelMap> voxel_map_;

@@ -302,6 +302,109 @@ void testFirstKeyframeStoresDownsampledCloud() {
            "first scan must create one keyframe from the downsampled cloud");
 }
 
+void testEskfFusionRecoversTranslation() {
+    sapphire::Config config;
+    config.imu.init.min_samples = 5;
+    config.imu.init.check_interval_sec = 0.05;
+    config.imu.init.timeout_sec = 1.0;
+    config.registration.gicp.min_num_points = 50;
+    config.registration.gicp.k_correspondences = 10;
+    config.odometry.voxel_size = 0.01;
+    config.odometry.fusion = "eskf";
+    config.odometry.eskf.init_sigma_position = 0.5;
+    config.odometry.eskf.sigma_translation = 0.05;
+    config.imu.noise.accel_bias_rw_sigma =
+        config.imu.noise.accel_random_walk;
+    config.imu.noise.gyro_bias_rw_sigma =
+        config.imu.noise.gyro_random_walk;
+
+    sapphire::OdometryPipeline pipeline(config);
+    const Eigen::Vector3d stationary_accel(
+        0.0, 0.0, config.imu.init.gravity_mag);
+    for (int i = 0; i <= 16; ++i) {
+        pipeline.pushImu({
+            static_cast<double>(i) * 0.01,
+            stationary_accel,
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    expect(pipeline.initialized(),
+           "ESKF pipeline must initialize from stationary IMU");
+    pipeline.pushLidar(0.10, makeStructuredScan());
+    expect(pipeline.latestResult().converged,
+           "ESKF first scan must initialize the target");
+
+    for (int i = 17; i <= 26; ++i) {
+        pipeline.pushImu({
+            static_cast<double>(i) * 0.01,
+            stationary_accel,
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    pipeline.pushLidar(0.20, makeStructuredScan(-0.2f));
+
+    const auto& result = pipeline.latestResult();
+    expect(result.converged,
+           "ESKF second scan must accept a valid GICP update");
+    expectNear(
+        result.T_world_lidar.translation().x(),
+        0.2,
+        2e-2,
+        "ESKF fusion must keep the GICP-corrected LiDAR pose output");
+    expect(pipeline.latestPropagatedResult().has_value(),
+           "ESKF path must retain IMU-rate propagation after correction");
+}
+
+void testDirectionalEskfPipelineUsesHessian() {
+    sapphire::Config config;
+    config.imu.init.min_samples = 5;
+    config.imu.init.check_interval_sec = 0.05;
+    config.imu.init.timeout_sec = 1.0;
+    config.registration.gicp.min_num_points = 50;
+    config.registration.gicp.k_correspondences = 10;
+    config.odometry.voxel_size = 0.01;
+    config.odometry.fusion = "eskf";
+    config.odometry.eskf.use_hessian = true;
+    config.odometry.eskf.inject_full_pose = false;
+    config.odometry.eskf.velocity_correction_gain = 0.0;
+    config.odometry.eskf.bias_update_scale = 0.0;
+    config.odometry.eskf.init_sigma_position = 0.5;
+    config.odometry.eskf.sigma_translation = 0.01;
+
+    sapphire::OdometryPipeline pipeline(config);
+    const Eigen::Vector3d stationary_accel(
+        0.0, 0.0, config.imu.init.gravity_mag);
+    for (int i = 0; i <= 16; ++i) {
+        pipeline.pushImu({
+            static_cast<double>(i) * 0.01,
+            stationary_accel,
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    pipeline.pushLidar(0.10, makeStructuredScan());
+    for (int i = 17; i <= 26; ++i) {
+        pipeline.pushImu({
+            static_cast<double>(i) * 0.01,
+            stationary_accel,
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    pipeline.pushLidar(0.20, makeStructuredScan(-0.2f));
+
+    const auto result = pipeline.latestResult();
+    expect(result.converged,
+           "directional ESKF pipeline must accept a structured GICP update");
+    expect(result.T_world_lidar.matrix().allFinite()
+               && result.v_world.allFinite(),
+           "directional ESKF output must remain finite");
+    expect(result.T_world_lidar.translation().x() > 0.01
+               && result.T_world_lidar.translation().x() <= 0.201,
+           "directional ESKF must blend the IMU prior and GICP measurement");
+    expect(pipeline.accelBias().isZero(1e-12)
+               && pipeline.gyroBias().isZero(1e-12),
+           "directional bring-up profile must keep bias injection frozen");
+}
+
 void testImuStatePropagatesBetweenLidarScans() {
     sapphire::Config config;
     config.imu.init.min_samples = 5;
@@ -346,6 +449,8 @@ int main() {
     testImuInitializationCreatesGravityAlignedState();
     testFirstLidarScanInitializesDeskewedTarget();
     testFirstKeyframeStoresDownsampledCloud();
+    testEskfFusionRecoversTranslation();
+    testDirectionalEskfPipelineUsesHessian();
     testImuStatePropagatesBetweenLidarScans();
     std::cout << "All pipeline tests passed\n";
     return EXIT_SUCCESS;

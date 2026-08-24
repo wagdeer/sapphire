@@ -1,5 +1,6 @@
 #pragma once
 
+#include <sapphire/mapping/occupancy_grid.hpp>
 #include <sapphire/types.hpp>
 
 #include <cstddef>
@@ -70,6 +71,13 @@ public:
 
     /// Latest completed sparse map. Empty until one has been requested.
     PointCloudConstPtr latestGlobalMap() const;
+
+    /// Request an occupancy-grid export snapshot on the backend worker.
+    void requestOccupancyGrid();
+
+    /// Latest completed occupancy-grid snapshot. Empty until the worker has
+    /// serviced a request. Cheap to call: returns a shared_ptr, not a deep copy.
+    std::shared_ptr<const OccupancyGridMsg> latestOccupancyGrid() const;
 
 private:
     class Impl;

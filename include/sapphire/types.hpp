@@ -128,6 +128,9 @@ struct RegistrationResult {
     bool    converged      = false;
     size_t  num_inliers    = 0;
     bool    accepted       = false;   // false if correction was rejected
+    /// Final GICP information matrix from small_gicp, order [rx,ry,rz,tx,ty,tz].
+    Eigen::Matrix<double, 6, 6> hessian = Eigen::Matrix<double, 6, 6>::Zero();
+    bool    hessian_valid  = false;
 };
 
 /// Sapphire sensor suite config — mirrors odometry.yaml.
@@ -147,6 +150,8 @@ struct Config {
     struct Odometry {
         /// Leaf size used to downsample each deskewed scan before GICP.
         double voxel_size = 0.25;
+        /// Frontend fusion backend: "observer" (default) or "eskf".
+        std::string fusion = "observer";
         /// Axis-aligned box in LiDAR frame; points inside are removed (robot body).
         struct CropBox {
             double min_x = -1.0;
@@ -172,6 +177,33 @@ struct Config {
             double accel_bias_max = 10.0;  // m/s², absolute total bias
             double gyro_bias_max = 0.5;    // rad/s, absolute total bias
         } observer;
+        struct Eskf {
+            double sigma_rotation = 0.01;       // rad
+            double sigma_translation = 0.01;    // m
+            double icp_covariance_scale = 25.0;
+            bool use_hessian = false;
+            /// Absolute information floor used before inverting the GICP
+            /// Hessian. Eigen-directions weaker than max_eigen /
+            /// hessian_max_condition are treated as degenerate.
+            double hessian_min_information = 1e-6;
+            double hessian_max_condition = 1e4;
+            /// Correction-tangent standard deviation assigned to a
+            /// degenerate Hessian direction, capped at this maximum.
+            double hessian_degenerate_sigma = 1.0;
+            double hessian_max_sigma = 10.0;
+            double mahalanobis_threshold = -1.0;  // disabled; hard gates only
+            bool inject_full_pose = true;
+            /// Use Hessian observability itself as the accepted pose gain:
+            /// observable directions follow GICP, degenerate ones keep IMU.
+            bool inject_directional_pose = false;
+            double bias_update_scale = 0.25;
+            double velocity_correction_gain = 0.0;
+            double accel_bias_max = 10.0;
+            double gyro_bias_max = 0.5;
+            double init_sigma_theta = 0.1;      // rad
+            double init_sigma_velocity = 1.0;   // m/s
+            double init_sigma_position = 1.0;   // m
+        } eskf;
     } odometry;
 
     struct Registration {
@@ -198,6 +230,39 @@ struct Config {
         double update_period_sec = 1.0;
         int map_frame_stride = 3;
         double map_voxel_size = 0.8;
+
+        /// 2.5D occupancy grid built from PGO keyframes.
+        ///
+        /// Height band uses signed distance d (world Z relative to sensor, or
+        /// equivalently body-z when attitude is flat). Hits are kept only for
+        /// d in [-h_clearance + ground_margin, d_max].
+        /// For a roof-mounted Mid-360, set h_clearance ≈ sensor height above
+        /// ground (e.g. 1.5–2.5 m); 0.15 m only keeps a thin slice at the
+        /// sensor and will miss tree trunks / curbs below the lidar.
+        /// Use ground_margin > 0 to keep the near-ground slice out of HIT
+        /// (avoids flooring the map and locking d_min for clearing).
+        struct Occupancy {
+            bool enabled = false;
+            double resolution = 0.1;
+            /// Lower band edge before ground_margin (≈ sensor mount height).
+            double h_clearance = 2.0;
+            /// Raise the HIT lower bound by this many meters:
+            /// hit iff d >= -h_clearance + ground_margin. 0 keeps legacy band.
+            double ground_margin = 0.0;
+            /// Drop hits with d > d_max (ceilings / high canopy). <=0 disables.
+            double d_max = 3.0;
+            /// Free rays may clear a hit cell when d_ray <= d_min + clear_height_eps.
+            /// Strict d_ray < d_min blocks same-height pass-through, so a wall that
+            /// jitters by one cell along the ray leaves a permanent occupied layer.
+            double clear_height_eps = 0.05;
+            double occ_threshold = 0.3;
+            double usable_range = 40.0;
+            double min_range = 0.5;
+            /// Voxel size used before inserting a keyframe cloud.
+            double cloud_voxel_size = 0.2;
+            /// Extra meters reserved when expanding the map AABB.
+            double margin = 5.0;
+        } occupancy;
     } pgo;
 
     ImuConfig imu;

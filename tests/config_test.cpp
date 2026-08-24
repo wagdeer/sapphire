@@ -121,10 +121,52 @@ void testProjectConfig() {
     expectNear(
         config.pgo.map_voxel_size, 0.8,
         "PGO sparse-map voxel size");
+    expect(!config.pgo.occupancy.enabled,
+           "default Mid-360 profile keeps occupancy off");
+    expectNear(
+        config.pgo.occupancy.resolution, 0.1,
+        "occupancy resolution");
+    expectNear(
+        config.pgo.occupancy.h_clearance, 2.0,
+        "occupancy h_clearance");
+    expectNear(
+        config.pgo.occupancy.ground_margin, 0.3,
+        "occupancy ground_margin");
+    expectNear(
+        config.pgo.occupancy.d_max, 3.0,
+        "occupancy d_max");
     expect(!config.deskew.time_offset, "Mid-360 time offset must be disabled");
     expect(config.extrinsics.T_imu_lidar.matrix().isApprox(
                Eigen::Matrix4d::Identity(), 1e-12),
            "referenced DLIO extrinsic must be identity");
+}
+
+void testDirectionalEskfProfile() {
+    const auto config = sapphire::loadConfig(
+        std::filesystem::path(SAPPHIRE_SOURCE_DIR)
+        / "cfg" / "sapphire_mid360_directional_eskf.toml");
+
+    expect(config.odometry.fusion == "eskf",
+           "directional profile must select ESKF fusion");
+    expect(config.odometry.eskf.use_hessian,
+           "directional profile must use the GICP Hessian");
+    expect(!config.odometry.eskf.inject_full_pose,
+           "directional profile must disable unconditional full-pose injection");
+    expect(config.odometry.eskf.inject_directional_pose,
+           "directional profile must use the Hessian observability pose gain");
+    expectNear(
+        config.odometry.eskf.velocity_correction_gain,
+        8.0,
+        "directional stage-one profile must retain stable velocity feedback");
+    expectNear(
+        config.odometry.eskf.bias_update_scale,
+        0.0,
+        "directional bring-up must initially freeze bias injection");
+    expect(config.pgo.occupancy.enabled,
+           "directional profile enables occupancy for bring-up");
+    expectNear(
+        config.pgo.occupancy.ground_margin, 0.3,
+        "directional occupancy ground_margin");
 }
 
 void testQuaternionNormalization() {
@@ -174,6 +216,7 @@ void testMissingFieldRejected() {
 
 int main() {
     testProjectConfig();
+    testDirectionalEskfProfile();
     testQuaternionNormalization();
     testInvalidGravityRejected();
     testMissingFieldRejected();

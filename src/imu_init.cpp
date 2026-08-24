@@ -1,5 +1,7 @@
 #include <sapphire/imu_init.hpp>
 
+#include <SO3.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -217,13 +219,23 @@ ImuInitializer::Result ImuInitializer::computeResult() {
 
     // ── Gravity alignment: IMU accel direction → world Z-up ────
     //    At rest, accel measures support force = −g.
-    //    FromTwoVectors maps measured-up to world-up, giving R_imu_world.
-    //    q_gravity = R_imu_world expressed as quaternion.
+    //    lie::SO3d(u, v) constructs the rotation mapping measured-up to world-up.
+    //    When the vectors are anti-parallel (IMU inverted), SO3's library-internal
+    //    fallback uses a non-deterministic random axis.  We handle that case here
+    //    with a deterministic perpendicular axis so that results are reproducible.
     Eigen::Vector3d grav_imu = accel_mean.normalized();
     Eigen::Vector3d grav_world(0.0, 0.0, 1.0);  // world Z = up
-    Eigen::Quaterniond q_gravity =
-        Eigen::Quaterniond::FromTwoVectors(grav_imu, grav_world);
-    q_gravity.normalize();
+    Eigen::Quaterniond q_gravity;
+    if (grav_imu.dot(grav_world) < -0.999999) {
+        Eigen::Vector3d axis = grav_imu.cross(Eigen::Vector3d::UnitX());
+        if (axis.norm() < 1e-9) {
+            axis = grav_imu.cross(Eigen::Vector3d::UnitY());
+        }
+        axis.normalize();
+        q_gravity = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, axis));
+    } else {
+        q_gravity = lie::SO3d(grav_imu, grav_world).q();
+    }
 
     // Bias = mean(meas) − gravity_vector_in_imu_frame
     // Gravity in IMU frame = q_gravity.inverse() * (0,0,g_mag)

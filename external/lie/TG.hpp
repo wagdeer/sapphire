@@ -17,7 +17,6 @@
 #include "SEn3.hpp"
 #include "Gal3.hpp"
 
-namespace sapphire {
 namespace lie {
 /**
  * @brief The Tangent group. The tangent group of a Lie group G is a semi-direct product group between G and
@@ -248,6 +247,5 @@ using Gal3TGd = Gal3TG<double>;     //!< The Gal3 tangent group with double prec
 using Gal3TGf = Gal3TG<float>;      //!< The Gal3 tangent group with single precision floating point
 
 }  // namespace lie
-}  // namespace sapphire
 
 #endif  // TG_HPP

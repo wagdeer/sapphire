@@ -17,7 +17,6 @@
 
 #include <Eigen/Dense>
 
-namespace sapphire {
 namespace lie {
 /**
  * @brief The Special orthogonal group of dimension 3 (SO3) representing 3D rotations
@@ -463,6 +462,5 @@ using SO3d = SO3<double>;  //!< The SO3 group with double precision floating poi
 using SO3f = SO3<float>;   //!< The SO3 group with single precision floating point
 
 }  // namespace lie
-}  // namespace sapphire
 
 #endif  // SO3_HPP

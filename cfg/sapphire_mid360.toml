@@ -1,5 +1,5 @@
-# Sapphire configuration for Livox Mid-360.
-# Point offset_time must be converted from nanoseconds to seconds by the ROS adapter.
+# Experimental direction-aware ESKF profile for Livox Mid-360.
+# Keep sapphire_mid360.toml as the validated observer-hybrid rollback profile.
 
 [imu]
 gravity = 9.80665
@@ -16,10 +16,12 @@ accel_noise_density = 0.000196
 gyro_noise_density = 0.000152
 accel_random_walk = 0.000165
 gyro_random_walk = 0.0000655
+accel_bias_rw_sigma = 0.000165
+gyro_bias_rw_sigma = 0.0000655
 
 [odometry]
-# Downsample each deskewed scan before GICP. Matches the validated DLIO profile.
 voxel_size = 0.25
+fusion = "eskf"
 
 [odometry.crop_box]
 min_x = -1.0
@@ -30,7 +32,6 @@ max_y = 1.0
 max_z = 1.0
 
 [odometry.observer]
-# Matches the validated DLIO Mid-360 geometric observer.
 position_gain = 4.5
 velocity_gain = 11.25
 orientation_gain = 4.0
@@ -38,6 +39,33 @@ accel_bias_gain = 2.25
 gyro_bias_gain = 1.0
 accel_bias_max = 10.0
 gyro_bias_max = 0.5
+
+[odometry.eskf]
+sigma_rotation = 0.02
+sigma_translation = 0.05
+icp_covariance_scale = 25.0
+use_hessian = true
+hessian_min_information = 1e-6
+hessian_max_condition = 10000.0
+hessian_degenerate_sigma = 1.0
+hessian_max_sigma = 10.0
+# Retain registration hard gates; collect NIS before enabling a statistical gate.
+mahalanobis_threshold = -1.0
+# Pose uses the bounded Hessian observability gain. Velocity keeps the
+# validated observer gain during stage 1, projected through the same
+# observability so weak geometry cannot inject a full correction.
+inject_full_pose = false
+inject_directional_pose = true
+velocity_correction_gain = 8.0
+# Bias remains frozen during pose/velocity bring-up. Its covariance RW is active.
+bias_update_scale = 0.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
+# Bring-up starts uncertain enough for the first accepted scan to establish
+# the posterior instead of locking the filter to the stationary initializer.
+init_sigma_theta = 0.1
+init_sigma_velocity = 0.5
+init_sigma_position = 0.5
 
 [odometry.submap]
 splitting_distance = 1.5
@@ -78,15 +106,29 @@ update_period_sec = 1.0
 map_frame_stride = 3
 map_voxel_size = 0.8
 
+[pgo.occupancy]
+# d = world Z relative to sensor (≈ lidar-frame z on flat ground).
+# h_clearance ≈ sensor height above ground (vehicle Mid-360 ~2m).
+# ground_margin raises the HIT lower bound: hit iff
+#   d >= -h_clearance + ground_margin
+# so the near-ground slice is skipped (not occupied / does not lock d_min).
+# Too small h_clearance (e.g. 0.15) only keeps a thin slice at the lidar.
+enabled = true
+resolution = 0.1
+h_clearance = 2.0
+ground_margin = 0.5
+# Same-height free rays can clear hit cells (pose jitter / wall moved along ray).
+clear_height_eps = 0.1
+d_max = 6.0
+occ_threshold = 0.3
+usable_range = 40.0
+min_range = 0.5
+cloud_voxel_size = 0.4
+margin = 5.0
+
 [deskew]
-# Mid-360 offset_time is already relative to the message reference timestamp.
 time_offset = false
 
 [extrinsics.T_imu_lidar]
-# T_imu_lidar maps LiDAR-frame points into the IMU frame:
-# p_imu = R_imu_lidar * p_lidar + translation
-#
-# In the referenced dlio_mid360.yaml, baselink2imu and baselink2lidar
-# are identical, so their relative transform is identity.
 translation = [0.0, 0.0, 0.0]
 rotation_xyzw = [0.0, 0.0, 0.0, 1.0]

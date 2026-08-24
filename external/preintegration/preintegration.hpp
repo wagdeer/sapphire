@@ -44,8 +44,8 @@ namespace preintegration {
     using Mat15 = Eigen::Matrix<FPType, 15, 15>;
     using Mat18 = Eigen::Matrix<FPType, 18, 18>;
     using Mat20 = Eigen::Matrix<FPType, 20, 20>;
-    using Gal3 = sapphire::lie::Gal3<FPType>;
-    using Gal3TG = sapphire::lie::Tangent<sapphire::lie::Gal3<FPType>>;
+    using Gal3 = lie::Gal3<FPType>;
+    using Gal3TG = lie::Tangent<lie::Gal3<FPType>>;
     using State = PreintegrationState<FPType>;
     using Input = PreintegrationInput<FPType>;
     using Params = PreintegrationParams<FPType>;

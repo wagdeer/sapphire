@@ -133,6 +133,10 @@ Config loadConfig(const std::filesystem::path& path) {
             root["odometry"]["voxel_size"].value<double>()) {
         config.odometry.voxel_size = *voxel_size;
     }
+    if (const auto fusion =
+            root["odometry"]["fusion"].value<std::string>()) {
+        config.odometry.fusion = *fusion;
+    }
     if (const auto value =
             root["odometry"]["crop_box"]["min_x"].value<double>()) {
         config.odometry.crop_box.min_x = *value;
@@ -184,6 +188,90 @@ Config loadConfig(const std::filesystem::path& path) {
     if (const auto gyro_bias_max =
             root["odometry"]["observer"]["gyro_bias_max"].value<double>()) {
         config.odometry.observer.gyro_bias_max = *gyro_bias_max;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["sigma_rotation"].value<double>()) {
+        config.odometry.eskf.sigma_rotation = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["sigma_translation"].value<double>()) {
+        config.odometry.eskf.sigma_translation = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["icp_covariance_scale"].value<double>()) {
+        config.odometry.eskf.icp_covariance_scale = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["use_hessian"].value<bool>()) {
+        config.odometry.eskf.use_hessian = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["hessian_min_information"]
+                .value<double>()) {
+        config.odometry.eskf.hessian_min_information = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["hessian_max_condition"]
+                .value<double>()) {
+        config.odometry.eskf.hessian_max_condition = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["hessian_degenerate_sigma"]
+                .value<double>()) {
+        config.odometry.eskf.hessian_degenerate_sigma = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["hessian_max_sigma"].value<double>()) {
+        config.odometry.eskf.hessian_max_sigma = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["mahalanobis_threshold"].value<double>()) {
+        config.odometry.eskf.mahalanobis_threshold = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["inject_full_pose"].value<bool>()) {
+        config.odometry.eskf.inject_full_pose = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["inject_directional_pose"].value<bool>()) {
+        config.odometry.eskf.inject_directional_pose = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["bias_update_scale"].value<double>()) {
+        config.odometry.eskf.bias_update_scale = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["velocity_correction_gain"]
+                .value<double>()) {
+        config.odometry.eskf.velocity_correction_gain = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["accel_bias_max"].value<double>()) {
+        config.odometry.eskf.accel_bias_max = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["gyro_bias_max"].value<double>()) {
+        config.odometry.eskf.gyro_bias_max = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["init_sigma_theta"].value<double>()) {
+        config.odometry.eskf.init_sigma_theta = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["init_sigma_velocity"].value<double>()) {
+        config.odometry.eskf.init_sigma_velocity = *value;
+    }
+    if (const auto value =
+            root["odometry"]["eskf"]["init_sigma_position"].value<double>()) {
+        config.odometry.eskf.init_sigma_position = *value;
+    }
+    if (const auto value =
+            root["imu"]["noise"]["accel_bias_rw_sigma"].value<double>()) {
+        config.imu.noise.accel_bias_rw_sigma = *value;
+    }
+    if (const auto value =
+            root["imu"]["noise"]["gyro_bias_rw_sigma"].value<double>()) {
+        config.imu.noise.gyro_bias_rw_sigma = *value;
     }
     if (const auto splitting_distance =
             root["odometry"]["submap"]["splitting_distance"].value<double>()) {
@@ -288,6 +376,48 @@ Config loadConfig(const std::filesystem::path& path) {
     if (const auto value = root["pgo"]["map_voxel_size"].value<double>()) {
         config.pgo.map_voxel_size = *value;
     }
+    if (const auto value = root["pgo"]["occupancy"]["enabled"].value<bool>()) {
+        config.pgo.occupancy.enabled = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["resolution"].value<double>()) {
+        config.pgo.occupancy.resolution = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["h_clearance"].value<double>()) {
+        config.pgo.occupancy.h_clearance = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["ground_margin"].value<double>()) {
+        config.pgo.occupancy.ground_margin = *value;
+    }
+    if (const auto value = root["pgo"]["occupancy"]["d_max"].value<double>()) {
+        config.pgo.occupancy.d_max = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["clear_height_eps"].value<double>()) {
+        config.pgo.occupancy.clear_height_eps = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["occ_threshold"].value<double>()) {
+        config.pgo.occupancy.occ_threshold = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["usable_range"].value<double>()) {
+        config.pgo.occupancy.usable_range = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["min_range"].value<double>()) {
+        config.pgo.occupancy.min_range = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["cloud_voxel_size"].value<double>()) {
+        config.pgo.occupancy.cloud_voxel_size = *value;
+    }
+    if (const auto value =
+            root["pgo"]["occupancy"]["margin"].value<double>()) {
+        config.pgo.occupancy.margin = *value;
+    }
 
     const auto time_offset = root["deskew"]["time_offset"].value<bool>();
     if (!time_offset.has_value()) {
@@ -365,6 +495,64 @@ void validateConfig(const Config& config) {
     requireFiniteNonnegative(
         config.odometry.observer.gyro_bias_max,
         "odometry.observer.gyro_bias_max");
+    if (config.odometry.fusion != "observer"
+        && config.odometry.fusion != "eskf") {
+        throw std::invalid_argument(
+            "odometry.fusion must be \"observer\" or \"eskf\"");
+    }
+    requireFinitePositive(
+        config.odometry.eskf.sigma_rotation,
+        "odometry.eskf.sigma_rotation");
+    requireFinitePositive(
+        config.odometry.eskf.sigma_translation,
+        "odometry.eskf.sigma_translation");
+    requireFinitePositive(
+        config.odometry.eskf.icp_covariance_scale,
+        "odometry.eskf.icp_covariance_scale");
+    requireFinitePositive(
+        config.odometry.eskf.hessian_min_information,
+        "odometry.eskf.hessian_min_information");
+    requireFinitePositive(
+        config.odometry.eskf.hessian_max_condition,
+        "odometry.eskf.hessian_max_condition");
+    requireFinitePositive(
+        config.odometry.eskf.hessian_degenerate_sigma,
+        "odometry.eskf.hessian_degenerate_sigma");
+    requireFinitePositive(
+        config.odometry.eskf.hessian_max_sigma,
+        "odometry.eskf.hessian_max_sigma");
+    if (config.odometry.eskf.hessian_degenerate_sigma
+        > config.odometry.eskf.hessian_max_sigma) {
+        throw std::invalid_argument(
+            "odometry.eskf.hessian_degenerate_sigma must not exceed "
+            "hessian_max_sigma");
+    }
+    if (!std::isfinite(config.odometry.eskf.mahalanobis_threshold)) {
+        throw std::invalid_argument(
+            "odometry.eskf.mahalanobis_threshold must be finite "
+            "(use <=0 to disable)");
+    }
+    requireFiniteNonnegative(
+        config.odometry.eskf.bias_update_scale,
+        "odometry.eskf.bias_update_scale");
+    requireFiniteNonnegative(
+        config.odometry.eskf.velocity_correction_gain,
+        "odometry.eskf.velocity_correction_gain");
+    requireFiniteNonnegative(
+        config.odometry.eskf.accel_bias_max,
+        "odometry.eskf.accel_bias_max");
+    requireFiniteNonnegative(
+        config.odometry.eskf.gyro_bias_max,
+        "odometry.eskf.gyro_bias_max");
+    requireFinitePositive(
+        config.odometry.eskf.init_sigma_theta,
+        "odometry.eskf.init_sigma_theta");
+    requireFinitePositive(
+        config.odometry.eskf.init_sigma_velocity,
+        "odometry.eskf.init_sigma_velocity");
+    requireFinitePositive(
+        config.odometry.eskf.init_sigma_position,
+        "odometry.eskf.init_sigma_position");
     if (!std::isfinite(config.odometry.voxel_size)
         || config.odometry.voxel_size <= 0.0) {
         throw std::invalid_argument(
@@ -470,6 +658,52 @@ void validateConfig(const Config& config) {
     requireFinitePositive(
         config.pgo.map_voxel_size,
         "pgo.map_voxel_size");
+    if (config.pgo.occupancy.enabled) {
+        requireFinitePositive(
+            config.pgo.occupancy.resolution,
+            "pgo.occupancy.resolution");
+        requireFiniteNonnegative(
+            config.pgo.occupancy.h_clearance,
+            "pgo.occupancy.h_clearance");
+        requireFiniteNonnegative(
+            config.pgo.occupancy.ground_margin,
+            "pgo.occupancy.ground_margin");
+        if (config.pgo.occupancy.ground_margin
+            >= config.pgo.occupancy.h_clearance
+            && config.pgo.occupancy.h_clearance > 0.0) {
+            throw std::invalid_argument(
+                "pgo.occupancy.ground_margin must be < h_clearance");
+        }
+        requireFiniteNonnegative(
+            config.pgo.occupancy.d_max,
+            "pgo.occupancy.d_max");
+        requireFiniteNonnegative(
+            config.pgo.occupancy.clear_height_eps,
+            "pgo.occupancy.clear_height_eps");
+        if (config.pgo.occupancy.occ_threshold <= 0.0
+            || config.pgo.occupancy.occ_threshold > 1.0
+            || !std::isfinite(config.pgo.occupancy.occ_threshold)) {
+            throw std::invalid_argument(
+                "pgo.occupancy.occ_threshold must be in (0, 1]");
+        }
+        requireFinitePositive(
+            config.pgo.occupancy.usable_range,
+            "pgo.occupancy.usable_range");
+        requireFiniteNonnegative(
+            config.pgo.occupancy.min_range,
+            "pgo.occupancy.min_range");
+        if (config.pgo.occupancy.min_range
+            >= config.pgo.occupancy.usable_range) {
+            throw std::invalid_argument(
+                "pgo.occupancy.min_range must be < usable_range");
+        }
+        requireFiniteNonnegative(
+            config.pgo.occupancy.cloud_voxel_size,
+            "pgo.occupancy.cloud_voxel_size");
+        requireFinitePositive(
+            config.pgo.occupancy.margin,
+            "pgo.occupancy.margin");
+    }
 
     const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;
     if (!extrinsic.matrix().allFinite()) {

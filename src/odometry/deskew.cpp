@@ -1,6 +1,8 @@
 #include <sapphire/odometry/deskew.hpp>
 #include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
 
+#include <SO3.hpp>
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -36,7 +38,6 @@ Point transformPoint(const Point& source, const Isometry3f& transform) {
 DeskewResult makeFallback(
     const PointCloudConstPtr& scan,
     const Isometry3d& T_world_imu,
-    const Eigen::Vector3d& v_world,
     const Isometry3d& T_imu_lidar,
     double reference_stamp,
     DeskewStatus status)
@@ -57,7 +58,7 @@ DeskewResult makeFallback(
     DeskewResult result;
     result.cloud = out;
     result.T_world_lidar_ref = T_world_lidar;
-    result.v_world_ref = v_world;
+    result.v_world_ref = Eigen::Vector3d::Zero();
     result.reference_stamp = reference_stamp;
     result.status = status;
     return result;
@@ -152,8 +153,12 @@ Gal3 interpolateState(
     double interval_dt)
 {
     alpha = std::clamp(alpha, 0.0, 1.0);
-    const Eigen::Quaterniond rotation =
-        start.q().slerp(alpha, end.q()).normalized();
+    // Lie algebra interpolation: R(α) = R_start · exp(α · log(R_start⁻¹ · R_end))
+    // Equivalent to SLERP but uses the project's unified lie algebra infrastructure.
+    const lie::SO3d start_so3(start.q());
+    const lie::SO3d end_so3(end.q());
+    const Eigen::Vector3d omega = lie::SO3d::log(start_so3.inv() * end_so3);
+    const lie::SO3d rotation_so3 = start_so3 * lie::SO3d::exp(alpha * omega);
     const Eigen::Vector3d velocity =
         (1.0 - alpha) * start.v() + alpha * end.v();
 
@@ -172,7 +177,7 @@ Gal3 interpolateState(
         + h11 * interval_dt * end.v();
 
     Gal3::IsometriesType isometries{velocity, position};
-    return Gal3(rotation, isometries, 0.0);
+    return Gal3(rotation_so3, isometries, 0.0);
 }
 
 std::vector<TimedState> integrateTimeline(
@@ -260,10 +265,9 @@ PointCloudPtr transformScan(
         static_cast<std::ptrdiff_t>(timeline.stamps.size());
     const bool use_parallel =
         output->points.size() >= kParallelPointThreshold && group_count > 1;
+    const bool in_parallel = omp_in_parallel();
 
-#pragma omp parallel for schedule(static) num_threads(thread_count) if(use_parallel)
-    for (std::ptrdiff_t group = 0; group < group_count; ++group) {
-        const size_t group_index = static_cast<size_t>(group);
+    auto process_group = [&](size_t group_index) {
         const Isometry3f T_world_lidar = (
             poseFromState(states[group_index].state) * T_imu_lidar
         ).cast<float>();
@@ -272,6 +276,22 @@ PointCloudPtr transformScan(
         for (size_t point_idx = begin; point_idx < end; ++point_idx) {
             output->points[point_idx] = transformPoint(
                 timeline.sorted_scan.points[point_idx], T_world_lidar);
+        }
+    };
+
+    if (in_parallel) {
+#pragma omp for schedule(static)
+        for (std::ptrdiff_t group = 0; group < group_count; ++group) {
+            process_group(static_cast<size_t>(group));
+        }
+    } else if (use_parallel) {
+#pragma omp parallel for schedule(static) num_threads(thread_count)
+        for (std::ptrdiff_t group = 0; group < group_count; ++group) {
+            process_group(static_cast<size_t>(group));
+        }
+    } else {
+        for (std::ptrdiff_t group = 0; group < group_count; ++group) {
+            process_group(static_cast<size_t>(group));
         }
     }
 
@@ -300,7 +320,7 @@ DeskewResult deskew(
     if (!scan || scan->empty()) {
         spdlog::warn("[deskew] empty scan");
         return makeFallback(
-            scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
+            scan, T_world_imu_prev, T_imu_lidar, prev_stamp,
             DeskewStatus::EmptyScan);
     }
 
@@ -309,7 +329,7 @@ DeskewResult deskew(
         buildScanTimeline(*scan, scan_stamp, time_offset, timeline);
     if (status != DeskewStatus::Success) {
         return makeFallback(
-            scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
+            scan, T_world_imu_prev, T_imu_lidar, prev_stamp,
             status);
     }
     size_t imu_start = imu_buf.size();
@@ -321,7 +341,7 @@ DeskewResult deskew(
         imu_start);
     if (status != DeskewStatus::Success) {
         return makeFallback(
-            scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
+            scan, T_world_imu_prev, T_imu_lidar, prev_stamp,
             status);
     }
 
@@ -335,7 +355,7 @@ DeskewResult deskew(
         gravity_world);
     if (states.size() != timeline.stamps.size()) {
         return makeFallback(
-            scan, T_world_imu_prev, v_world_prev, T_imu_lidar, prev_stamp,
+            scan, T_world_imu_prev, T_imu_lidar, prev_stamp,
             DeskewStatus::InsufficientImuCoverage);
     }
 

@@ -58,8 +58,10 @@ endif()
 add_library(sapphire STATIC
     src/config.cpp
     src/backend/pose_graph.cpp
+    src/mapping/occupancy_grid.cpp
     src/odometry/pipeline.cpp
     src/odometry/deskew.cpp
+    src/odometry/eskf.cpp
     src/odometry/observer.cpp
     src/odometry/registration.cpp
     src/odometry/submap.cpp
@@ -69,6 +71,7 @@ add_library(sapphire STATIC
 target_include_directories(sapphire PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/preintegration>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/lie>
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(sapphire PUBLIC
@@ -147,12 +150,29 @@ if(BUILD_TESTING)
     sapphire_enable_release_ipo(sapphire_pose_graph_test)
     add_test(NAME sapphire_pose_graph_test COMMAND sapphire_pose_graph_test)
 
+    add_executable(sapphire_occupancy_grid_test
+        tests/occupancy_grid_test.cpp
+    )
+    target_link_libraries(sapphire_occupancy_grid_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_occupancy_grid_test)
+    add_test(
+        NAME sapphire_occupancy_grid_test
+        COMMAND sapphire_occupancy_grid_test
+    )
+
     add_executable(sapphire_observer_test
         tests/observer_test.cpp
     )
     target_link_libraries(sapphire_observer_test PRIVATE sapphire)
     sapphire_enable_release_ipo(sapphire_observer_test)
     add_test(NAME sapphire_observer_test COMMAND sapphire_observer_test)
+
+    add_executable(sapphire_eskf_test
+        tests/eskf_test.cpp
+    )
+    target_link_libraries(sapphire_eskf_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_eskf_test)
+    add_test(NAME sapphire_eskf_test COMMAND sapphire_eskf_test)
 
     add_executable(sapphire_registration_test
         tests/registration_test.cpp

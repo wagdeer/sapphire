@@ -44,6 +44,7 @@ private:
     std::vector<size_t> selectNearest(
         const Eigen::Vector3d& position) const;
     void rebuildTarget();
+    void pruneStaleKeyframes();
 
     Config::Odometry::Submap config_;
     std::vector<Keyframe> keyframes_;

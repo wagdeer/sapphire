@@ -1,5 +1,8 @@
 #include <sapphire/backend/pose_graph.hpp>
+#include <sapphire/mapping/occupancy_grid.hpp>
 #include <sapphire/odometry/voxel_filter.hpp>
+
+#include <SO3.hpp>
 
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/nonlinear/ISAM2.h>
@@ -17,6 +20,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -27,10 +31,7 @@ namespace sapphire {
 namespace {
 
 double rotationAngle(const Isometry3d& transform) {
-    Eigen::Quaterniond rotation(transform.rotation());
-    rotation.normalize();
-    return 2.0 * std::atan2(
-        rotation.vec().norm(), std::abs(rotation.w()));
+    return lie::SO3d::log(lie::SO3d(transform.rotation())).norm();
 }
 
 gtsam::Pose3 toGtsam(const Isometry3d& pose) {
@@ -89,6 +90,14 @@ public:
         odom_variances << 1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4;
         odom_noise_ =
             gtsam::noiseModel::Diagonal::Variances(odom_variances);
+
+        if (config_.occupancy.enabled) {
+            occupancy_ = std::make_unique<OccupancyGrid>(config_.occupancy);
+            spdlog::info(
+                "[pgo] occupancy grid enabled (reso={:.2f}m, d_max={:.2f}m)",
+                config_.occupancy.resolution,
+                config_.occupancy.d_max);
+        }
 
         worker_ = std::thread([this]() { workerLoop(); });
         spdlog::info("[pgo] asynchronous pose-graph backend enabled");
@@ -170,18 +179,32 @@ public:
     void requestSnapshot() {
         if (config_.enabled) {
             snapshot_requested_.store(true, std::memory_order_release);
+            wake_cv_.notify_one();
         }
     }
 
     void requestGlobalMap() {
         if (config_.enabled) {
             map_requested_.store(true, std::memory_order_release);
+            wake_cv_.notify_one();
         }
     }
 
     PointCloudConstPtr latestGlobalMap() const {
         std::lock_guard<std::mutex> lock(output_mutex_);
         return global_map_;
+    }
+
+    void requestOccupancyGrid() {
+        if (config_.enabled && occupancy_) {
+            occupancy_requested_.store(true, std::memory_order_release);
+            wake_cv_.notify_one();
+        }
+    }
+
+    std::shared_ptr<const OccupancyGridMsg> latestOccupancyGrid() const {
+        std::lock_guard<std::mutex> lock(occupancy_mutex_);
+        return occupancy_msg_;
     }
 
 private:
@@ -205,7 +228,10 @@ private:
         while (!stop_.load(std::memory_order_acquire)) {
             std::unique_lock<std::mutex> lock(wake_mutex_);
             wake_cv_.wait_for(lock, period, [this]() {
-                return stop_.load(std::memory_order_acquire);
+                return stop_.load(std::memory_order_acquire)
+                    || snapshot_requested_.load(std::memory_order_acquire)
+                    || map_requested_.load(std::memory_order_acquire)
+                    || occupancy_requested_.load(std::memory_order_acquire);
             });
             lock.unlock();
             if (stop_.load(std::memory_order_acquire)) {
@@ -248,16 +274,34 @@ private:
 
         gtsam::NonlinearFactorGraph odom_graph;
         gtsam::Values initial;
+        bool odom_updated = false;
         if (buildOdometryGraph(odom_graph, initial)) {
             updateIsam(odom_graph, initial);
             updateCorrection();
+            odom_updated = true;
         }
 
+        const size_t loops_before = loop_edge_count_;
         gtsam::NonlinearFactorGraph loop_graph;
         if (buildLoopEdges(loop_graph)) {
             updateIsam(loop_graph, {});
             updateCorrection();
         }
+        const bool loop_updated = loop_edge_count_ > loops_before;
+
+        // Occupancy must never block correction/loop work above. Policy:
+        //   odom  → cheap incremental append of new keyframes only
+        //   loop  → full rebuild (historical poses moved)
+        // Export (below) only serializes; it must not trigger a full rebuild
+        // just because ISAM nudged poses or RViz polls every second.
+        if (occupancy_) {
+            if (loop_updated) {
+                rebuildOccupancyMap();
+            } else if (odom_updated) {
+                appendOccupancyFrames();
+            }
+        }
+
         if (snapshot_requested_.exchange(false, std::memory_order_acq_rel)
             && !optimized_.empty()) {
             rebuildSnapshot();
@@ -265,6 +309,10 @@ private:
         if (map_requested_.exchange(false, std::memory_order_acq_rel)
             && !optimized_.empty()) {
             rebuildGlobalMap();
+        }
+        if (occupancy_requested_.exchange(false, std::memory_order_acq_rel)
+            && occupancy_) {
+            publishOccupancySnapshot();
         }
     }
 
@@ -541,6 +589,47 @@ private:
         ++stats_.revision;
     }
 
+    void appendOccupancyFrames() {
+        if (!occupancy_ || optimized_.empty()) {
+            return;
+        }
+        while (occupancy_inserted_id_ < optimized_.size()) {
+            const Isometry3d pose = fromGtsam(
+                optimized_.at<gtsam::Pose3>(occupancy_inserted_id_));
+            occupancy_->insertScan(
+                frames_[occupancy_inserted_id_].cloud_lidar, pose);
+            ++occupancy_inserted_id_;
+        }
+    }
+
+    void rebuildOccupancyMap() {
+        if (!occupancy_) {
+            return;
+        }
+        occupancy_->clear();
+        occupancy_inserted_id_ = 0;
+        appendOccupancyFrames();
+        spdlog::info(
+            "[pgo] occupancy grid rebuilt from {} keyframes (rev={})",
+            occupancy_inserted_id_,
+            occupancy_->revision());
+    }
+
+    void publishOccupancySnapshot() {
+        if (!occupancy_) {
+            return;
+        }
+        // Catch up new keyframes only. Full rebuild is reserved for loop
+        // closure in processPending — never re-raycast the whole trajectory
+        // on a visualization poll.
+        if (occupancy_inserted_id_ < optimized_.size()) {
+            appendOccupancyFrames();
+        }
+        auto msg = std::make_shared<OccupancyGridMsg>(occupancy_->toMsg());
+        std::lock_guard<std::mutex> lock(occupancy_mutex_);
+        occupancy_msg_ = std::move(msg);
+    }
+
     Config::Pgo config_;
 
     mutable std::mutex input_mutex_;
@@ -565,8 +654,15 @@ private:
     std::vector<Isometry3d> optimized_poses_snapshot_;
     std::vector<PoseGraphEdge> loop_edges_snapshot_;
     PointCloudConstPtr global_map_;
+    std::unique_ptr<OccupancyGrid> occupancy_;
+    size_t occupancy_inserted_id_ = 0;
+    /// Occupancy export is isolated from output_mutex_ so dense grid copies
+    /// cannot stall frontend T_map_odom() / IMU propagation publishers.
+    mutable std::mutex occupancy_mutex_;
+    std::shared_ptr<const OccupancyGridMsg> occupancy_msg_;
     std::atomic<bool> snapshot_requested_{false};
     std::atomic<bool> map_requested_{false};
+    std::atomic<bool> occupancy_requested_{false};
 
     std::atomic<bool> stop_{false};
     std::mutex wake_mutex_;
@@ -615,6 +711,15 @@ void PoseGraphBackend::requestGlobalMap() {
 
 PointCloudConstPtr PoseGraphBackend::latestGlobalMap() const {
     return impl_->latestGlobalMap();
+}
+
+void PoseGraphBackend::requestOccupancyGrid() {
+    impl_->requestOccupancyGrid();
+}
+
+std::shared_ptr<const OccupancyGridMsg>
+PoseGraphBackend::latestOccupancyGrid() const {
+    return impl_->latestOccupancyGrid();
 }
 
 }  // namespace sapphire
