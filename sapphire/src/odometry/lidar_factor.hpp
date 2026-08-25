@@ -4,6 +4,8 @@
 
 #include "common.hpp"
 
+namespace sapphire {
+
 class LidarFactor {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -166,3 +168,5 @@ class LidarFactor {
 
   ~LidarFactor() {}
 };
+
+}  // namespace sapphire

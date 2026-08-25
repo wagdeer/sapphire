@@ -111,7 +111,10 @@ void Synchronizer::stop_accepting() {
 }
 
 SlamPipeline::SlamPipeline(SapphireParameters parameters, OutputSink output)
-    : parameters_(validated(std::move(parameters))), output_(std::move(output)), voxel_map_(parameters_.odometry, parameters_.local_submap) {
+    : parameters_(validated(std::move(parameters))),
+      output_(std::move(output)),
+      parallel_executor_(parameters_.local_submap.thread_num),
+      voxel_map_(parameters_.odometry, parameters_.local_submap) {
   filename_ = current_time_filename();
   save_path_ = parameters_.general.save_path;
   save_map_ = parameters_.general.save_map;
@@ -277,9 +280,9 @@ int SlamPipeline::initialization(MeasGroup &measures, Eigen::MatrixXd &hess, Lid
   if (window_count_ < window_size_) {
     return 0;
   }
-  const int success = Initialization::instance().motion_init(init_buffer_, &hess, voxel_hessian, state_buffer_, voxel_map_, point_buffer_,
-                                                             window_size_, current_state_, imu_factor_buffer_, extrinsic_, parameters_.initializer,
-                                                             parameters_.odometry, parameters_.local_submap, imu_estimator_.scale_gravity);
+  const int success = Initialization::instance().motion_init(
+      init_buffer_, &hess, voxel_hessian, state_buffer_, voxel_map_, point_buffer_, window_size_, current_state_, imu_factor_buffer_, extrinsic_,
+      parameters_.initializer, parameters_.odometry, parameters_.local_submap, imu_estimator_.scale_gravity, parallel_executor_);
   if (success == 0) {
     return -1;
   }
@@ -317,6 +320,7 @@ void SlamPipeline::thd_odometry() {
   bool release_flag = false;
   int degrade_count = 0;
   LidarFactor voxel_hessian(window_size_);
+  LI_BA_Optimizer optimizer(parameters_.local_submap, parallel_executor_);
   constexpr int marginal_count = 1;
   Eigen::MatrixXd hessian;
   uint64_t observed_revision = input_revision_.load(std::memory_order_acquire);
@@ -415,7 +419,6 @@ void SlamPipeline::thd_odometry() {
     }
 
     if (window_count_ >= window_size_) {
-      LI_BA_Optimizer optimizer(parameters_.local_submap);
       optimizer.damping_iter(state_buffer_, voxel_hessian, imu_factor_buffer_, &hessian);
 
       Eigen::Matrix<double, 6, 1> marginal_variance = hessian.block<POSE_DOF, POSE_DOF>(0, STATE_DOF).diagonal();

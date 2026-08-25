@@ -40,8 +40,7 @@ geometry_msgs::msg::TransformStamped make_transform(const builtin_interfaces::ms
   return message;
 }
 
-sensor_msgs::msg::PointCloud2 point_cloud_message(const sapphire::vvec<double, 3> &points, const builtin_interfaces::msg::Time &stamp,
-                                                  const char *frame) {
+sensor_msgs::msg::PointCloud2 point_cloud_message(const sapphire::vvec<double, 3> &points, const builtin_interfaces::msg::Time &stamp, const char *frame) {
   pcl::PointCloud<pcl::PointXYZINormal> cloud;
   cloud.reserve(points.size());
   for (const Eigen::Vector3d &point : points) {
@@ -98,11 +97,11 @@ SapphireNode::SapphireNode() : Node("cmn_sapphire") {
   tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
   sapphire::OutputSink output;
-  output.odom_state = [this](const StateGroup &state) { enqueue_output([this, state] { publish_odom(state); }); };
+  output.odom_state = [this](const sapphire::StateGroup &state) { enqueue_output([this, state] { publish_odom(state); }); };
   output.local_scan = [this](std::shared_ptr<const sapphire::vvec<double, 3>> points) {
     enqueue_output([this, points = std::move(points)]() mutable { publish_scan(std::move(points)); });
   };
-  output.trajectory = [this](std::shared_ptr<const std::vector<TrajectoryPoint>> trajectory) {
+  output.trajectory = [this](std::shared_ptr<const std::vector<sapphire::TrajectoryPoint>> trajectory) {
     enqueue_output([this, trajectory = std::move(trajectory)]() mutable { publish_trajectory(std::move(trajectory)); });
   };
   output.local_map = [this](std::shared_ptr<const sapphire::vvec<double, 3>> points) {
@@ -112,7 +111,7 @@ SapphireNode::SapphireNode() : Node("cmn_sapphire") {
   output.map_pose = [this](const Eigen::Isometry3d &transform, double timestamp) {
     enqueue_output([this, transform, timestamp] { publish_map_pose(transform, timestamp); });
   };
-  output.navigation_grid = [this](std::shared_ptr<const NavigationGrid> grid) {
+  output.navigation_grid = [this](std::shared_ptr<const sapphire::NavigationGrid> grid) {
     enqueue_output([this, grid = std::move(grid)]() mutable { publish_navigation_grid(std::move(grid)); });
   };
   pipeline_ = std::make_unique<sapphire::SlamPipeline>(parameters, std::move(output));
@@ -147,7 +146,7 @@ SapphireNode::~SapphireNode() {
 }
 
 void SapphireNode::imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr &message) {
-  ImuMeas imu;
+  sapphire::ImuMeas imu;
   imu.timestamp = static_cast<double>(message->header.stamp.sec) + static_cast<double>(message->header.stamp.nanosec) * 1e-9;
   imu.gyro << message->angular_velocity.x, message->angular_velocity.y, message->angular_velocity.z;
   imu.accel << message->linear_acceleration.x, message->linear_acceleration.y, message->linear_acceleration.z;
@@ -158,7 +157,7 @@ void SapphireNode::imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr &mes
 
 void SapphireNode::lidar_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &message) {
   double timestamp = 0.0;
-  std::vector<LidarPoint> points;
+  std::vector<sapphire::LidarPoint> points;
   if (!lidar_processor_->process(message, timestamp, points)) {
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000, "Unsupported or malformed PointCloud2 input");
     return;
@@ -229,7 +228,7 @@ void SapphireNode::stop_output() {
   }
 }
 
-void SapphireNode::publish_odom(const StateGroup &state) {
+void SapphireNode::publish_odom(const sapphire::StateGroup &state) {
   const auto stamp = stamp_from_seconds(state.t);
   const Eigen::Quaterniond q(state.R);
   nav_msgs::msg::Odometry odom;
@@ -262,13 +261,13 @@ void SapphireNode::publish_scan(std::shared_ptr<const sapphire::vvec<double, 3>>
   scan_pub_->publish(point_cloud_message(*points, now(), odom_frame_.c_str()));
 }
 
-void SapphireNode::publish_trajectory(std::shared_ptr<const std::vector<TrajectoryPoint>> trajectory) {
+void SapphireNode::publish_trajectory(std::shared_ptr<const std::vector<sapphire::TrajectoryPoint>> trajectory) {
   if (!trajectory) {
     return;
   }
   pcl::PointCloud<pcl::PointXYZINormal> cloud;
   cloud.reserve(trajectory->size());
-  for (const TrajectoryPoint &point : *trajectory) {
+  for (const sapphire::TrajectoryPoint &point : *trajectory) {
     pcl::PointXYZINormal output;
     output.x = point.x;
     output.y = point.y;
@@ -311,7 +310,7 @@ void SapphireNode::publish_map_pose(const Eigen::Isometry3d &transform, double t
   map_odom_pub_->publish(odom);
 }
 
-void SapphireNode::publish_navigation_grid(std::shared_ptr<const NavigationGrid> grid) {
+void SapphireNode::publish_navigation_grid(std::shared_ptr<const sapphire::NavigationGrid> grid) {
   if (!grid || grid->revision == last_map_revision_) {
     return;
   }

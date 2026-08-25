@@ -52,6 +52,7 @@ include(thirdparty/gtsam-4.3a2/minimal.cmake)
 add_library(sapphire_core STATIC
   src/pipeline.cpp
   src/parameters.cpp
+  src/common/parallel_executor.cpp
   src/mapping/pose_graph.cpp
 )
 add_library(sapphire::core ALIAS sapphire_core)

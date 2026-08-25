@@ -30,6 +30,8 @@
 #include "memory.hpp"
 #include "occ_layer.hpp"
 
+namespace sapphire {
+
 namespace {
 
 gtsam::Pose3 toGtsam(const Eigen::Isometry3d &pose) { return gtsam::Pose3(pose.matrix()); }
@@ -620,3 +622,5 @@ void PoseGraphBackend::requestGlobalMap() { impl_->requestGlobalMap(); }
 std::shared_ptr<const vvec<float, 3>> PoseGraphBackend::latestGlobalMap() const { return impl_->latestGlobalMap(); }
 
 std::shared_ptr<const NavigationGrid> PoseGraphBackend::latestOccupancyGrid() const { return impl_->latestOccupancyGrid(); }
+
+}  // namespace sapphire

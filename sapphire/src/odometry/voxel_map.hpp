@@ -18,6 +18,8 @@
 #include "lidar_factor.hpp"
 #include "parameters.h"
 
+namespace sapphire {
+
 using std::lock_guard;
 using std::make_unique;
 using std::mutex;
@@ -865,3 +867,5 @@ class VoxelMap {
   size_t size() const { return local_voxel_map_.size(); }
   size_t active_size() const { return active_voxels_.size(); }
 };
+
+}  // namespace sapphire

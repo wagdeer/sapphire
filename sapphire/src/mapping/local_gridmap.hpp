@@ -10,6 +10,8 @@
 #include "common.hpp"
 #include "parameters.h"
 
+namespace sapphire {
+
 using GridPoint = Eigen::Vector2f;
 using GridPoints = std::vector<GridPoint, Eigen::aligned_allocator<GridPoint>>;
 
@@ -155,3 +157,5 @@ class LocalGridMaker {
   float maxObstacleHeight_;
   float maxGroundHeight_;
 };
+
+}  // namespace sapphire

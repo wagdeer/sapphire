@@ -11,6 +11,8 @@
 #include "../thirdparty/nanoflann.hpp"
 #include "state_group.hpp"
 
+namespace sapphire {
+
 struct LidarPoint {
   float x = 0.0f, y = 0.0f, z = 0.0f, intensity = 0.0f;
   float time_offset = 0.0f;
@@ -194,16 +196,21 @@ class VOXEL_LOC {
   VOXEL_LOC(int64_t vx = 0, int64_t vy = 0, int64_t vz = 0) : x(vx), y(vy), z(vz) {}
   bool operator==(const VOXEL_LOC &other) const { return (x == other.x && y == other.y && z == other.z); }
 };
+
+}  // namespace sapphire
+
 namespace std {
 template <>
-struct hash<VOXEL_LOC> {
-  size_t operator()(const VOXEL_LOC &s) const {
+struct hash<sapphire::VOXEL_LOC> {
+  size_t operator()(const sapphire::VOXEL_LOC &s) const {
     using std::hash;
     using std::size_t;
     return (((hash<int64_t>()(s.z) * 116101) % 10000000000 + hash<int64_t>()(s.y)) * 116101) % 10000000000 + hash<int64_t>()(s.x);
   }
 };
 }  // namespace std
+
+namespace sapphire {
 
 inline void down_sampling_voxel(std::vector<LidarPoint> &pl_feat, double inv_voxel_size) {
   using VoxelSum = Eigen::Matrix<double, 6, 1>;
@@ -389,3 +396,5 @@ inline void down_sampling_close(std::vector<LidarPoint> &pl_feat, double inv_vox
     pl_feat.push_back(iter->second.closest);
   }
 }
+
+}  // namespace sapphire

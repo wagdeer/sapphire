@@ -1,395 +1,334 @@
 #pragma once
 
 #include <Eigen/Eigenvalues>
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <deque>
-#include <functional>
-#include <thread>
 #include <vector>
 
 #include "common.hpp"
 #include "imu_factor.hpp"
-#include "io_utils.hpp"
 #include "lidar_factor.hpp"
+#include "parallel_executor.hpp"
 #include "parameters.h"
 
-class LI_BA_Optimizer {
+namespace sapphire {
+
+class LidarLmWorkspace final {
  public:
-  int win_size, jac_leng, imu_leng;
-  double imu_coef;
-  int thread_num;
+  explicit LidarLmWorkspace(ParallelExecutor &executor)
+      : executor_(executor), hessians_(executor.thread_count()), jacobians_(executor.thread_count()), residuals_(executor.thread_count(), 0.0) {}
 
-  explicit LI_BA_Optimizer(const LocalSubmapParameters &parameters) : imu_coef(parameters.imu_coef), thread_num(parameters.thread_num) {}
+  double linearize(int window_size, const std::vector<StateGroup> &states, LidarFactor &factor, Eigen::MatrixXd &hessian, Eigen::VectorXd &jacobian,
+                   const ParallelExecutor::ForegroundTask &foreground_task) {
+    prepare(window_size * POSE_DOF);
+    const size_t active_workers = executor_.parallel_for(
+        factor.plvec_voxels.size(), kMinimumFactorsPerWorker,
+        [&](size_t worker_index, size_t begin, size_t end) {
+          factor.acc_evaluate2(states, static_cast<int>(begin), static_cast<int>(end), hessians_[worker_index], jacobians_[worker_index],
+                               residuals_[worker_index]);
+        },
+        foreground_task);
 
-  void hess_plus(Eigen::MatrixXd &Hess, Eigen::VectorXd &JacT, Eigen::MatrixXd &hs, Eigen::VectorXd &js) {
-    for (int i = 0; i < win_size; i++) {
-      JacT.block<POSE_DOF, 1>(i * STATE_DOF, 0) += js.block<POSE_DOF, 1>(i * POSE_DOF, 0);
-      for (int j = 0; j < win_size; j++) {
-        Hess.block<POSE_DOF, POSE_DOF>(i * STATE_DOF, j * STATE_DOF) += hs.block<POSE_DOF, POSE_DOF>(i * POSE_DOF, j * POSE_DOF);
-      }
+    double residual = 0.0;
+    for (size_t worker_index = 0; worker_index < active_workers; ++worker_index) {
+      add_to_system(window_size, hessians_[worker_index], jacobians_[worker_index], hessian, jacobian);
+      residual += residuals_[worker_index];
     }
-  }
-
-  double divide_thread(std::vector<StateGroup> &x_stats, LidarFactor &voxhess, std::deque<ImuFactor *> &imus_factor, Eigen::MatrixXd &Hess,
-                       Eigen::VectorXd &JacT) {
-    int thd_num = thread_num;
-    double residual = 0;
-    Hess.setZero();
-    JacT.setZero();
-    vmat<double, -1> hessians(thd_num);
-    vvec<double, -1> jacobins(thd_num);
-    std::vector<double> resis(thd_num, 0);
-
-    for (int i = 0; i < thd_num; i++) {
-      hessians[i].resize(jac_leng, jac_leng);
-      jacobins[i].resize(jac_leng);
-    }
-
-    int tthd_num = thd_num;
-    int g_size = voxhess.plvec_voxels.size();
-    if (g_size < tthd_num) {
-      tthd_num = 1;
-    }
-    double part = 1.0 * g_size / tthd_num;
-
-    std::vector<std::thread *> mthreads(tthd_num);
-    for (int i = 1; i < tthd_num; i++) {
-      mthreads[i] = new std::thread(&LidarFactor::acc_evaluate2, &voxhess, x_stats, part * i, part * (i + 1), std::ref(hessians[i]),
-                                    std::ref(jacobins[i]), std::ref(resis[i]));
-    }
-
-    Eigen::MatrixXd jtj(2 * STATE_DOF, 2 * STATE_DOF);
-    Eigen::VectorXd gg(2 * STATE_DOF);
-
-    for (int i = 0; i < win_size - 1; i++) {
-      jtj.setZero();
-      gg.setZero();
-      residual += imus_factor[i]->give_evaluate(x_stats[i], x_stats[i + 1], jtj, gg, true);
-      Hess.block<STATE_DOF * 2, STATE_DOF * 2>(i * STATE_DOF, i * STATE_DOF) += jtj;
-      JacT.block<STATE_DOF * 2, 1>(i * STATE_DOF, 0) += gg;
-    }
-
-    Eigen::Matrix<double, STATE_DOF, STATE_DOF> joc;
-    Eigen::Matrix<double, STATE_DOF, 1> rr;
-    joc.setIdentity();
-    rr.setZero();
-
-    Hess *= imu_coef;
-    JacT *= imu_coef;
-    residual *= (imu_coef * 0.5);
-
-    for (int i = 0; i < tthd_num; i++) {
-      if (i != 0) {
-        mthreads[i]->join();
-      } else {
-        voxhess.acc_evaluate2(x_stats, 0, part, hessians[0], jacobins[0], resis[0]);
-      }
-      hess_plus(Hess, JacT, hessians[i], jacobins[i]);
-      residual += resis[i];
-      delete mthreads[i];
-    }
-
     return residual;
   }
 
-  double only_residual(std::vector<StateGroup> &x_stats, LidarFactor &voxhess, std::deque<ImuFactor *> &imus_factor) {
-    double residual1 = 0, residual2 = 0;
-    Eigen::MatrixXd jtj(2 * STATE_DOF, 2 * STATE_DOF);
-    Eigen::VectorXd gg(2 * STATE_DOF);
+  double evaluate_residual(const std::vector<StateGroup> &states, LidarFactor &factor, const ParallelExecutor::ForegroundTask &foreground_task) {
+    const size_t active_workers = executor_.parallel_for(
+        factor.plvec_voxels.size(), kMinimumFactorsPerWorker,
+        [&](size_t worker_index, size_t begin, size_t end) {
+          factor.evaluate_only_residual(states, static_cast<int>(begin), static_cast<int>(end), residuals_[worker_index]);
+        },
+        foreground_task);
 
-    int thd_num = thread_num;
-    std::vector<double> residuals(thd_num, 0);
-    int g_size = voxhess.plvec_voxels.size();
-    if (g_size < thd_num) {
-      thd_num = 1;
+    double residual = 0.0;
+    for (size_t worker_index = 0; worker_index < active_workers; ++worker_index) {
+      residual += residuals_[worker_index];
     }
-    std::vector<std::thread *> mthreads(thd_num, nullptr);
-    double part = 1.0 * g_size / thd_num;
-    for (int i = 1; i < thd_num; i++) {
-      mthreads[i] = new std::thread(&LidarFactor::evaluate_only_residual, &voxhess, x_stats, part * i, part * (i + 1), std::ref(residuals[i]));
-    }
-
-    for (int i = 0; i < win_size - 1; i++) {
-      residual1 += imus_factor[i]->give_evaluate(x_stats[i], x_stats[i + 1], jtj, gg, false);
-    }
-    residual1 *= (imu_coef * 0.5);
-
-    for (int i = 0; i < thd_num; i++) {
-      if (i != 0) {
-        mthreads[i]->join();
-        delete mthreads[i];
-      } else {
-        voxhess.evaluate_only_residual(x_stats, part * i, part * (i + 1), residuals[i]);
-      }
-      residual2 += residuals[i];
-    }
-
-    return (residual1 + residual2);
+    return residual;
   }
 
-  void damping_iter(std::vector<StateGroup> &x_stats, LidarFactor &voxhess, std::deque<ImuFactor *> &imus_factor, Eigen::MatrixXd *hess) {
-    win_size = voxhess.win_size;
-    jac_leng = win_size * 6;
-    imu_leng = win_size * STATE_DOF;
-    double u = 0.01, v = 2;
-    Eigen::MatrixXd D(imu_leng, imu_leng), Hess(imu_leng, imu_leng);
-    Eigen::VectorXd JacT(imu_leng), dxi(imu_leng);
-    hess->resize(imu_leng, imu_leng);
+ private:
+  static constexpr size_t kMinimumFactorsPerWorker = 8;
 
-    D.setIdentity();
-    double residual1, residual2, q;
-    bool is_calc_hess = true;
-    std::vector<StateGroup> x_stats_temp = x_stats;
+  void prepare(int jacobian_size) {
+    if (hessians_.front().rows() == jacobian_size) {
+      return;
+    }
+    for (size_t worker_index = 0; worker_index < hessians_.size(); ++worker_index) {
+      hessians_[worker_index].resize(jacobian_size, jacobian_size);
+      jacobians_[worker_index].resize(jacobian_size);
+    }
+  }
 
-    double hesstime = 0;
-    double resitime = 0;
+  static void add_to_system(int window_size, const Eigen::MatrixXd &source_hessian, const Eigen::VectorXd &source_jacobian, Eigen::MatrixXd &hessian,
+                            Eigen::VectorXd &jacobian) {
+    for (int row = 0; row < window_size; ++row) {
+      jacobian.block<POSE_DOF, 1>(row * STATE_DOF, 0) += source_jacobian.block<POSE_DOF, 1>(row * POSE_DOF, 0);
+      for (int column = 0; column < window_size; ++column) {
+        hessian.block<POSE_DOF, POSE_DOF>(row * STATE_DOF, column * STATE_DOF) +=
+            source_hessian.block<POSE_DOF, POSE_DOF>(row * POSE_DOF, column * POSE_DOF);
+      }
+    }
+  }
 
-    for (int i = 0; i < 3; i++) {
-      if (is_calc_hess) {
-        double tm = sapphire::monotonic_time_seconds();
-        residual1 = divide_thread(x_stats, voxhess, imus_factor, Hess, JacT);
-        hesstime += sapphire::monotonic_time_seconds() - tm;
-        *hess = Hess;
+  ParallelExecutor &executor_;
+  std::vector<Eigen::MatrixXd> hessians_;
+  std::vector<Eigen::VectorXd> jacobians_;
+  std::vector<double> residuals_;
+};
+
+class LI_BA_Optimizer {
+ public:
+  LI_BA_Optimizer(const LocalSubmapParameters &parameters, ParallelExecutor &executor)
+      : imu_coefficient_(parameters.imu_coef), lidar_workspace_(executor) {}
+
+  void damping_iter(std::vector<StateGroup> &states, LidarFactor &lidar_factor, std::deque<ImuFactor *> &imu_factors,
+                    Eigen::MatrixXd *output_hessian) {
+    const int window_size = lidar_factor.win_size;
+    const int system_size = window_size * STATE_DOF;
+    damping_.setIdentity(system_size, system_size);
+    hessian_.resize(system_size, system_size);
+    jacobian_.resize(system_size);
+    increment_.resize(system_size);
+    imu_hessian_.resize(2 * STATE_DOF, 2 * STATE_DOF);
+    imu_jacobian_.resize(2 * STATE_DOF);
+    output_hessian->resize(system_size, system_size);
+    trial_states_ = states;
+
+    double damping = 0.01;
+    double damping_scale = 2.0;
+    double current_residual = 0.0;
+    bool needs_linearization = true;
+
+    for (int iteration = 0; iteration < 3; ++iteration) {
+      if (needs_linearization) {
+        current_residual = linearize(window_size, states, lidar_factor, imu_factors);
+        *output_hessian = hessian_;
       }
-      Hess.topRows(STATE_DOF).setZero();
-      Hess.leftCols(STATE_DOF).setZero();
-      Hess.block<STATE_DOF, STATE_DOF>(0, 0).setIdentity();
-      JacT.head(STATE_DOF).setZero();
-      D.diagonal() = Hess.diagonal();
-      dxi = (Hess + u * D).ldlt().solve(-JacT);
-      for (int j = 0; j < win_size; j++) {
-        x_stats_temp[j].R = x_stats[j].R * lie::SO3d::exp(dxi.block<3, 1>(STATE_DOF * j, 0)).R();
-        x_stats_temp[j].p = x_stats[j].p + dxi.block<3, 1>(STATE_DOF * j + 3, 0);
-        x_stats_temp[j].v = x_stats[j].v + dxi.block<3, 1>(STATE_DOF * j + 6, 0);
-        x_stats_temp[j].bg = x_stats[j].bg + dxi.block<3, 1>(STATE_DOF * j + 9, 0);
-        x_stats_temp[j].ba = x_stats[j].ba + dxi.block<3, 1>(STATE_DOF * j + 12, 0);
+
+      hessian_.topRows(STATE_DOF).setZero();
+      hessian_.leftCols(STATE_DOF).setZero();
+      hessian_.block<STATE_DOF, STATE_DOF>(0, 0).setIdentity();
+      jacobian_.head(STATE_DOF).setZero();
+      damping_.diagonal() = hessian_.diagonal();
+      increment_ = (hessian_ + damping * damping_).ldlt().solve(-jacobian_);
+
+      for (int index = 0; index < window_size; ++index) {
+        trial_states_[index].R = states[index].R * lie::SO3d::exp(increment_.block<3, 1>(STATE_DOF * index, 0)).R();
+        trial_states_[index].p = states[index].p + increment_.block<3, 1>(STATE_DOF * index + 3, 0);
+        trial_states_[index].v = states[index].v + increment_.block<3, 1>(STATE_DOF * index + 6, 0);
+        trial_states_[index].bg = states[index].bg + increment_.block<3, 1>(STATE_DOF * index + 9, 0);
+        trial_states_[index].ba = states[index].ba + increment_.block<3, 1>(STATE_DOF * index + 12, 0);
       }
-      for (int j = 0; j < win_size - 1; j++) {
-        imus_factor[j]->update_state(dxi.block<STATE_DOF, 1>(STATE_DOF * j, 0));
+      for (int index = 0; index < window_size - 1; ++index) {
+        imu_factors[index]->update_state(increment_.block<STATE_DOF, 1>(STATE_DOF * index, 0));
       }
-      double q1 = 0.5 * dxi.dot(u * D * dxi - JacT);
-      double tl1 = sapphire::monotonic_time_seconds();
-      residual2 = only_residual(x_stats_temp, voxhess, imus_factor);
-      double tl2 = sapphire::monotonic_time_seconds();
-      resitime += tl2 - tl1;
-      q = (residual1 - residual2);
-      if (q > 0) {
-        x_stats = x_stats_temp;
-        double one_three = 1.0 / 3;
-        q = q / q1;
-        v = 2;
-        q = 1 - std::pow(2 * q - 1, 3);
-        u *= (q < one_three ? one_three : q);
-        is_calc_hess = true;
+
+      const double predicted_reduction = 0.5 * increment_.dot(damping * damping_ * increment_ - jacobian_);
+      const double trial_residual = evaluate_residual(window_size, trial_states_, lidar_factor, imu_factors);
+      const double actual_reduction = current_residual - trial_residual;
+      if (actual_reduction > 0.0) {
+        states = trial_states_;
+        const double gain = actual_reduction / predicted_reduction;
+        damping *= std::max(1.0 / 3.0, 1.0 - std::pow(2.0 * gain - 1.0, 3));
+        damping_scale = 2.0;
+        needs_linearization = true;
       } else {
-        u = u * v;
-        v = 2 * v;
-        is_calc_hess = false;
-        for (int j = 0; j < win_size - 1; j++) {
-          imus_factor[j]->dbg = imus_factor[j]->dbg_buf;
-          imus_factor[j]->dba = imus_factor[j]->dba_buf;
-        }
+        damping *= damping_scale;
+        damping_scale *= 2.0;
+        needs_linearization = false;
+        restore_imu_states(imu_factors, window_size);
       }
-      if (std::fabs((residual1 - residual2) / residual1) < 1e-6) {
+      if (current_residual != 0.0 && std::fabs(actual_reduction / current_residual) < 1e-6) {
         break;
       }
     }
   }
+
+ private:
+  double linearize(int window_size, const std::vector<StateGroup> &states, LidarFactor &lidar_factor, const std::deque<ImuFactor *> &imu_factors) {
+    hessian_.setZero();
+    jacobian_.setZero();
+    double imu_residual = 0.0;
+    const double lidar_residual = lidar_workspace_.linearize(window_size, states, lidar_factor, hessian_, jacobian_, [&] {
+      for (int index = 0; index < window_size - 1; ++index) {
+        imu_hessian_.setZero();
+        imu_jacobian_.setZero();
+        imu_residual += imu_factors[index]->give_evaluate(states[index], states[index + 1], imu_hessian_, imu_jacobian_, true);
+        hessian_.block<2 * STATE_DOF, 2 * STATE_DOF>(index * STATE_DOF, index * STATE_DOF) += imu_hessian_;
+        jacobian_.block<2 * STATE_DOF, 1>(index * STATE_DOF, 0) += imu_jacobian_;
+      }
+      hessian_ *= imu_coefficient_;
+      jacobian_ *= imu_coefficient_;
+      imu_residual *= imu_coefficient_ * 0.5;
+    });
+    return imu_residual + lidar_residual;
+  }
+
+  double evaluate_residual(int window_size, const std::vector<StateGroup> &states, LidarFactor &lidar_factor,
+                           const std::deque<ImuFactor *> &imu_factors) {
+    double imu_residual = 0.0;
+    const double lidar_residual = lidar_workspace_.evaluate_residual(states, lidar_factor, [&] {
+      for (int index = 0; index < window_size - 1; ++index) {
+        imu_residual += imu_factors[index]->give_evaluate(states[index], states[index + 1], imu_hessian_, imu_jacobian_, false);
+      }
+      imu_residual *= imu_coefficient_ * 0.5;
+    });
+    return imu_residual + lidar_residual;
+  }
+
+  static void restore_imu_states(const std::deque<ImuFactor *> &imu_factors, int window_size) {
+    for (int index = 0; index < window_size - 1; ++index) {
+      imu_factors[index]->dbg = imu_factors[index]->dbg_buf;
+      imu_factors[index]->dba = imu_factors[index]->dba_buf;
+    }
+  }
+
+  const double imu_coefficient_;
+  LidarLmWorkspace lidar_workspace_;
+  Eigen::MatrixXd damping_;
+  Eigen::MatrixXd hessian_;
+  Eigen::VectorXd jacobian_;
+  Eigen::VectorXd increment_;
+  Eigen::MatrixXd imu_hessian_;
+  Eigen::VectorXd imu_jacobian_;
+  std::vector<StateGroup> trial_states_;
 };
 
 class LI_BA_OptimizerGravity {
  public:
-  int win_size, jac_leng, imu_leng;
-  double imu_coef;
-  int thread_num;
+  LI_BA_OptimizerGravity(const LocalSubmapParameters &parameters, ParallelExecutor &executor)
+      : imu_coefficient_(parameters.imu_coef), lidar_workspace_(executor) {}
 
-  explicit LI_BA_OptimizerGravity(const LocalSubmapParameters &parameters) : imu_coef(parameters.imu_coef), thread_num(parameters.thread_num) {}
+  void damping_iter(std::vector<StateGroup> &states, LidarFactor &lidar_factor, std::deque<ImuFactor *> &imu_factors, std::vector<double> &residuals,
+                    Eigen::MatrixXd *output_hessian, int max_iterations = 2) {
+    const int window_size = lidar_factor.win_size;
+    const int system_size = window_size * STATE_DOF + 3;
+    damping_.setIdentity(system_size, system_size);
+    hessian_.resize(system_size, system_size);
+    jacobian_.resize(system_size);
+    increment_.resize(system_size);
+    imu_hessian_.resize(2 * STATE_DOF + 3, 2 * STATE_DOF + 3);
+    imu_jacobian_.resize(2 * STATE_DOF + 3);
+    trial_states_ = states;
 
-  void hess_plus(Eigen::MatrixXd &Hess, Eigen::VectorXd &JacT, Eigen::MatrixXd &hs, Eigen::VectorXd &js) {
-    for (int i = 0; i < win_size; i++) {
-      JacT.block<POSE_DOF, 1>(i * STATE_DOF, 0) += js.block<POSE_DOF, 1>(i * POSE_DOF, 0);
-      for (int j = 0; j < win_size; j++) {
-        Hess.block<POSE_DOF, POSE_DOF>(i * STATE_DOF, j * STATE_DOF) += hs.block<POSE_DOF, POSE_DOF>(i * POSE_DOF, j * POSE_DOF);
+    double damping = 0.01;
+    double damping_scale = 2.0;
+    double current_residual = 0.0;
+    double trial_residual = 0.0;
+    bool needs_linearization = true;
+
+    for (int iteration = 0; iteration < max_iterations; ++iteration) {
+      if (needs_linearization) {
+        current_residual = linearize(window_size, states, lidar_factor, imu_factors);
+        *output_hessian = hessian_;
       }
-    }
-  }
+      if (iteration == 0) {
+        residuals.push_back(current_residual);
+      }
 
-  double divide_thread(std::vector<StateGroup> &x_stats, LidarFactor &voxhess, std::deque<ImuFactor *> &imus_factor, Eigen::MatrixXd &Hess,
-                       Eigen::VectorXd &JacT) {
-    int thd_num = thread_num;
-    double residual = 0;
-    Hess.setZero();
-    JacT.setZero();
-    vmat<double, -1> hessians(thd_num);
-    vvec<double, -1> jacobins(thd_num);
-    std::vector<double> resis(thd_num, 0);
+      hessian_.topRows(POSE_DOF).setZero();
+      hessian_.leftCols(POSE_DOF).setZero();
+      hessian_.block<POSE_DOF, POSE_DOF>(0, 0).setIdentity();
+      jacobian_.head(POSE_DOF).setZero();
+      damping_.diagonal() = hessian_.diagonal();
+      increment_ = (hessian_ + damping * damping_).ldlt().solve(-jacobian_);
 
-    for (int i = 0; i < thd_num; i++) {
-      hessians[i].resize(jac_leng, jac_leng);
-      jacobins[i].resize(jac_leng);
-    }
+      trial_states_[0].g = states[0].g + increment_.tail(3);
+      for (int index = 0; index < window_size; ++index) {
+        trial_states_[index].R = states[index].R * lie::SO3d::exp(increment_.block<3, 1>(STATE_DOF * index, 0)).R();
+        trial_states_[index].p = states[index].p + increment_.block<3, 1>(STATE_DOF * index + 3, 0);
+        trial_states_[index].v = states[index].v + increment_.block<3, 1>(STATE_DOF * index + 6, 0);
+        trial_states_[index].bg = states[index].bg + increment_.block<3, 1>(STATE_DOF * index + 9, 0);
+        trial_states_[index].ba = states[index].ba + increment_.block<3, 1>(STATE_DOF * index + 12, 0);
+        trial_states_[index].g = trial_states_[0].g;
+      }
+      for (int index = 0; index < window_size - 1; ++index) {
+        imu_factors[index]->update_state(increment_.block<STATE_DOF, 1>(STATE_DOF * index, 0));
+      }
 
-    int tthd_num = thd_num;
-    int g_size = voxhess.plvec_voxels.size();
-    if (g_size < tthd_num) {
-      tthd_num = 1;
-    }
-    double part = 1.0 * g_size / tthd_num;
-
-    std::vector<std::thread *> mthreads(tthd_num);
-    for (int i = 1; i < tthd_num; i++) {
-      mthreads[i] = new std::thread(&LidarFactor::acc_evaluate2, &voxhess, x_stats, part * i, part * (i + 1), std::ref(hessians[i]),
-                                    std::ref(jacobins[i]), std::ref(resis[i]));
-    }
-
-    Eigen::MatrixXd jtj(2 * STATE_DOF + 3, 2 * STATE_DOF + 3);
-    Eigen::VectorXd gg(2 * STATE_DOF + 3);
-
-    for (int i = 0; i < win_size - 1; i++) {
-      jtj.setZero();
-      gg.setZero();
-      residual += imus_factor[i]->give_evaluate_g(x_stats[i], x_stats[i + 1], jtj, gg, true);
-      Hess.block<STATE_DOF * 2, STATE_DOF * 2>(i * STATE_DOF, i * STATE_DOF) += jtj.block<2 * STATE_DOF, 2 * STATE_DOF>(0, 0);
-      Hess.block<STATE_DOF * 2, 3>(i * STATE_DOF, imu_leng - 3) += jtj.block<2 * STATE_DOF, 3>(0, 2 * STATE_DOF);
-      Hess.block<3, STATE_DOF * 2>(imu_leng - 3, i * STATE_DOF) += jtj.block<3, 2 * STATE_DOF>(2 * STATE_DOF, 0);
-      Hess.block<3, 3>(imu_leng - 3, imu_leng - 3) += jtj.block<3, 3>(2 * STATE_DOF, 2 * STATE_DOF);
-
-      JacT.block<STATE_DOF * 2, 1>(i * STATE_DOF, 0) += gg.head(2 * STATE_DOF);
-      JacT.tail(3) += gg.tail(3);
-    }
-
-    Eigen::Matrix<double, STATE_DOF, STATE_DOF> joc;
-    Eigen::Matrix<double, STATE_DOF, 1> rr;
-    joc.setIdentity();
-    rr.setZero();
-
-    Hess *= imu_coef;
-    JacT *= imu_coef;
-    residual *= (imu_coef * 0.5);
-
-    for (int i = 0; i < tthd_num; i++) {
-      if (i != 0) {
-        mthreads[i]->join();
+      const double predicted_reduction = 0.5 * increment_.dot(damping * damping_ * increment_ - jacobian_);
+      trial_residual = evaluate_residual(window_size, trial_states_, lidar_factor, imu_factors);
+      const double actual_reduction = current_residual - trial_residual;
+      if (actual_reduction > 0.0) {
+        states = trial_states_;
+        const double gain = actual_reduction / predicted_reduction;
+        damping *= std::max(1.0 / 3.0, 1.0 - std::pow(2.0 * gain - 1.0, 3));
+        damping_scale = 2.0;
+        needs_linearization = true;
       } else {
-        voxhess.acc_evaluate2(x_stats, 0, part, hessians[0], jacobins[0], resis[0]);
+        damping *= damping_scale;
+        damping_scale *= 2.0;
+        needs_linearization = false;
+        restore_imu_states(imu_factors, window_size);
       }
-      hess_plus(Hess, JacT, hessians[i], jacobins[i]);
-      residual += resis[i];
-      delete mthreads[i];
-    }
-
-    return residual;
-  }
-
-  double only_residual(std::vector<StateGroup> &x_stats, LidarFactor &voxhess, std::deque<ImuFactor *> &imus_factor) {
-    double residual1 = 0, residual2 = 0;
-    Eigen::MatrixXd jtj(2 * STATE_DOF, 2 * STATE_DOF);
-    Eigen::VectorXd gg(2 * STATE_DOF);
-
-    int thd_num = thread_num;
-    std::vector<double> residuals(thd_num, 0);
-    int g_size = voxhess.plvec_voxels.size();
-    if (g_size < thd_num) {
-      thd_num = 1;
-    }
-    std::vector<std::thread *> mthreads(thd_num, nullptr);
-    double part = 1.0 * g_size / thd_num;
-    for (int i = 1; i < thd_num; i++) {
-      mthreads[i] = new std::thread(&LidarFactor::evaluate_only_residual, &voxhess, x_stats, part * i, part * (i + 1), std::ref(residuals[i]));
-    }
-
-    for (int i = 0; i < win_size - 1; i++) {
-      residual1 += imus_factor[i]->give_evaluate_g(x_stats[i], x_stats[i + 1], jtj, gg, false);
-    }
-    residual1 *= (imu_coef * 0.5);
-
-    for (int i = 0; i < thd_num; i++) {
-      if (i != 0) {
-        mthreads[i]->join();
-        delete mthreads[i];
-      } else {
-        voxhess.evaluate_only_residual(x_stats, part * i, part * (i + 1), residuals[i]);
-      }
-      residual2 += residuals[i];
-    }
-
-    return (residual1 + residual2);
-  }
-
-  void damping_iter(std::vector<StateGroup> &x_stats, LidarFactor &voxhess, std::deque<ImuFactor *> &imus_factor, std::vector<double> &resis,
-                    Eigen::MatrixXd *hess, int max_iter = 2) {
-    win_size = voxhess.win_size;
-    jac_leng = win_size * 6;
-    imu_leng = win_size * STATE_DOF + 3;
-    double u = 0.01, v = 2;
-    Eigen::MatrixXd D(imu_leng, imu_leng), Hess(imu_leng, imu_leng);
-    Eigen::VectorXd JacT(imu_leng), dxi(imu_leng);
-
-    D.setIdentity();
-    double residual1, residual2, q;
-    bool is_calc_hess = true;
-    std::vector<StateGroup> x_stats_temp = x_stats;
-
-    for (int i = 0; i < max_iter; i++) {
-      if (is_calc_hess) {
-        residual1 = divide_thread(x_stats, voxhess, imus_factor, Hess, JacT);
-        *hess = Hess;
-      }
-
-      if (i == 0) {
-        resis.push_back(residual1);
-      }
-
-      Hess.topRows(6).setZero();
-      Hess.leftCols(6).setZero();
-      Hess.block<6, 6>(0, 0).setIdentity();
-      JacT.head(6).setZero();
-
-      D.diagonal() = Hess.diagonal();
-      dxi = (Hess + u * D).ldlt().solve(-JacT);
-
-      x_stats_temp[0].g += dxi.tail(3);
-      for (int j = 0; j < win_size; j++) {
-        x_stats_temp[j].R = x_stats[j].R * lie::SO3d::exp(dxi.block<3, 1>(STATE_DOF * j, 0)).R();
-        x_stats_temp[j].p = x_stats[j].p + dxi.block<3, 1>(STATE_DOF * j + 3, 0);
-        x_stats_temp[j].v = x_stats[j].v + dxi.block<3, 1>(STATE_DOF * j + 6, 0);
-        x_stats_temp[j].bg = x_stats[j].bg + dxi.block<3, 1>(STATE_DOF * j + 9, 0);
-        x_stats_temp[j].ba = x_stats[j].ba + dxi.block<3, 1>(STATE_DOF * j + 12, 0);
-        x_stats_temp[j].g = x_stats_temp[0].g;
-      }
-
-      for (int j = 0; j < win_size - 1; j++) {
-        imus_factor[j]->update_state(dxi.block<STATE_DOF, 1>(STATE_DOF * j, 0));
-      }
-
-      double q1 = 0.5 * dxi.dot(u * D * dxi - JacT);
-      residual2 = only_residual(x_stats_temp, voxhess, imus_factor);
-      q = (residual1 - residual2);
-
-      if (q > 0) {
-        x_stats = x_stats_temp;
-        double one_three = 1.0 / 3;
-
-        q = q / q1;
-        v = 2;
-        q = 1 - std::pow(2 * q - 1, 3);
-        u *= (q < one_three ? one_three : q);
-        is_calc_hess = true;
-      } else {
-        u = u * v;
-        v = 2 * v;
-        is_calc_hess = false;
-
-        for (int j = 0; j < win_size - 1; j++) {
-          imus_factor[j]->dbg = imus_factor[j]->dbg_buf;
-          imus_factor[j]->dba = imus_factor[j]->dba_buf;
-        }
-      }
-
-      if (std::fabs((residual1 - residual2) / residual1) < 1e-6) {
+      if (current_residual != 0.0 && std::fabs(actual_reduction / current_residual) < 1e-6) {
         break;
       }
     }
-    resis.push_back(residual2);
+    residuals.push_back(trial_residual);
   }
+
+ private:
+  double linearize(int window_size, const std::vector<StateGroup> &states, LidarFactor &lidar_factor, const std::deque<ImuFactor *> &imu_factors) {
+    hessian_.setZero();
+    jacobian_.setZero();
+    const int gravity_offset = window_size * STATE_DOF;
+    double imu_residual = 0.0;
+    const double lidar_residual = lidar_workspace_.linearize(window_size, states, lidar_factor, hessian_, jacobian_, [&] {
+      for (int index = 0; index < window_size - 1; ++index) {
+        imu_hessian_.setZero();
+        imu_jacobian_.setZero();
+        imu_residual += imu_factors[index]->give_evaluate_g(states[index], states[index + 1], imu_hessian_, imu_jacobian_, true);
+        hessian_.block<2 * STATE_DOF, 2 * STATE_DOF>(index * STATE_DOF, index * STATE_DOF) += imu_hessian_.block<2 * STATE_DOF, 2 * STATE_DOF>(0, 0);
+        hessian_.block<2 * STATE_DOF, 3>(index * STATE_DOF, gravity_offset) += imu_hessian_.block<2 * STATE_DOF, 3>(0, 2 * STATE_DOF);
+        hessian_.block<3, 2 * STATE_DOF>(gravity_offset, index * STATE_DOF) += imu_hessian_.block<3, 2 * STATE_DOF>(2 * STATE_DOF, 0);
+        hessian_.block<3, 3>(gravity_offset, gravity_offset) += imu_hessian_.block<3, 3>(2 * STATE_DOF, 2 * STATE_DOF);
+        jacobian_.block<2 * STATE_DOF, 1>(index * STATE_DOF, 0) += imu_jacobian_.head(2 * STATE_DOF);
+        jacobian_.tail(3) += imu_jacobian_.tail(3);
+      }
+      hessian_ *= imu_coefficient_;
+      jacobian_ *= imu_coefficient_;
+      imu_residual *= imu_coefficient_ * 0.5;
+    });
+    return imu_residual + lidar_residual;
+  }
+
+  double evaluate_residual(int window_size, const std::vector<StateGroup> &states, LidarFactor &lidar_factor,
+                           const std::deque<ImuFactor *> &imu_factors) {
+    double imu_residual = 0.0;
+    const double lidar_residual = lidar_workspace_.evaluate_residual(states, lidar_factor, [&] {
+      for (int index = 0; index < window_size - 1; ++index) {
+        imu_residual += imu_factors[index]->give_evaluate_g(states[index], states[index + 1], imu_hessian_, imu_jacobian_, false);
+      }
+      imu_residual *= imu_coefficient_ * 0.5;
+    });
+    return imu_residual + lidar_residual;
+  }
+
+  static void restore_imu_states(const std::deque<ImuFactor *> &imu_factors, int window_size) {
+    for (int index = 0; index < window_size - 1; ++index) {
+      imu_factors[index]->dbg = imu_factors[index]->dbg_buf;
+      imu_factors[index]->dba = imu_factors[index]->dba_buf;
+    }
+  }
+
+  const double imu_coefficient_;
+  LidarLmWorkspace lidar_workspace_;
+  Eigen::MatrixXd damping_;
+  Eigen::MatrixXd hessian_;
+  Eigen::VectorXd jacobian_;
+  Eigen::VectorXd increment_;
+  Eigen::MatrixXd imu_hessian_;
+  Eigen::VectorXd imu_jacobian_;
+  std::vector<StateGroup> trial_states_;
 };
+
+}  // namespace sapphire

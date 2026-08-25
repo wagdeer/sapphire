@@ -83,7 +83,7 @@ class LidarProcessor {
   explicit LidarProcessor(const sapphire::SensorParameters &parameters)
       : lidar_type_(parameters.lidar_type), point_filter_num_(parameters.point_filter_num), blind_squared_(parameters.blind_squared) {}
 
-  bool process(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &message, double &timestamp, std::vector<LidarPoint> &points) const {
+  bool process(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &message, double &timestamp, std::vector<sapphire::LidarPoint> &points) const {
     timestamp = static_cast<double>(message->header.stamp.sec) + static_cast<double>(message->header.stamp.nanosec) * 1e-9;
     if (lidar_type_ != 0 && lidar_type_ != 1) {
       return false;
@@ -138,7 +138,7 @@ class LidarProcessor {
         }
       }
 
-      LidarPoint point;
+      sapphire::LidarPoint point;
       point.x = static_cast<float>(x);
       point.y = static_cast<float>(y);
       point.z = static_cast<float>(z);

@@ -5,6 +5,8 @@
 #include "common.hpp"
 #include "parameters.h"
 
+namespace sapphire {
+
 class ImuFactor {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -108,7 +110,7 @@ class ImuFactor {
     R_delta = R_delta * R_inc;
   }
 
-  double give_evaluate(StateGroup &st1, StateGroup &st2, Eigen::MatrixXd &jtj, Eigen::VectorXd &gg, bool jac_enable) {
+  double give_evaluate(const StateGroup &st1, const StateGroup &st2, Eigen::MatrixXd &jtj, Eigen::VectorXd &gg, bool jac_enable) {
     Eigen::Matrix<double, STATE_DOF, STATE_DOF> joca, jocb;
     Eigen::Matrix<double, STATE_DOF, 1> rr;
     joca.setZero();
@@ -173,7 +175,7 @@ class ImuFactor {
     return rr.dot(cov_inv * rr);
   }
 
-  double give_evaluate_g(StateGroup &st1, StateGroup &st2, Eigen::MatrixXd &jtj, Eigen::VectorXd &gg, bool jac_enable) {
+  double give_evaluate_g(const StateGroup &st1, const StateGroup &st2, Eigen::MatrixXd &jtj, Eigen::VectorXd &gg, bool jac_enable) {
     Eigen::Matrix<double, STATE_DOF, STATE_DOF> joca, jocb;
     Eigen::Matrix<double, STATE_DOF, 1> rr;
     joca.setZero();
@@ -278,3 +280,5 @@ class ImuFactor {
     dtime += imu2.dtime;
   }
 };
+
+}  // namespace sapphire

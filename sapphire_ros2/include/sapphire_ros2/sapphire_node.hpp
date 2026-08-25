@@ -34,13 +34,13 @@ class SapphireNode : public rclcpp::Node {
   void output_loop();
   void stop_output();
 
-  void publish_odom(const StateGroup &state);
+  void publish_odom(const sapphire::StateGroup &state);
   void publish_scan(std::shared_ptr<const sapphire::vvec<double, 3>> points);
-  void publish_trajectory(std::shared_ptr<const std::vector<TrajectoryPoint>> trajectory);
+  void publish_trajectory(std::shared_ptr<const std::vector<sapphire::TrajectoryPoint>> trajectory);
   void publish_local_map(std::shared_ptr<const sapphire::vvec<double, 3>> points);
   void publish_map_odom(const Eigen::Isometry3d &transform);
   void publish_map_pose(const Eigen::Isometry3d &transform, double timestamp);
-  void publish_navigation_grid(std::shared_ptr<const NavigationGrid> grid);
+  void publish_navigation_grid(std::shared_ptr<const sapphire::NavigationGrid> grid);
 
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr scan_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cmap_pub_;

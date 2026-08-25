@@ -5,6 +5,8 @@
 
 #include "voxel_map.hpp"
 
+namespace sapphire {
+
 class ESKF {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -235,3 +237,5 @@ class ESKF {
     }
   }
 };
+
+}  // namespace sapphire

@@ -11,6 +11,8 @@
 
 #include "local_gridmap.hpp"
 
+namespace sapphire {
+
 namespace database_detail {
 
 class Statement {
@@ -287,3 +289,5 @@ class LioDatabase {
   sqlite3 *db_ = nullptr;
   mutable std::mutex mutex_;
 };
+
+}  // namespace sapphire

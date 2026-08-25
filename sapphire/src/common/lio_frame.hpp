@@ -8,6 +8,8 @@
 
 #include "common.hpp"
 
+namespace sapphire {
+
 struct MargiFrame {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
@@ -139,5 +141,7 @@ class KeyframeBuffer {
   bool has_keyframe_ = false;
   Eigen::Matrix3d last_keyframe_rotation_ = Eigen::Matrix3d::Identity();
   Eigen::Vector3d last_keyframe_position_ = Eigen::Vector3d::Zero();
-  unordered_map<VOXEL_LOC, Eigen::Vector4d> voxel_sums_;
+  std::unordered_map<VOXEL_LOC, Eigen::Vector4d> voxel_sums_;
 };
+
+}  // namespace sapphire

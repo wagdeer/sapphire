@@ -4,6 +4,8 @@
 
 #include "../thirdparty/lie/SO3.hpp"
 
+namespace sapphire {
+
 constexpr int POSE_DOF = 6;
 constexpr int STATE_DOF = 15;
 constexpr double G_m_s2 = 9.81;
@@ -69,3 +71,5 @@ struct StateGroup {
     cov.block<6, 6>(9, 9) = Eigen::Matrix<double, 6, 6>::Identity() * 0.00001;
   }
 };
+
+}  // namespace sapphire

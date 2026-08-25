@@ -10,6 +10,8 @@
 
 #include "lio_database.hpp"
 
+namespace sapphire {
+
 class Memory {
  public:
   Memory(const std::string &databasePath, size_t stmCapacity, size_t wmCapacity)
@@ -143,3 +145,5 @@ class Memory {
   std::deque<int> shortTermIds_;
   std::deque<int> workingIds_;
 };
+
+}  // namespace sapphire
