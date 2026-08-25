@@ -11,6 +11,8 @@
 #include "common.hpp"
 #include "parameters.h"
 
+namespace sapphire {
+
 struct NavigationGrid {
   double resolution = 0.1;
   double origin_x = 0.0;
@@ -50,3 +52,5 @@ class PoseGraphBackend {
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
+
+}  // namespace sapphire

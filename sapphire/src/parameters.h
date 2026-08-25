@@ -119,12 +119,3 @@ SapphireParameters load_parameters(const std::filesystem::path &path);
 void validate_parameters(SapphireParameters &parameters);
 
 }  // namespace sapphire
-
-// Internal algorithm headers are still global in this first-stage refactor.
-using GeneralParameters = sapphire::GeneralParameters;
-using SensorParameters = sapphire::SensorParameters;
-using InitializerParameters = sapphire::InitializerParameters;
-using OdometryParameters = sapphire::OdometryParameters;
-using LocalSubmapParameters = sapphire::LocalSubmapParameters;
-using PoseGraphParameters = sapphire::PoseGraphParameters;
-using NaviMapParameters = sapphire::NaviMapParameters;

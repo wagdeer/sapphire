@@ -11,6 +11,8 @@
 #include "lm_optimizer.hpp"
 #include "voxel_map.hpp"
 
+namespace sapphire {
+
 class Initialization {
  public:
   static Initialization &instance() {
@@ -99,7 +101,7 @@ class Initialization {
   int motion_init(std::vector<MeasGroup> &measures, Eigen::MatrixXd *hess, LidarFactor &voxhess, std::vector<StateGroup> &x_buf, VoxelMap &voxel_map,
                   std::vector<PointCloudPtr> &pvec_buf, int win_size, StateGroup &x_curr, std::deque<ImuFactor *> &imu_factor_buf,
                   StateGroup &extrin_para, const InitializerParameters &parameters, const OdometryParameters &odometry,
-                  const LocalSubmapParameters &local_submap, double scale_gravity) {
+                  const LocalSubmapParameters &local_submap, double scale_gravity, ParallelExecutor &parallel_executor) {
     vvec<double, 3> pwld;
     int converge_flag = 0;
     std::vector<double> init_plane_thresholds(local_submap.plane_eigen_value_thre.size(), parameters.plane_eigen_value_thre_inv);
@@ -108,6 +110,7 @@ class Initialization {
     bool is_degrade = true;
     Eigen::Vector3d eigvalue;
     eigvalue.setZero();
+    LI_BA_OptimizerGravity optimizer(local_submap, parallel_executor);
     for (int iterCnt = 0; iterCnt < parameters.max_iterations; iterCnt++) {
       voxel_map.clear();
 
@@ -141,9 +144,8 @@ class Initialization {
       if (voxhess.plvec_voxels.size() < static_cast<size_t>(parameters.min_plane_factors)) {
         break;
       }
-      LI_BA_OptimizerGravity opt_lsv(local_submap);
       std::vector<double> resis;
-      opt_lsv.damping_iter(x_buf, voxhess, imu_factor_buf, resis, hess, parameters.ba_iterations);
+      optimizer.damping_iter(x_buf, voxhess, imu_factor_buf, resis, hess, parameters.ba_iterations);
       Eigen::Matrix3d nnt;
       nnt.setZero();
 
@@ -189,3 +191,5 @@ class Initialization {
     return converge_flag;
   }
 };
+
+}  // namespace sapphire

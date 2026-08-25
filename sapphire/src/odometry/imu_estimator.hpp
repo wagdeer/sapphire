@@ -11,6 +11,8 @@
 #include "common.hpp"
 #include "parameters.h"
 
+namespace sapphire {
+
 struct Gal3StateGroup {
   double stamp;
   lie::Gal3d state;
@@ -307,3 +309,5 @@ class ImuEstimator {
     return 1;
   }
 };
+
+}  // namespace sapphire

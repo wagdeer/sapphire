@@ -13,6 +13,8 @@
 
 #include "local_gridmap.hpp"
 
+namespace sapphire {
+
 struct OccupancyGridData {
   float resolution = 0.1f;
   float originX = 0.0f;
@@ -414,3 +416,5 @@ class GridMapUpdate {
 };
 
 inline GridMapUpdate OccupancyGrid::update(GridLoader loader) { return GridMapUpdate(*this, std::move(loader)); }
+
+}  // namespace sapphire

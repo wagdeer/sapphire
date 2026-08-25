@@ -17,21 +17,12 @@
 #include "imu_estimator.hpp"
 #include "imu_factor.hpp"
 #include "lio_frame.hpp"
+#include "parallel_executor.hpp"
 #include "parameters.h"
 #include "pose_graph.hpp"
 #include "voxel_map.hpp"
 
 namespace sapphire {
-
-using ::ImuMeas;
-using ::LidarPoint;
-using ::MeasGroup;
-using ::NavigationGrid;
-using ::StateGroup;
-using ::TrajectoryPoint;
-
-template <typename T, int N>
-using vvec = ::vvec<T, N>;
 
 class Synchronizer {
  public:
@@ -87,6 +78,7 @@ class SlamPipeline {
   const SapphireParameters parameters_;
   OutputSink output_;
   Synchronizer synchronizer_;
+  ParallelExecutor parallel_executor_;
   std::vector<TrajectoryPoint> trajectory_;
   StateGroup current_state_, extrinsic_;
   ImuEstimator imu_estimator_;
@@ -111,10 +103,14 @@ class SlamPipeline {
   std::atomic_bool accepting_{true};
   std::atomic_bool stopping_{false};
   std::atomic_bool odometry_done_{false};
+
   std::atomic_int session_id_{0};
   std::atomic_uint64_t input_revision_{0};
+
   std::mutex input_mutex_;
+
   std::condition_variable input_cv_;
+
   std::thread odometry_thread_;
   std::thread mapping_thread_;
 
