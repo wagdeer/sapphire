@@ -1,0 +1,19 @@
+cmn_sapphire:
+  ros__parameters:
+    finish: false
+    topics:
+      lidar: "/front_lidar"
+      imu: "/front_lidar/imu"
+      scan: "/sapphire/current_scan"
+      local_map: "/sapphire/local_map"
+      trajectory: "/sapphire/trajectory"
+      odom: "/sapphire/odom_psoe"
+      map_pose: "/sapphire/map_pose"
+      navigation: "/sapphire/gridmap"
+    frames:
+      map: "map"
+      odom: "odom"
+      base: "base_link"
+    qos:
+      imu_depth: 2000
+      lidar_depth: 5

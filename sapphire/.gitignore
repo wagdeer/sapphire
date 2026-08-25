@@ -1,0 +1,18 @@
+build*/
+CMakeFiles/
+*.o
+*.a
+*.so
+.DS_Store
+__pycache__/
+.vscode/
+.idea/
+
+# ROS 2 workspace outputs
+install/
+log/
+
+# Python and editor temporary files
+*.py[cod]
+*.swp
+*~
