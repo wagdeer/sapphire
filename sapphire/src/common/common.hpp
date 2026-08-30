@@ -212,6 +212,18 @@ struct hash<sapphire::VOXEL_LOC> {
 
 namespace sapphire {
 
+// degrees to radians. degress in [-180, 180], radians in [-pi, pi]
+template <typename T>
+inline constexpr T toRAD(T degrees) {
+  return static_cast<T>(degrees * M_PI / 180.0);
+}
+
+// radians to degrees. deg in [-180, 180], radians in [-pi, pi]
+template <typename T>
+inline constexpr T toDEG(T radians) {
+  return static_cast<T>(radians * 180.0 / M_PI);
+}
+
 inline void down_sampling_voxel(std::vector<LidarPoint> &pl_feat, double inv_voxel_size) {
   using VoxelSum = Eigen::Matrix<double, 6, 1>;
   std::unordered_map<VOXEL_LOC, VoxelSum> feat_map;

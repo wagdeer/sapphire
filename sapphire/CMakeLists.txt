@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.16)
-project(sapphire_core VERSION 0.1.0 LANGUAGES C CXX)
+cmake_minimum_required(VERSION 3.18)
+project(sapphire_core VERSION 0.1.0 LANGUAGES C CXX CUDA)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -8,6 +8,10 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_EXTENSIONS OFF)
+set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures for Sapphire 3D-BBS")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -27,6 +31,9 @@ if(SAPPHIRE_ENABLE_LTO)
 endif()
 
 find_package(Eigen3 REQUIRED)
+find_package(Boost REQUIRED)
+find_package(CUDAToolkit REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS core)
 find_package(OpenMP REQUIRED)
 find_package(small_gicp REQUIRED)
 find_package(Threads REQUIRED)
@@ -52,8 +59,11 @@ include(thirdparty/gtsam-4.3a2/minimal.cmake)
 add_library(sapphire_core STATIC
   src/pipeline.cpp
   src/parameters.cpp
-  src/common/parallel_executor.cpp
+  src/tools/parallel_executor.cpp
+  src/mapping/loop_closure.cpp
   src/mapping/pose_graph.cpp
+  thirdparty/3d_bbs/src/bbs3d.cu
+  thirdparty/3d_bbs/src/voxelmaps.cpp
 )
 add_library(sapphire::core ALIAS sapphire_core)
 
@@ -64,14 +74,20 @@ target_include_directories(sapphire_core
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/common>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/odometry>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/mapping>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/tools>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/3d_bbs/include>
     $<INSTALL_INTERFACE:include>
     $<INSTALL_INTERFACE:include/common>
     $<INSTALL_INTERFACE:include/odometry>
     $<INSTALL_INTERFACE:include/mapping>
+    $<INSTALL_INTERFACE:include/tools>
 )
 target_link_libraries(sapphire_core
   PUBLIC
     Eigen3::Eigen
+    Boost::headers
+    CUDA::cudart
+    opencv_core
     OpenMP::OpenMP_CXX
     Threads::Threads
     spdlog::spdlog
@@ -81,7 +97,6 @@ target_link_libraries(sapphire_core
     SQLite::SQLite3
     tomlplusplus::tomlplusplus
 )
-
 if(SAPPHIRE_ENABLE_LTO AND SAPPHIRE_IPO_SUPPORTED)
   set_property(
     TARGET sapphire_core
@@ -97,6 +112,22 @@ if(BUILD_TESTING)
     SAPPHIRE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
   )
   add_test(NAME sapphire_core_test COMMAND sapphire_core_test)
+
+  add_executable(sapphire_retrieval_loop_test tests/retrieval_loop_test.cpp)
+  target_link_libraries(sapphire_retrieval_loop_test PRIVATE sapphire::core)
+  add_test(NAME sapphire_retrieval_loop_test COMMAND sapphire_retrieval_loop_test)
+
+  add_executable(sapphire_pyramid_voxel_test tests/pyramid_voxel_test.cpp)
+  target_link_libraries(sapphire_pyramid_voxel_test PRIVATE sapphire::core)
+  add_test(NAME sapphire_pyramid_voxel_test COMMAND sapphire_pyramid_voxel_test)
+
+  add_executable(sapphire_loop_pipeline_verification_test tests/loop_pipeline_verification_test.cpp)
+  target_link_libraries(sapphire_loop_pipeline_verification_test PRIVATE sapphire::core)
+  add_test(NAME sapphire_loop_pipeline_verification_test COMMAND sapphire_loop_pipeline_verification_test)
+  set_tests_properties(sapphire_loop_pipeline_verification_test PROPERTIES TIMEOUT 10)
+
+  add_executable(sapphire_real_submap_loop_eval tests/real_submap_loop_eval.cpp)
+  target_link_libraries(sapphire_real_submap_loop_eval PRIVATE sapphire::core)
 endif()
 
 find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)
@@ -104,6 +135,7 @@ file(GLOB_RECURSE SAPPHIRE_FORMAT_FILES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/src/common/*.[ch]pp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mapping/*.[ch]pp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/odometry/*.[ch]pp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/tools/*.[ch]pp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline.*"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/parameters.*"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.[ch]pp"
@@ -135,6 +167,7 @@ install(DIRECTORY
   src/common
   src/odometry
   src/mapping
+  src/tools
   DESTINATION include
   FILES_MATCHING PATTERN "*.hpp"
 )

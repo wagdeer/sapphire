@@ -11,11 +11,14 @@
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
+#include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <string>
 #include <thread>
 
+#include "img_preprocess.hpp"
 #include "lidar_preprocess.hpp"
 #include "pipeline.hpp"
 
@@ -29,6 +32,8 @@ class SapphireNode : public rclcpp::Node {
  private:
   void imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr &message);
   void lidar_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &message);
+  void image_callback(const sensor_msgs::msg::Image::ConstSharedPtr &message);
+  void compressed_image_callback(const sensor_msgs::msg::CompressedImage::ConstSharedPtr &message);
   void finish_callback();
   void enqueue_output(std::function<void()> task);
   void output_loop();
@@ -51,14 +56,18 @@ class SapphireNode : public rclcpp::Node {
 
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_image_sub_;
 
   rclcpp::CallbackGroup::SharedPtr imu_callback_group_;
   rclcpp::CallbackGroup::SharedPtr lidar_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr image_callback_group_;
 
   rclcpp::TimerBase::SharedPtr finish_timer_;
 
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
+  ImageProcessor image_processor_;
   std::unique_ptr<LidarProcessor> lidar_processor_;
   std::unique_ptr<sapphire::SlamPipeline> pipeline_;
 

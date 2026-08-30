@@ -4,6 +4,7 @@ cmn_sapphire:
     topics:
       lidar: "/front_lidar"
       imu: "/front_lidar/imu"
+      image: "/camera/image"
       scan: "/sapphire/current_scan"
       local_map: "/sapphire/local_map"
       trajectory: "/sapphire/trajectory"
@@ -17,3 +18,6 @@ cmn_sapphire:
     qos:
       imu_depth: 2000
       lidar_depth: 5
+      image_depth: 2
+    image:
+      compressed: false

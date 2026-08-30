@@ -171,12 +171,25 @@ bool SlamPipeline::push_lidar(double timestamp, std::vector<LidarPoint> cloud) {
   return true;
 }
 
+bool SlamPipeline::push_image(ImageMeas image) {
+  if (!accepting_.load(std::memory_order_acquire)) {
+    return false;
+  }
+  if (image.gray.empty() || image.gray.type() != CV_8UC1) {
+    spdlog::error("Rejected image: Sapphire core accepts only non-empty CV_8UC1 grayscale images");
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(image_mutex_);
+  image_buffer_.emplace_back(std::move(image));
+  return true;
+}
+
 void SlamPipeline::shutdown() {
   accepting_.store(false, std::memory_order_release);
   synchronizer_.stop_accepting();
   stopping_.store(true, std::memory_order_release);
   input_cv_.notify_all();
-  keyframe_cv_.notify_all();
+  marginal_cv_.notify_all();
   if (odometry_thread_.joinable()) {
     odometry_thread_.join();
   }
@@ -408,11 +421,11 @@ void SlamPipeline::thd_odometry() {
         last_position = current_state_.p;
         journey = 0.0;
         {
-          std::lock_guard<std::mutex> lock(keyframe_mutex_);
-          reset_tail_.swap(keyframes_);
+          std::lock_guard<std::mutex> lock(marginal_mutex_);
+          reset_tail_.swap(marginal_frames_);
           reset_flag_ = 1;
         }
-        keyframe_cv_.notify_one();
+        marginal_cv_.notify_one();
         motion_init_flag = 1;
         continue;
       }
@@ -432,10 +445,10 @@ void SlamPipeline::thd_odometry() {
       voxel_map_.marginalize(journey, window_count_, marginal_count, state_buffer_, voxel_hessian);
 
       {
-        std::lock_guard<std::mutex> lock(keyframe_mutex_);
-        keyframes_.emplace_back(state_buffer_[0], std::move(point_buffer_[0]), time_buffer_[0], marginal_variance);
+        std::lock_guard<std::mutex> lock(marginal_mutex_);
+        marginal_frames_.emplace_back(state_buffer_[0], std::move(point_buffer_[0]), time_buffer_[0], marginal_variance, journey);
       }
-      keyframe_cv_.notify_one();
+      marginal_cv_.notify_one();
 
       if ((window_base_ + window_count_) % 10 == 0) {
         const double distance = (current_state_.p - last_position).norm();
@@ -468,34 +481,51 @@ void SlamPipeline::thd_odometry() {
   }
   malloc_trim(0);
   odometry_done_.store(true, std::memory_order_release);
-  keyframe_cv_.notify_all();
+  marginal_cv_.notify_all();
 }
 
 void SlamPipeline::thd_mapping() {
-  KeyframeBuffer keyframe_buffer(parameters_.pose_graph.keyframe_voxel_size_inv);
-  int buffer_base = 0;
+  SubmapFrameBuffer submap_buffer(parameters_.pose_graph.submap_voxel_size_inv, parameters_.pose_graph.submap_travel_distance,
+                                  parameters_.pose_graph.submap_max_point_range);
   const std::string initial_filename = filename_;
   if (save_map_) {
     FileReaderWriter::instance().open_session(save_path_, filename_);
   }
+
+  const auto submit_submap = [this](SubmapFrame submap) {
+    const std::uint64_t id = submap.id();
+    const LioFrame lio = submap.lio();
+    Eigen::Isometry3d map_odom = Eigen::Isometry3d::Identity();
+    {
+      std::lock_guard<std::mutex> lock(pose_graph_mutex_);
+      pose_graph_->addFrame(std::move(submap));
+      map_odom = pose_graph_->T_map_odom();
+    }
+    const Eigen::Isometry3d map_pose = map_odom * lio.T_odom_base;
+    invoke_output(output_.map_odom, std::cref(map_odom));
+    invoke_output(output_.map_pose, std::cref(map_pose), lio.timestamp);
+    if (save_map_) {
+      FileReaderWriter::instance().save_submap(lio.pcd, lio.T_odom_base, lio.timestamp, static_cast<int>(id));
+    }
+  };
 
   while (true) {
     std::deque<MargiFrame, Eigen::aligned_allocator<MargiFrame>> reset_tail;
     std::optional<MargiFrame> marginal_frame;
     bool switch_session = false;
     {
-      std::unique_lock<std::mutex> lock(keyframe_mutex_);
-      keyframe_cv_.wait(lock, [this] {
-        return reset_flag_ == 1 || !keyframes_.empty() ||
+      std::unique_lock<std::mutex> lock(marginal_mutex_);
+      marginal_cv_.wait(lock, [this] {
+        return reset_flag_ == 1 || !marginal_frames_.empty() ||
                (stopping_.load(std::memory_order_acquire) && odometry_done_.load(std::memory_order_acquire));
       });
       if (reset_flag_ == 1) {
         reset_flag_ = 0;
         reset_tail.swap(reset_tail_);
         switch_session = true;
-      } else if (!keyframes_.empty()) {
-        marginal_frame.emplace(std::move(keyframes_.front()));
-        keyframes_.pop_front();
+      } else if (!marginal_frames_.empty()) {
+        marginal_frame.emplace(std::move(marginal_frames_.front()));
+        marginal_frames_.pop_front();
       } else if (stopping_.load(std::memory_order_acquire) && odometry_done_.load(std::memory_order_acquire)) {
         break;
       }
@@ -504,10 +534,15 @@ void SlamPipeline::thd_mapping() {
     if (switch_session) {
       if (save_map_) {
         for (const MargiFrame &frame : reset_tail) {
-          FileReaderWriter::instance().save_pose(frame);
+          const StateGroup &state = frame.x;
+          FileReaderWriter::instance().save_pose(state.R, state.p, state.v, state.bg, state.ba, state.g, frame.v6, frame.timestamp);
         }
       }
-      keyframe_buffer.clear();
+      submap_buffer.clear();
+      {
+        std::lock_guard<std::mutex> lock(image_mutex_);
+        image_buffer_.clear();
+      }
       const int session = session_id_.fetch_add(1) + 1;
       filename_ = initial_filename + std::to_string(session);
       if (save_map_) {
@@ -516,7 +551,6 @@ void SlamPipeline::thd_mapping() {
       } else if (parameters_.pose_graph.enabled) {
         std::filesystem::create_directories(std::filesystem::path(save_path_) / filename_);
       }
-      buffer_base = 0;
       create_pose_graph();
       continue;
     }
@@ -525,29 +559,31 @@ void SlamPipeline::thd_mapping() {
       continue;
     }
     if (save_map_) {
-      FileReaderWriter::instance().save_pose(*marginal_frame);
-    }
-    ++buffer_base;
-
-    LioFrame keyframe;
-    if (!keyframe_buffer.push(std::move(*marginal_frame), keyframe)) {
-      continue;
+      const StateGroup &state = marginal_frame->x;
+      FileReaderWriter::instance().save_pose(state.R, state.p, state.v, state.bg, state.ba, state.g, marginal_frame->v6, marginal_frame->timestamp);
     }
 
-    Eigen::Isometry3d map_odom = Eigen::Isometry3d::Identity();
+    std::deque<ImageMeas> images;
     {
-      std::lock_guard<std::mutex> lock(pose_graph_mutex_);
-      pose_graph_->addFrame(keyframe.pcd, keyframe.T_odom_base, keyframe.timestamp);
-      map_odom = pose_graph_->T_map_odom();
+      std::lock_guard<std::mutex> lock(image_mutex_);
+      while (!image_buffer_.empty() && image_buffer_.front().timestamp <= marginal_frame->timestamp) {
+        images.emplace_back(std::move(image_buffer_.front()));
+        image_buffer_.pop_front();
+      }
     }
-    const Eigen::Isometry3d map_pose = map_odom * keyframe.T_odom_base;
-    invoke_output(output_.map_odom, std::cref(map_odom));
-    invoke_output(output_.map_pose, std::cref(map_pose), keyframe.timestamp);
-    if (save_map_) {
-      FileReaderWriter::instance().save_keyframe(keyframe, buffer_base - 1);
+    for (const ImageMeas &image : images) {
+      submap_buffer.push_visual(VisualFrame(image.timestamp));
+    }
+
+    std::optional<SubmapFrame> submap = submap_buffer.push(*marginal_frame);
+    if (submap) {
+      submit_submap(std::move(*submap));
     }
   }
 
+  if (std::optional<SubmapFrame> submap = submap_buffer.flush()) {
+    submit_submap(std::move(*submap));
+  }
   if (save_map_) {
     FileReaderWriter::instance().close_session();
   }

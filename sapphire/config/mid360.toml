@@ -45,29 +45,11 @@ imu_coef = 0.0002
 thread_num = 5
 
 [pose_graph]
-enabled = false
-loop_min_time_separation = 30.0
-loop_min_travel_distance = 30.0
-loop_max_rotation = 3.14
-loop_search_radius = 15.0
-loop_search_stride = 1
-target_frame_count = 20
-keyframe_voxel_size = 0.25
-fitness_threshold = 0.5
+enabled = true
+submap_voxel_size = 0.25
+submap_travel_distance = 15.0
+submap_max_point_range = 20.0
 update_period_sec = 1.0
-map_frame_stride = 3
-map_voxel_size = 0.8
-memory_stm_size = 30
-memory_wm_size = 200
-
-[pose_graph.gicp]
-max_iterations = 32
-k_correspondences = 16
-min_inliers = 64
-num_threads = 2
-max_correspondence_distance = 2.0
-transformation_epsilon = 0.01
-rotation_epsilon = 0.01
 
 [navi_map]
 enabled = false
