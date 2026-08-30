@@ -13,20 +13,18 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <iterator>
-#include <limits>
 #include <memory>
 #include <mutex>
-#include <small_gicp/ann/kdtree_omp.hpp>
-#include <small_gicp/registration/registration_helper.hpp>
-#include <small_gicp/util/normal_estimation_omp.hpp>
 #include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include "local_gridmap.hpp"
+#include "loop_closure.hpp"
 #include "memory.hpp"
 #include "occ_layer.hpp"
 
@@ -58,21 +56,32 @@ Eigen::Isometry3f toIsometry3f(const Eigen::Isometry3d &pose) {
   return result;
 }
 
-std::shared_ptr<vvec<float, 3>> transformedCloud(const std::shared_ptr<const vvec<float, 3>> &cloud, const Eigen::Isometry3d &transform) {
-  auto output = std::make_shared<vvec<float, 3>>();
-  output->reserve(cloud->size());
-  for (const Eigen::Vector3f &point : *cloud) {
-    const Eigen::Vector3d transformed = transform * point.cast<double>();
-    output->emplace_back(static_cast<float>(transformed.x()), static_cast<float>(transformed.y()), static_cast<float>(transformed.z()));
-  }
-  return output;
+double elapsedMilliseconds(std::chrono::steady_clock::time_point start) {
+  return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 
-std::shared_ptr<vvec<float, 3>> voxelized(std::shared_ptr<vvec<float, 3>> cloud, double leaf_size) {
-  if (leaf_size > 0.0) {
-    down_sampling_voxel(*cloud, 1.0 / leaf_size);
+enum class LoopAttemptOutcome : std::uint8_t {
+  kNone = 0,
+  kMissingCloud,
+  kBbsRejected,
+  kGicpRejected,
+  kAccepted,
+};
+
+const char *loopAttemptOutcomeName(LoopAttemptOutcome outcome) noexcept {
+  switch (outcome) {
+    case LoopAttemptOutcome::kNone:
+      return "no_candidate";
+    case LoopAttemptOutcome::kMissingCloud:
+      return "missing_cloud";
+    case LoopAttemptOutcome::kBbsRejected:
+      return "bbs_rejected";
+    case LoopAttemptOutcome::kGicpRejected:
+      return "gicp_rejected";
+    case LoopAttemptOutcome::kAccepted:
+      return "accepted";
   }
-  return cloud;
+  return "unknown";
 }
 
 }  // namespace
@@ -86,6 +95,8 @@ class PoseGraphBackend::Impl {
       return;
     }
 
+    gpu::initialize_device();
+
     gtsam::ISAM2Params params;
     params.relinearizeThreshold = 0.01;
     params.relinearizeSkip = 1;
@@ -98,8 +109,10 @@ class PoseGraphBackend::Impl {
     gtsam::Vector6 odom_variances;
     odom_variances << 1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4;
     odom_noise_ = gtsam::noiseModel::Diagonal::Variances(odom_variances);
-    memory_ = std::make_unique<Memory>(database_path, static_cast<size_t>(std::max(1, config_.memory_stm_size)),
-                                       static_cast<size_t>(std::max(0, config_.memory_wm_size)));
+    loop_noise_ = gtsam::noiseModel::Robust::Create(
+        gtsam::noiseModel::mEstimator::Huber::Create(10.0),
+        gtsam::noiseModel::Diagonal::Variances(odom_variances));
+    memory_ = std::make_unique<Memory>(database_path);
 
     if (navi_map.enabled) {
       local_grid_maker_ = std::make_unique<LocalGridMaker>(navi_map);
@@ -122,18 +135,19 @@ class PoseGraphBackend::Impl {
 
   bool enabled() const { return config_.enabled; }
 
-  void addFrame(const std::shared_ptr<const vvec<float, 3>> &cloud_lidar, const Eigen::Isometry3d &T_odom_lidar, double stamp) {
-    if (!config_.enabled || !cloud_lidar || cloud_lidar->empty() || !T_odom_lidar.matrix().allFinite() || !std::isfinite(stamp)) {
+  void addFrame(SubmapFrame submap) {
+    const LioFrame &lio = submap.lio();
+    if (!config_.enabled || !lio.pcd || lio.pcd->empty() || !lio.T_odom_base.matrix().allFinite() || !std::isfinite(lio.timestamp)) {
       return;
     }
 
     std::lock_guard<std::mutex> lock(input_mutex_);
-    if (keyframe_count_ > 0) {
-      input_travel_distance_ += (T_odom_lidar.translation() - last_input_pose_.translation()).norm();
+    if (submap.id() != submap_count_) {
+      spdlog::error("[pgo] rejected out-of-order submap: expected={}, received={}", submap_count_, submap.id());
+      return;
     }
-    last_input_pose_ = T_odom_lidar;
-    input_frames_.push_back({cloud_lidar, T_odom_lidar, stamp, input_travel_distance_});
-    ++keyframe_count_;
+    input_frames_.push_back({std::move(submap)});
+    ++submap_count_;
     input_requested_.store(true, std::memory_order_release);
     wake_cv_.notify_one();
   }
@@ -143,18 +157,6 @@ class PoseGraphBackend::Impl {
     return T_map_odom_;
   }
 
-  void requestGlobalMap() {
-    if (config_.enabled) {
-      map_requested_.store(true, std::memory_order_release);
-      wake_cv_.notify_one();
-    }
-  }
-
-  std::shared_ptr<const vvec<float, 3>> latestGlobalMap() const {
-    std::lock_guard<std::mutex> lock(output_mutex_);
-    return global_map_;
-  }
-
   std::shared_ptr<const NavigationGrid> latestOccupancyGrid() const {
     std::lock_guard<std::mutex> lock(occupancy_mutex_);
     return occupancy_msg_;
@@ -162,17 +164,11 @@ class PoseGraphBackend::Impl {
 
  private:
   struct InputFrame {
-    std::shared_ptr<const vvec<float, 3>> cloud_lidar;
-    Eigen::Isometry3d T_odom_lidar = Eigen::Isometry3d::Identity();
-    double stamp = 0.0;
-    double travel_distance = 0.0;
+    SubmapFrame submap;
   };
 
   struct GraphFrame {
-    std::shared_ptr<const vvec<float, 3>> cloud_lidar;
     Eigen::Isometry3d T_odom_lidar = Eigen::Isometry3d::Identity();
-    double stamp = 0.0;
-    double travel_distance = 0.0;
   };
 
   struct IsamOutput {
@@ -185,8 +181,7 @@ class PoseGraphBackend::Impl {
     while (true) {
       std::unique_lock<std::mutex> lock(wake_mutex_);
       wake_cv_.wait_for(lock, period, [this]() {
-        return stop_.load(std::memory_order_acquire) || input_requested_.load(std::memory_order_acquire) ||
-               map_requested_.load(std::memory_order_acquire);
+        return stop_.load(std::memory_order_acquire) || input_requested_.load(std::memory_order_acquire);
       });
       const bool stopping = stop_.load(std::memory_order_acquire);
       lock.unlock();
@@ -207,17 +202,23 @@ class PoseGraphBackend::Impl {
       std::lock_guard<std::mutex> lock(input_mutex_);
       pending.swap(input_frames_);
     }
+    frames_.reserve(frames_.size() + pending.size());
     size_t index = 0;
     try {
       for (; index < pending.size(); ++index) {
         InputFrame &input = pending[index];
-        const size_t frame_id = frames_.size();
-        GraphFrame frame{input.cloud_lidar, input.T_odom_lidar, input.stamp, input.travel_distance};
+        const SubmapFrame &submap = input.submap;
+        const LioFrame &lio = submap.lio();
+        const size_t frame_id = static_cast<size_t>(submap.id());
+        if (frame_id != frames_.size()) {
+          throw std::logic_error("non-contiguous submap sequence");
+        }
+        GraphFrame frame{lio.T_odom_base};
         LocalGrid grid(static_cast<float>(occupancy_resolution_));
         if (local_grid_maker_) {
-          local_grid_maker_->createLocalMap(*frame.cloud_lidar, toIsometry3f(input.T_odom_lidar), grid);
+          local_grid_maker_->createLocalMap(*lio.pcd, toIsometry3f(lio.T_odom_base), grid);
         }
-        memory_->saveKeyframe(frame_id + 1, input.stamp, toIsometry3f(input.T_odom_lidar), frame.cloud_lidar, grid);
+        memory_->saveSubmap(submap, grid);
         frames_.push_back(std::move(frame));
       }
     } catch (...) {
@@ -249,6 +250,9 @@ class PoseGraphBackend::Impl {
       added_odom_id_ = frames_.size();
       updateCorrection();
     }
+    if (!pending_changed_keys_.empty()) {
+      saveOptimizedPoses(pending_changed_keys_);
+    }
 
     gtsam::NonlinearFactorGraph loop_graph;
     const bool searchedNewFrames = searched_loop_id_ < frames_.size() && !optimized_.empty();
@@ -257,6 +261,7 @@ class PoseGraphBackend::Impl {
       const gtsam::KeySet changed = changedFinalPoses(optimized_, output.estimate, output.affected_keys);
       pending_changed_keys_.insert(changed.begin(), changed.end());
       optimized_ = std::move(output.estimate);
+      saveOptimizedPoses(changed);
       updateCorrection();
     }
     if (searchedNewFrames) {
@@ -265,7 +270,6 @@ class PoseGraphBackend::Impl {
 
     bool occupancy_updated = false;
     if (!pending_changed_keys_.empty()) {
-      saveOptimizedPoses(pending_changed_keys_);
       if (occupancy_) {
         occupancy_updated = updateOccupancyFrames(pending_changed_keys_);
       }
@@ -275,9 +279,6 @@ class PoseGraphBackend::Impl {
       publishOccupancySnapshot();
     }
 
-    if (map_requested_.exchange(false, std::memory_order_acq_rel) && !optimized_.empty()) {
-      rebuildGlobalMap();
-    }
   }
 
   bool buildOdometryGraph(gtsam::NonlinearFactorGraph &graph, gtsam::Values &initial) {
@@ -307,94 +308,6 @@ class PoseGraphBackend::Impl {
     return !graph.empty();
   }
 
-  int searchLoopTarget(size_t query_id, const Eigen::Isometry3d &query_pose) const {
-    int best_id = -1;
-    double best_squared_distance = config_.loop_search_radius * config_.loop_search_radius;
-    const Eigen::Quaterniond query_rotation(query_pose.rotation());
-    const size_t candidate_count = std::min(query_id, optimized_.size());
-
-    for (size_t candidate = 0; candidate < candidate_count; ++candidate) {
-      const Eigen::Isometry3d target = fromGtsam(optimized_.at<gtsam::Pose3>(candidate));
-      const double squared_distance = (query_pose.translation() - target.translation()).squaredNorm();
-      if (squared_distance > best_squared_distance) {
-        continue;
-      }
-      const double time_difference = std::abs(frames_[query_id].stamp - frames_[candidate].stamp);
-      const double travel_difference = std::abs(frames_[query_id].travel_distance - frames_[candidate].travel_distance);
-      const Eigen::Quaterniond target_rotation(target.rotation());
-      const double angle_difference = query_rotation.angularDistance(target_rotation);
-      if (time_difference > config_.loop_min_time_separation && travel_difference > config_.loop_min_travel_distance &&
-          angle_difference < config_.loop_max_rotation) {
-        best_squared_distance = squared_distance;
-        best_id = static_cast<int>(candidate);
-      }
-    }
-    return best_id;
-  }
-
-  std::shared_ptr<const vvec<float, 3>> cloudForFrame(size_t frame_id) const {
-    if (frames_[frame_id].cloud_lidar) {
-      return frames_[frame_id].cloud_lidar;
-    }
-    return memory_->loadCloud(static_cast<int>(frame_id + 1));
-  }
-
-  std::shared_ptr<vvec<float, 3>> buildTargetCloud(int target_id) const {
-    auto merged = std::make_shared<vvec<float, 3>>();
-    const int begin = std::max(0, target_id - config_.target_frame_count);
-    const int end = std::min(static_cast<int>(optimized_.size()) - 1, target_id + config_.target_frame_count);
-    for (int i = begin; i <= end; ++i) {
-      const Eigen::Isometry3d pose = fromGtsam(optimized_.at<gtsam::Pose3>(i));
-      const std::shared_ptr<vvec<float, 3>> transformed = transformedCloud(cloudForFrame(i), pose);
-      merged->insert(merged->end(), transformed->begin(), transformed->end());
-    }
-    return voxelized(merged, config_.keyframe_voxel_size);
-  }
-
-  bool registerLoop(const Eigen::Isometry3d &initial_pose, const std::shared_ptr<const vvec<float, 3>> &source,
-                    const std::shared_ptr<const vvec<float, 3>> &target, Eigen::Isometry3d &result, double &fitness) const {
-    const size_t min_inliers = static_cast<size_t>(std::max(1, config_.gicp_min_inliers));
-    if (source->size() < min_inliers || target->size() < min_inliers) {
-      return false;
-    }
-
-    const int num_threads = std::max(1, config_.gicp_num_threads);
-    const int num_neighbors = std::max(5, config_.gicp_k_correspondences);
-    auto target_points = std::make_shared<small_gicp::PointCloud>(*target);
-    auto source_points = std::make_shared<small_gicp::PointCloud>(*source);
-    small_gicp::KdTree<small_gicp::PointCloud> target_tree(target_points, small_gicp::KdTreeBuilderOMP(num_threads));
-    small_gicp::KdTree<small_gicp::PointCloud> source_tree(source_points, small_gicp::KdTreeBuilderOMP(num_threads));
-    small_gicp::estimate_covariances_omp(*target_points, target_tree, num_neighbors, num_threads);
-    small_gicp::estimate_covariances_omp(*source_points, source_tree, num_neighbors, num_threads);
-
-    small_gicp::RegistrationSetting setting;
-    setting.type = small_gicp::RegistrationSetting::GICP;
-    setting.num_threads = num_threads;
-    setting.max_iterations = std::max(1, config_.gicp_max_iterations);
-    setting.max_correspondence_distance = config_.gicp_max_correspondence_distance;
-    setting.translation_eps = config_.gicp_transformation_epsilon;
-    setting.rotation_eps = config_.gicp_rotation_epsilon;
-    const small_gicp::RegistrationResult registration = small_gicp::align(*target_points, *source_points, target_tree, initial_pose, setting);
-    result = registration.T_target_source;
-
-    const double max_fitness_squared_distance = config_.gicp_max_correspondence_distance;
-    double squared_error = 0.0;
-    size_t fitness_inliers = 0;
-    for (const Eigen::Vector4d &point : source_points->points) {
-      size_t index;
-      double squared_distance;
-      const Eigen::Vector4d transformed = result.matrix() * point;
-      if (small_gicp::traits::nearest_neighbor_search(target_tree, transformed, &index, &squared_distance) &&
-          squared_distance <= max_fitness_squared_distance) {
-        squared_error += squared_distance;
-        ++fitness_inliers;
-      }
-    }
-    fitness = fitness_inliers > 0 ? squared_error / static_cast<double>(fitness_inliers) : std::numeric_limits<double>::infinity();
-    return registration.converged && registration.num_inliers >= min_inliers && result.matrix().allFinite() && std::isfinite(fitness) &&
-           fitness < config_.fitness_threshold;
-  }
-
   bool buildLoopEdges(gtsam::NonlinearFactorGraph &graph) {
     if (searched_loop_id_ >= frames_.size() || optimized_.empty()) {
       return false;
@@ -402,43 +315,88 @@ class PoseGraphBackend::Impl {
 
     const size_t last_optimized_id = optimized_.size() - 1;
     const Eigen::Isometry3d last_optimized = fromGtsam(optimized_.at<gtsam::Pose3>(last_optimized_id));
-    const size_t stride = static_cast<size_t>(std::max(1, config_.loop_search_stride));
 
-    for (size_t query_id = searched_loop_id_; query_id < frames_.size(); query_id += stride) {
+    for (size_t query_id = searched_loop_id_; query_id < frames_.size(); ++query_id) {
+      const auto query_start = std::chrono::steady_clock::now();
       const Eigen::Isometry3d query_pose = last_optimized * frames_[last_optimized_id].T_odom_lidar.inverse() * frames_[query_id].T_odom_lidar;
-      const int target_id = searchLoopTarget(query_id, query_pose);
-      if (target_id < 0) {
-        continue;
+      LoopCandidateBatch batch = prepareLoopCandidates(*memory_, query_id, query_pose);
+      std::size_t cold_load_count = batch.stats.cold_loads;
+      std::size_t gicp_count = 0;
+      LoopAttemptOutcome outcome = LoopAttemptOutcome::kNone;
+      std::int64_t selected_target = -1;
+      LoopCandidate *top_candidate = nullptr;
+      BbsResult bbs_result;
+      GicpResult gicp_result;
+
+      std::vector<gpu::LocalSearchTarget> bbs_targets;
+      bbs_targets.reserve(batch.candidates.size());
+      for (LoopCandidate &candidate : batch.candidates) {
+        bbs_targets.push_back({candidate.target_id, &candidate.target_voxelmaps, candidate.target_T_query_initial});
+      }
+      if (batch.query_cloud && !bbs_targets.empty()) {
+        bbs_result = alignLoopBbs(*batch.query_cloud, bbs_targets);
+      }
+      if (bbs_result.accepted) {
+        const auto found = std::find_if(batch.candidates.begin(), batch.candidates.end(), [&](const LoopCandidate &candidate) {
+          return candidate.target_id == bbs_result.target_id;
+        });
+        if (found != batch.candidates.end()) {
+          top_candidate = &*found;
+          selected_target = static_cast<std::int64_t>(bbs_result.target_id);
+        }
+      } else if (!batch.candidates.empty()) {
+        outcome = LoopAttemptOutcome::kBbsRejected;
+        spdlog::debug("[pgo] GPU BBS rejected query {}: candidates={}, best_overlap={:.3f}, elapsed_ms={:.3f}", query_id,
+                      batch.candidates.size(), bbs_result.overlap, bbs_result.elapsed_ms);
       }
 
-      const std::shared_ptr<const vvec<float, 3>> source = cloudForFrame(query_id);
-      const std::shared_ptr<vvec<float, 3>> target = buildTargetCloud(target_id);
-      Eigen::Isometry3d registered_pose;
-      double fitness = std::numeric_limits<double>::infinity();
-      if (!registerLoop(query_pose, source, target, registered_pose, fitness)) {
-        spdlog::debug("[pgo] loop GICP rejected: {} -> {}, fitness={:.4f}", query_id, target_id, fitness);
-        continue;
+      if (top_candidate) {
+        const size_t target_id = static_cast<size_t>(top_candidate->target_id);
+        selected_target = static_cast<std::int64_t>(target_id);
+        const std::shared_ptr<const vvec<float, 3>> target_cloud = memory_->loadCloud(target_id);
+        ++cold_load_count;
+        if (!target_cloud || target_cloud->empty()) {
+          outcome = LoopAttemptOutcome::kMissingCloud;
+          spdlog::debug("[pgo] loop candidate rejected: {} -> {}, reason={}", query_id, target_id, loopAttemptOutcomeName(outcome));
+        } else {
+          ++gicp_count;
+          gicp_result = refineLoopGicp(*batch.query_cloud, *target_cloud, bbs_result.T_target_query);
+          if (!gicp_result.accepted) {
+            outcome = LoopAttemptOutcome::kGicpRejected;
+            spdlog::debug("[pgo] loop candidate rejected: {} -> {}, reason={}, fitness={:.4f}", query_id, target_id,
+                          loopAttemptOutcomeName(outcome), gicp_result.fitness);
+          } else {
+            outcome = LoopAttemptOutcome::kAccepted;
+            const Eigen::Isometry3d relative = gicp_result.T_target_query.inverse();
+            graph.add(gtsam::BetweenFactor<gtsam::Pose3>(query_id, target_id, toGtsam(relative), loop_noise_));
+            memory_->saveLink(static_cast<int>(query_id + 1), static_cast<int>(target_id + 1), 1, toIsometry3f(relative));
+            spdlog::info("[pgo] BBS/GICP loop detected: {} -> {}, overlap={:.3f}, fitness={:.4f}", query_id, target_id, bbs_result.overlap,
+                         gicp_result.fitness);
+          }
+        }
       }
 
-      const Eigen::Isometry3d target_pose = fromGtsam(optimized_.at<gtsam::Pose3>(target_id));
-      const Eigen::Isometry3d relative = registered_pose.inverse() * target_pose;
-      gtsam::Vector6 variances;
-      variances.setConstant(std::max(fitness, 1e-9));
-      const auto loop_noise =
-          gtsam::noiseModel::Robust::Create(gtsam::noiseModel::mEstimator::Cauchy::Create(1.0), gtsam::noiseModel::Diagonal::Variances(variances));
-      graph.add(gtsam::BetweenFactor<gtsam::Pose3>(query_id, static_cast<size_t>(target_id), toGtsam(relative), loop_noise));
-      memory_->saveLink(static_cast<int>(query_id + 1), target_id + 1, 1, toIsometry3f(relative));
-      spdlog::info("[pgo] GICP loop detected: {} -> {}, fitness={:.4f}", query_id, target_id, fitness);
+      spdlog::info(
+          "[pgo] loop recall query={} target={} spatial_examined={} hard_filtered={} history_filtered={} adjacent_filtered={} "
+          "candidates={} roots={} tolerant_overlap={:.3f} cold_loads={} bbs_count={} gicp_count={} "
+          "initial_overlap={:.3f} bbs_elapsed_ms={:.3f} "
+          "gicp_points={}/{} gicp_ms={:.3f}({:.3f}+{:.3f}) "
+          "expanded=[{},{},{},{}] pruned=[{},{},{},{}] "
+          "bbs_termination={} total_elapsed_ms={:.3f} result={}",
+          query_id, selected_target, batch.stats.spatial_matches, batch.stats.rejected(), batch.stats.rejected_non_historical,
+          batch.stats.rejected_adjacent, batch.candidates.size(), bbs_result.root_nodes, top_candidate ? bbs_result.overlap : 0.0,
+          cold_load_count, bbs_targets.size(), gicp_count, bbs_result.initial_overlap, bbs_result.elapsed_ms,
+          gicp_result.query_points, gicp_result.target_points, gicp_result.total_elapsed_ms,
+          gicp_result.preparation_elapsed_ms, gicp_result.alignment_elapsed_ms,
+          bbs_result.expanded_nodes[0], bbs_result.expanded_nodes[1], bbs_result.expanded_nodes[2], bbs_result.expanded_nodes[3],
+          bbs_result.pruned_nodes[0], bbs_result.pruned_nodes[1], bbs_result.pruned_nodes[2], bbs_result.pruned_nodes[3],
+          gpu::search_termination_name(bbs_result.termination), elapsedMilliseconds(query_start),
+          loopAttemptOutcomeName(outcome));
     }
     return !graph.empty();
   }
 
-  void finalizeLoopSearch() {
-    searched_loop_id_ = frames_.size();
-    for (GraphFrame &frame : frames_) {
-      frame.cloud_lidar.reset();
-    }
-  }
+  void finalizeLoopSearch() { searched_loop_id_ = frames_.size(); }
 
   IsamOutput updateIsam(const gtsam::NonlinearFactorGraph &graph, const gtsam::Values &initial) {
     if (initial.empty()) {
@@ -450,22 +408,6 @@ class PoseGraphBackend::Impl {
     isam2_->update();
     auto output = isam2_->calculateEstimateWithAffectedKeys();
     return {std::move(output.first), std::move(output.second)};
-  }
-
-  void rebuildGlobalMap() {
-    auto merged = std::make_shared<vvec<float, 3>>();
-    const size_t stride = static_cast<size_t>(config_.map_frame_stride);
-    for (size_t i = 0; i < optimized_.size(); i += stride) {
-      const Eigen::Isometry3d pose = fromGtsam(optimized_.at<gtsam::Pose3>(i));
-      const std::shared_ptr<vvec<float, 3>> transformed = transformedCloud(cloudForFrame(i), pose);
-      merged->insert(merged->end(), transformed->begin(), transformed->end());
-    }
-    const std::shared_ptr<vvec<float, 3>> sparse = voxelized(merged, config_.map_voxel_size);
-    {
-      std::lock_guard<std::mutex> lock(output_mutex_);
-      global_map_ = sparse;
-    }
-    spdlog::debug("[pgo] sparse map rebuilt: poses={}, points={}", optimized_.size(), sparse->size());
   }
 
   void updateCorrection() {
@@ -498,7 +440,8 @@ class PoseGraphBackend::Impl {
     }
 
     bool updated = false;
-    GridMapUpdate update = occupancy_->update([this](int nodeId, LocalGrid &grid) { return memory_->loadLocalGrid(nodeId, grid); });
+    GridMapUpdate update = occupancy_->update(
+        [this](int nodeId, LocalGrid &grid) { return nodeId > 0 && memory_->loadLocalGrid(static_cast<std::uint64_t>(nodeId - 1), grid); });
     bool hasHistoricalChanges = false;
     for (const gtsam::Key key : changedKeys) {
       const size_t frameId = static_cast<size_t>(key);
@@ -509,7 +452,7 @@ class PoseGraphBackend::Impl {
       const Eigen::Isometry3f pose = toIsometry3f(fromGtsam(optimized_.at<gtsam::Pose3>(key)));
       const int nodeId = static_cast<int>(frameId + 1);
       LocalGrid grid(static_cast<float>(occupancy_resolution_));
-      if (!memory_->loadLocalGrid(nodeId, grid)) {
+      if (!memory_->loadLocalGrid(frameId, grid)) {
         throw std::runtime_error("missing LocalGrid for changed occupancy frame");
       }
       update -= nodeId;
@@ -528,7 +471,7 @@ class PoseGraphBackend::Impl {
       const Eigen::Isometry3f pose = toIsometry3f(fromGtsam(optimized_.at<gtsam::Pose3>(frameId)));
       const int nodeId = static_cast<int>(frameId + 1);
       LocalGrid grid(static_cast<float>(occupancy_resolution_));
-      if (!memory_->loadLocalGrid(nodeId, grid)) {
+      if (!memory_->loadLocalGrid(frameId, grid)) {
         throw std::runtime_error("missing LocalGrid for new occupancy frame");
       }
       if (!occupancy_->append(GridFrame(nodeId, pose, grid))) {
@@ -569,15 +512,14 @@ class PoseGraphBackend::Impl {
 
   mutable std::mutex input_mutex_;
   std::deque<InputFrame> input_frames_;
-  size_t keyframe_count_ = 0;
-  Eigen::Isometry3d last_input_pose_ = Eigen::Isometry3d::Identity();
-  double input_travel_distance_ = 0.0;
+  size_t submap_count_ = 0;
   std::vector<GraphFrame> frames_;
   std::unique_ptr<Memory> memory_;
 
   std::unique_ptr<gtsam::ISAM2> isam2_;
   gtsam::SharedNoiseModel prior_noise_;
   gtsam::SharedNoiseModel odom_noise_;
+  gtsam::SharedNoiseModel loop_noise_;
   gtsam::Values optimized_;
   gtsam::KeySet pending_changed_keys_;
   size_t added_odom_id_ = 0;
@@ -585,7 +527,6 @@ class PoseGraphBackend::Impl {
 
   mutable std::mutex output_mutex_;
   Eigen::Isometry3d T_map_odom_ = Eigen::Isometry3d::Identity();
-  std::shared_ptr<const vvec<float, 3>> global_map_;
   std::unique_ptr<LocalGridMaker> local_grid_maker_;
   std::unique_ptr<OccupancyGrid> occupancy_;
   size_t occupancy_inserted_id_ = 0;
@@ -594,7 +535,6 @@ class PoseGraphBackend::Impl {
   mutable std::mutex occupancy_mutex_;
   std::shared_ptr<const NavigationGrid> occupancy_msg_;
   NavigationGridCallback navigation_grid_callback_;
-  std::atomic<bool> map_requested_{false};
   std::atomic<bool> input_requested_{false};
 
   std::atomic<bool> stop_{false};
@@ -611,15 +551,9 @@ PoseGraphBackend::~PoseGraphBackend() = default;
 
 bool PoseGraphBackend::enabled() const { return impl_->enabled(); }
 
-void PoseGraphBackend::addFrame(const std::shared_ptr<const vvec<float, 3>> &cloud_lidar, const Eigen::Isometry3d &T_odom_lidar, double stamp) {
-  impl_->addFrame(cloud_lidar, T_odom_lidar, stamp);
-}
+void PoseGraphBackend::addFrame(SubmapFrame frame) { impl_->addFrame(std::move(frame)); }
 
 Eigen::Isometry3d PoseGraphBackend::T_map_odom() const { return impl_->correction(); }
-
-void PoseGraphBackend::requestGlobalMap() { impl_->requestGlobalMap(); }
-
-std::shared_ptr<const vvec<float, 3>> PoseGraphBackend::latestGlobalMap() const { return impl_->latestGlobalMap(); }
 
 std::shared_ptr<const NavigationGrid> PoseGraphBackend::latestOccupancyGrid() const { return impl_->latestOccupancyGrid(); }
 

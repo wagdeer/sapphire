@@ -16,7 +16,7 @@
 #include "eskf.hpp"
 #include "imu_estimator.hpp"
 #include "imu_factor.hpp"
-#include "lio_frame.hpp"
+#include "key_frame.hpp"
 #include "parallel_executor.hpp"
 #include "parameters.h"
 #include "pose_graph.hpp"
@@ -62,6 +62,7 @@ class SlamPipeline {
 
   bool push_imu(ImuMeas imu);
   bool push_lidar(double timestamp, std::vector<LidarPoint> cloud);
+  bool push_image(ImageMeas image);
   void shutdown();
 
  private:
@@ -95,9 +96,9 @@ class SlamPipeline {
   int window_base_ = 0;
   int degrade_bound_ = 10;
 
-  std::mutex keyframe_mutex_;
-  std::condition_variable keyframe_cv_;
-  std::deque<MargiFrame, Eigen::aligned_allocator<MargiFrame>> keyframes_, reset_tail_;
+  std::mutex marginal_mutex_;
+  std::condition_variable marginal_cv_;
+  std::deque<MargiFrame, Eigen::aligned_allocator<MargiFrame>> marginal_frames_, reset_tail_;
   int reset_flag_ = 0;
 
   std::atomic_bool accepting_{true};
@@ -108,8 +109,10 @@ class SlamPipeline {
   std::atomic_uint64_t input_revision_{0};
 
   std::mutex input_mutex_;
-
   std::condition_variable input_cv_;
+
+  std::mutex image_mutex_;
+  std::deque<ImageMeas> image_buffer_;
 
   std::thread odometry_thread_;
   std::thread mapping_thread_;

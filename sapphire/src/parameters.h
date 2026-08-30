@@ -82,27 +82,11 @@ struct NaviMapParameters {
 
 struct PoseGraphParameters {
   bool enabled = true;
-  double loop_min_time_separation = 30.0;
-  double loop_min_travel_distance = 30.0;
-  double loop_max_rotation = 3.14;
-  double loop_search_radius = 15.0;
-  int loop_search_stride = 1;
-  int target_frame_count = 50;
-  double keyframe_voxel_size = 0.25;
-  double keyframe_voxel_size_inv = 4.0;
-  double fitness_threshold = 0.5;
+  double submap_voxel_size = 0.25;
+  double submap_voxel_size_inv = 4.0;
+  double submap_travel_distance = 15.0;
+  double submap_max_point_range = 20.0;
   double update_period_sec = 1.0;
-  int map_frame_stride = 3;
-  double map_voxel_size = 0.8;
-  int memory_stm_size = 30;
-  int memory_wm_size = 200;
-  int gicp_max_iterations = 32;
-  int gicp_k_correspondences = 16;
-  int gicp_min_inliers = 64;
-  int gicp_num_threads = 2;
-  double gicp_max_correspondence_distance = 2.0;
-  double gicp_transformation_epsilon = 0.01;
-  double gicp_rotation_epsilon = 0.01;
 };
 
 struct SapphireParameters {

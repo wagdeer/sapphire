@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "common.hpp"
+#include "key_frame.hpp"
 #include "parameters.h"
 
 namespace sapphire {
@@ -38,13 +39,9 @@ class PoseGraphBackend {
 
   bool enabled() const;
 
-  void addFrame(const std::shared_ptr<const vvec<float, 3>> &cloud_lidar, const Eigen::Isometry3d &T_odom_lidar, double stamp);
+  void addFrame(SubmapFrame frame);
 
   Eigen::Isometry3d T_map_odom() const;
-
-  void requestGlobalMap();
-
-  std::shared_ptr<const vvec<float, 3>> latestGlobalMap() const;
 
   std::shared_ptr<const NavigationGrid> latestOccupancyGrid() const;
 

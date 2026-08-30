@@ -23,7 +23,8 @@ class ParallelExecutor final {
   ParallelExecutor &operator=(const ParallelExecutor &) = delete;
 
   size_t thread_count() const noexcept { return thread_count_; }
-  size_t parallel_for(size_t item_count, size_t minimum_items_per_worker, const RangeTask &range_task, const ForegroundTask &foreground_task = {});
+  size_t parallel_for(size_t item_count, size_t minimum_items_per_worker, const RangeTask &range_task,
+                      const ForegroundTask &foreground_task = {});
 
  private:
   void worker_loop(size_t worker_index);

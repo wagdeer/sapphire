@@ -118,26 +118,10 @@ SapphireParameters load_parameters(const std::filesystem::path &path) {
   read_value(config, "local_submap.thread_num", parameters.local_submap.thread_num);
 
   read_value(config, "pose_graph.enabled", parameters.pose_graph.enabled);
-  read_value(config, "pose_graph.loop_min_time_separation", parameters.pose_graph.loop_min_time_separation);
-  read_value(config, "pose_graph.loop_min_travel_distance", parameters.pose_graph.loop_min_travel_distance);
-  read_value(config, "pose_graph.loop_max_rotation", parameters.pose_graph.loop_max_rotation);
-  read_value(config, "pose_graph.loop_search_radius", parameters.pose_graph.loop_search_radius);
-  read_value(config, "pose_graph.loop_search_stride", parameters.pose_graph.loop_search_stride);
-  read_value(config, "pose_graph.target_frame_count", parameters.pose_graph.target_frame_count);
-  read_value(config, "pose_graph.keyframe_voxel_size", parameters.pose_graph.keyframe_voxel_size);
-  read_value(config, "pose_graph.fitness_threshold", parameters.pose_graph.fitness_threshold);
+  read_value(config, "pose_graph.submap_voxel_size", parameters.pose_graph.submap_voxel_size);
+  read_value(config, "pose_graph.submap_travel_distance", parameters.pose_graph.submap_travel_distance);
+  read_value(config, "pose_graph.submap_max_point_range", parameters.pose_graph.submap_max_point_range);
   read_value(config, "pose_graph.update_period_sec", parameters.pose_graph.update_period_sec);
-  read_value(config, "pose_graph.map_frame_stride", parameters.pose_graph.map_frame_stride);
-  read_value(config, "pose_graph.map_voxel_size", parameters.pose_graph.map_voxel_size);
-  read_value(config, "pose_graph.memory_stm_size", parameters.pose_graph.memory_stm_size);
-  read_value(config, "pose_graph.memory_wm_size", parameters.pose_graph.memory_wm_size);
-  read_value(config, "pose_graph.gicp.max_iterations", parameters.pose_graph.gicp_max_iterations);
-  read_value(config, "pose_graph.gicp.k_correspondences", parameters.pose_graph.gicp_k_correspondences);
-  read_value(config, "pose_graph.gicp.min_inliers", parameters.pose_graph.gicp_min_inliers);
-  read_value(config, "pose_graph.gicp.num_threads", parameters.pose_graph.gicp_num_threads);
-  read_value(config, "pose_graph.gicp.max_correspondence_distance", parameters.pose_graph.gicp_max_correspondence_distance);
-  read_value(config, "pose_graph.gicp.transformation_epsilon", parameters.pose_graph.gicp_transformation_epsilon);
-  read_value(config, "pose_graph.gicp.rotation_epsilon", parameters.pose_graph.gicp_rotation_epsilon);
 
   read_value(config, "navi_map.enabled", parameters.navi_map.enabled);
   read_value(config, "navi_map.resolution", parameters.navi_map.resolution);
@@ -227,28 +211,10 @@ void validate_parameters(SapphireParameters &parameters) {
     parameters.local_submap.plane_eigen_value_thre_inv.push_back(1.0 / threshold);
   }
 
-  require_nonnegative(parameters.pose_graph.loop_min_time_separation, "PoseGraph.loop_min_time_separation");
-  require_nonnegative(parameters.pose_graph.loop_min_travel_distance, "PoseGraph.loop_min_travel_distance");
-  require_positive(parameters.pose_graph.loop_max_rotation, "PoseGraph.loop_max_rotation");
-  require_positive(parameters.pose_graph.loop_search_radius, "PoseGraph.loop_search_radius");
-  require_positive(parameters.pose_graph.loop_search_stride, "PoseGraph.loop_search_stride");
-  require_positive(parameters.pose_graph.target_frame_count, "PoseGraph.target_frame_count");
-  require_positive(parameters.pose_graph.keyframe_voxel_size, "PoseGraph.keyframe_voxel_size");
-  require_positive(parameters.pose_graph.fitness_threshold, "PoseGraph.fitness_threshold");
+  require_positive(parameters.pose_graph.submap_voxel_size, "PoseGraph.submap_voxel_size");
+  require_positive(parameters.pose_graph.submap_travel_distance, "PoseGraph.submap_travel_distance");
+  require_positive(parameters.pose_graph.submap_max_point_range, "PoseGraph.submap_max_point_range");
   require_positive(parameters.pose_graph.update_period_sec, "PoseGraph.update_period_sec");
-  require_positive(parameters.pose_graph.map_frame_stride, "PoseGraph.map_frame_stride");
-  require_positive(parameters.pose_graph.map_voxel_size, "PoseGraph.map_voxel_size");
-  require_positive(parameters.pose_graph.memory_stm_size, "PoseGraph.memory_stm_size");
-  if (parameters.pose_graph.memory_wm_size < 0) {
-    throw std::invalid_argument("PoseGraph.memory_wm_size must be nonnegative");
-  }
-  require_positive(parameters.pose_graph.gicp_max_iterations, "PoseGraph.gicp.gicp_max_iterations");
-  require_positive(parameters.pose_graph.gicp_k_correspondences, "PoseGraph.gicp.gicp_k_correspondences");
-  require_positive(parameters.pose_graph.gicp_min_inliers, "PoseGraph.gicp.gicp_min_inliers");
-  require_positive(parameters.pose_graph.gicp_num_threads, "PoseGraph.gicp.gicp_num_threads");
-  require_positive(parameters.pose_graph.gicp_max_correspondence_distance, "PoseGraph.gicp.gicp_max_correspondence_distance");
-  require_positive(parameters.pose_graph.gicp_transformation_epsilon, "PoseGraph.gicp.gicp_transformation_epsilon");
-  require_positive(parameters.pose_graph.gicp_rotation_epsilon, "PoseGraph.gicp.gicp_rotation_epsilon");
 
   require_positive(parameters.navi_map.resolution, "NaviMap.resolution");
   require_nonnegative(parameters.navi_map.h_clearance, "NaviMap.h_clearance");
@@ -275,7 +241,7 @@ void validate_parameters(SapphireParameters &parameters) {
   parameters.initializer.plane_eigen_value_thre_inv = 1.0 / parameters.initializer.plane_eigen_value_thre;
   parameters.odometry.down_size_inv = 1.0 / parameters.odometry.down_size;
   parameters.odometry.voxel_size_inv = 1.0 / parameters.odometry.voxel_size;
-  parameters.pose_graph.keyframe_voxel_size_inv = 1.0 / parameters.pose_graph.keyframe_voxel_size;
+  parameters.pose_graph.submap_voxel_size_inv = 1.0 / parameters.pose_graph.submap_voxel_size;
 }
 
 }  // namespace sapphire

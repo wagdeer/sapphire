@@ -23,29 +23,15 @@
 #include <vector>
 
 /** Library version: 0xMmP (M=Major,m=minor,P=patch) */
-#define NANOFLANN_VERSION 0x190
+#define NANOFLANN_VERSION 0x210
 
-// Avoid conflicting declaration of min/max macros in Windows headers
-#if !defined(NOMINMAX) && (defined(_WIN32) || defined(_WIN32_) || defined(WIN32) || defined(_WIN64))
-#define NOMINMAX
-#ifdef max
-#undef max
-#undef min
-#endif
-#endif
 // Avoid conflicts with X11 headers
 #ifdef None
 #undef None
 #endif
 
-// Handle restricted pointers
-#if defined(__GNUC__) || defined(__clang__)
+// Restricted pointers for GCC/Clang on Linux
 #define NANOFLANN_RESTRICT __restrict__
-#elif defined(_MSC_VER)
-#define NANOFLANN_RESTRICT __restrict
-#else
-#define NANOFLANN_RESTRICT
-#endif
 
 // [[nodiscard]] support
 #if defined(__has_cpp_attribute) && __has_cpp_attribute(nodiscard)
@@ -71,7 +57,7 @@ namespace nanoflann
 /** @addtogroup nanoflann_grp nanoflann C++ library for KD-trees
  *  @{ */
 
-/** the PI constant (required to avoid MSVC missing symbols) */
+/** the PI constant */
 template <typename T>
 constexpr T pi_const()
 {

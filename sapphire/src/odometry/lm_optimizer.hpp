@@ -153,7 +153,8 @@ class LI_BA_Optimizer {
   }
 
  private:
-  double linearize(int window_size, const std::vector<StateGroup> &states, LidarFactor &lidar_factor, const std::deque<ImuFactor *> &imu_factors) {
+  double linearize(int window_size, const std::vector<StateGroup> &states, LidarFactor &lidar_factor,
+                   const std::deque<ImuFactor *> &imu_factors) {
     hessian_.setZero();
     jacobian_.setZero();
     double imu_residual = 0.0;
@@ -277,7 +278,8 @@ class LI_BA_OptimizerGravity {
   }
 
  private:
-  double linearize(int window_size, const std::vector<StateGroup> &states, LidarFactor &lidar_factor, const std::deque<ImuFactor *> &imu_factors) {
+  double linearize(int window_size, const std::vector<StateGroup> &states, LidarFactor &lidar_factor,
+                   const std::deque<ImuFactor *> &imu_factors) {
     hessian_.setZero();
     jacobian_.setZero();
     const int gravity_offset = window_size * STATE_DOF;
@@ -287,9 +289,11 @@ class LI_BA_OptimizerGravity {
         imu_hessian_.setZero();
         imu_jacobian_.setZero();
         imu_residual += imu_factors[index]->give_evaluate_g(states[index], states[index + 1], imu_hessian_, imu_jacobian_, true);
-        hessian_.block<2 * STATE_DOF, 2 * STATE_DOF>(index * STATE_DOF, index * STATE_DOF) += imu_hessian_.block<2 * STATE_DOF, 2 * STATE_DOF>(0, 0);
+        hessian_.block<2 * STATE_DOF, 2 * STATE_DOF>(index * STATE_DOF, index * STATE_DOF) +=
+            imu_hessian_.block<2 * STATE_DOF, 2 * STATE_DOF>(0, 0);
         hessian_.block<2 * STATE_DOF, 3>(index * STATE_DOF, gravity_offset) += imu_hessian_.block<2 * STATE_DOF, 3>(0, 2 * STATE_DOF);
-        hessian_.block<3, 2 * STATE_DOF>(gravity_offset, index * STATE_DOF) += imu_hessian_.block<3, 2 * STATE_DOF>(2 * STATE_DOF, 0);
+        hessian_.block<3, 2 * STATE_DOF>(gravity_offset, index * STATE_DOF) +=
+            imu_hessian_.block<3, 2 * STATE_DOF>(2 * STATE_DOF, 0);
         hessian_.block<3, 3>(gravity_offset, gravity_offset) += imu_hessian_.block<3, 3>(2 * STATE_DOF, 2 * STATE_DOF);
         jacobian_.block<2 * STATE_DOF, 1>(index * STATE_DOF, 0) += imu_jacobian_.head(2 * STATE_DOF);
         jacobian_.tail(3) += imu_jacobian_.tail(3);

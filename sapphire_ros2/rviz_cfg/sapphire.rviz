@@ -146,7 +146,7 @@ Visualization Manager:
       Selectable: true
       Size (Pixels): 1
       Size (m): 0.009999999776482582
-      Style: Points
+      Style: Squares
       Topic:
         Depth: 2
         Durability Policy: Volatile
@@ -185,16 +185,16 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 150.77099609375
+      Distance: 124.3060531616211
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 4.201513290405273
-        Y: -2.314882278442383
-        Z: 8.272177696228027
+        X: -2.3559091091156006
+        Y: -4.185905456542969
+        Z: 1.137763261795044
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
@@ -203,19 +203,19 @@ Visualization Manager:
       Pitch: 1.5697963237762451
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 0.608558714389801
+      Yaw: 0.6235553622245789
     Saved: ~
 Window Geometry:
   Displays:
-    collapsed: false
+    collapsed: true
   Height: 920
-  Hide Left Dock: false
+  Hide Left Dock: true
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000001560000033efc0200000003fb000000100044006900730070006c006100790073010000003d0000033e000000c900fffffffb0000001200530065006c0065006300740069006f006e00000001a9000000a60000005c00fffffffb0000000a00560069006500770073000000020700000174000000a400ffffff000005570000033e00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000100000000000001560000033efc0200000003fb000000100044006900730070006c006100790073000000003d0000033e000000c900fffffffb0000001200530065006c0065006300740069006f006e00000001a9000000a60000005c00fffffffb0000000a00560069006500770073000000020700000174000000a400ffffff000006b30000033e00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Views:
     collapsed: false
   Width: 1715
-  X: 876
-  Y: 195
+  X: 845
+  Y: 151

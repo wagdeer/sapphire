@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <optional>
 #include <sapphire_ros2/sapphire_node.hpp>
 #include <stdexcept>
 #include <string>
@@ -40,7 +41,8 @@ geometry_msgs::msg::TransformStamped make_transform(const builtin_interfaces::ms
   return message;
 }
 
-sensor_msgs::msg::PointCloud2 point_cloud_message(const sapphire::vvec<double, 3> &points, const builtin_interfaces::msg::Time &stamp, const char *frame) {
+sensor_msgs::msg::PointCloud2 point_cloud_message(const sapphire::vvec<double, 3> &points, const builtin_interfaces::msg::Time &stamp,
+                                                  const char *frame) {
   pcl::PointCloud<pcl::PointXYZINormal> cloud;
   cloud.reserve(points.size());
   for (const Eigen::Vector3d &point : points) {
@@ -70,6 +72,8 @@ SapphireNode::SapphireNode() : Node("cmn_sapphire") {
   const std::string algorithm_config = parameter(*this, "algorithm_config", package_share + "/config/mid360.toml");
   const std::string lidar_topic = parameter(*this, "topics.lidar", std::string("/front_lidar"));
   const std::string imu_topic = parameter(*this, "topics.imu", std::string("/front_lidar/imu"));
+  const std::string image_topic = parameter(*this, "topics.image", std::string("/camera/image"));
+  const bool compressed_image = parameter(*this, "image.compressed", false);
   const std::string scan_topic = parameter(*this, "topics.scan", std::string("/map_scan"));
   const std::string local_map_topic = parameter(*this, "topics.local_map", std::string("/map_cmap"));
   const std::string trajectory_topic = parameter(*this, "topics.trajectory", std::string("/map_path"));
@@ -81,7 +85,8 @@ SapphireNode::SapphireNode() : Node("cmn_sapphire") {
   base_frame_ = parameter(*this, "frames.base", base_frame_);
   const int imu_qos_depth = parameter(*this, "qos.imu_depth", 1000);
   const int lidar_qos_depth = parameter(*this, "qos.lidar_depth", 5);
-  if (imu_qos_depth <= 0 || lidar_qos_depth <= 0) {
+  const int image_qos_depth = parameter(*this, "qos.image_depth", 2);
+  if (imu_qos_depth <= 0 || lidar_qos_depth <= 0 || image_qos_depth <= 0) {
     throw std::invalid_argument("QoS depths must be positive");
   }
 
@@ -119,16 +124,28 @@ SapphireNode::SapphireNode() : Node("cmn_sapphire") {
 
   imu_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   lidar_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  image_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   rclcpp::SubscriptionOptions imu_options;
   imu_options.callback_group = imu_callback_group_;
   rclcpp::SubscriptionOptions lidar_options;
   lidar_options.callback_group = lidar_callback_group_;
+  rclcpp::SubscriptionOptions image_options;
+  image_options.callback_group = image_callback_group_;
   imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
       imu_topic, rclcpp::SensorDataQoS().keep_last(static_cast<size_t>(imu_qos_depth)),
       [this](const sensor_msgs::msg::Imu::ConstSharedPtr message) { imu_callback(message); }, imu_options);
   lidar_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       lidar_topic, rclcpp::SensorDataQoS().keep_last(static_cast<size_t>(lidar_qos_depth)),
       [this](const sensor_msgs::msg::PointCloud2::ConstSharedPtr message) { lidar_callback(message); }, lidar_options);
+  if (compressed_image) {
+    compressed_image_sub_ = create_subscription<sensor_msgs::msg::CompressedImage>(
+        image_topic, rclcpp::SensorDataQoS().keep_last(static_cast<size_t>(image_qos_depth)),
+        [this](const sensor_msgs::msg::CompressedImage::ConstSharedPtr message) { compressed_image_callback(message); }, image_options);
+  } else {
+    image_sub_ = create_subscription<sensor_msgs::msg::Image>(
+        image_topic, rclcpp::SensorDataQoS().keep_last(static_cast<size_t>(image_qos_depth)),
+        [this](const sensor_msgs::msg::Image::ConstSharedPtr message) { image_callback(message); }, image_options);
+  }
   finish_timer_ = create_wall_timer(std::chrono::milliseconds(100), [this] { finish_callback(); });
 
   RCLCPP_INFO(get_logger(), "using Sapphire core config: %s", algorithm_config.c_str());
@@ -136,6 +153,8 @@ SapphireNode::SapphireNode() : Node("cmn_sapphire") {
 
 SapphireNode::~SapphireNode() {
   finish_timer_.reset();
+  compressed_image_sub_.reset();
+  image_sub_.reset();
   lidar_sub_.reset();
   imu_sub_.reset();
   if (pipeline_) {
@@ -167,14 +186,35 @@ void SapphireNode::lidar_callback(const sensor_msgs::msg::PointCloud2::ConstShar
   }
 }
 
+void SapphireNode::image_callback(const sensor_msgs::msg::Image::ConstSharedPtr &message) {
+  std::optional<sapphire::ImageMeas> image = image_processor_.process(message);
+  if (!image) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000, "Unsupported or malformed raw image input");
+    return;
+  }
+  if (!pipeline_->push_image(std::move(*image))) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "Rejected grayscale image");
+  }
+}
+
+void SapphireNode::compressed_image_callback(const sensor_msgs::msg::CompressedImage::ConstSharedPtr &message) {
+  std::optional<sapphire::ImageMeas> image = image_processor_.process(message);
+  if (!image) {
+    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000, "Unable to decode compressed image input");
+    return;
+  }
+  if (!pipeline_->push_image(std::move(*image))) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "Rejected grayscale image");
+  }
+}
+
 void SapphireNode::finish_callback() {
   bool finish = false;
   get_parameter("finish", finish);
   if (!finish || shutdown_started_.exchange(true)) {
     return;
   }
-  pipeline_->shutdown();
-  stop_output();
+  RCLCPP_INFO(get_logger(), "finish requested; waiting for active callbacks before flushing");
   if (rclcpp::ok()) {
     rclcpp::shutdown();
   }
