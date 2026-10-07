@@ -2,7 +2,7 @@
 
 #include <Eigen/Core>
 
-#include "../thirdparty/lie/SO3.hpp"
+#include "thirdparty/lie/SO3.hpp"
 
 namespace sapphire {
 

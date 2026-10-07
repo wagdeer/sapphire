@@ -1,10 +1,10 @@
-#include <voxelmaps.hpp>
 #include <algorithm>
 #include <array>
 #include <cstring>
 #include <istream>
 #include <limits>
 #include <ostream>
+#include <voxelmaps.hpp>
 
 namespace cpu {
 namespace {
@@ -19,8 +19,12 @@ struct SparseBucket {
 constexpr std::array<char, 8> kVoxelMapsMagic{{'P', 'Y', 'R', 'V', 'O', 'X', '0', '4'}};
 constexpr std::uint32_t kVoxelMapsVersion = 4;
 const std::array<Eigen::Vector3i, 7> kLowerCornerNeighbors{{
-    Eigen::Vector3i(-1, -1, 0), Eigen::Vector3i(-1, 0, 0),  Eigen::Vector3i(0, -1, 0),
-    Eigen::Vector3i(-1, -1, -1), Eigen::Vector3i(-1, 0, -1), Eigen::Vector3i(0, -1, -1),
+    Eigen::Vector3i(-1, -1, 0),
+    Eigen::Vector3i(-1, 0, 0),
+    Eigen::Vector3i(0, -1, 0),
+    Eigen::Vector3i(-1, -1, -1),
+    Eigen::Vector3i(-1, 0, -1),
+    Eigen::Vector3i(0, -1, -1),
     Eigen::Vector3i(0, 0, -1),
 }};
 
@@ -108,8 +112,14 @@ bool contains_voxel(const VoxelBuckets& buckets, int max_bucket_scan_count, cons
 VoxelMaps::VoxelMaps() : min_level_res_(0.5F), max_level_(3), max_bucket_scan_count_(10) {}
 
 void VoxelMaps::create_voxelmaps(const Eigen::Vector3f* points, std::size_t point_count) {
-  if (!std::isfinite(min_level_res_) || min_level_res_ <= 0.0F || max_level_ < 0 || max_bucket_scan_count_ <= 0 ||
-      (points == nullptr && point_count != 0)) {
+  if (points == nullptr && point_count != 0) {
+    throw std::invalid_argument("Invalid pyramid voxel parameters");
+  }
+  create_voxelmaps(point_count, [points](std::size_t point_index) { return points[point_index]; });
+}
+
+void VoxelMaps::create_voxelmaps(std::size_t point_count, const PointAccessor& point_at) {
+  if (!std::isfinite(min_level_res_) || min_level_res_ <= 0.0F || max_level_ < 0 || max_bucket_scan_count_ <= 0 || !point_at) {
     throw std::invalid_argument("Invalid pyramid voxel parameters");
   }
 
@@ -120,10 +130,11 @@ void VoxelMaps::create_voxelmaps(const Eigen::Vector3f* points, std::size_t poin
     occupied_voxels.reserve(point_count * 2U);
     const float inverse_resolution = 1.0F / std::ldexp(min_level_res_, level);
     for (std::size_t point_index = 0; point_index < point_count; ++point_index) {
-      if (!points[point_index].allFinite()) {
+      const Eigen::Vector3f point = point_at(point_index);
+      if (!point.allFinite()) {
         continue;
       }
-      const Eigen::Vector3i coordinate = (points[point_index].array() * inverse_resolution).floor().cast<int>();
+      const Eigen::Vector3i coordinate = (point.array() * inverse_resolution).floor().cast<int>();
       occupied_voxels.emplace(coordinate);
       for (const Eigen::Vector3i& offset : kLowerCornerNeighbors) {
         occupied_voxels.emplace(coordinate + offset);
@@ -192,9 +203,7 @@ VoxelMaps::Buckets VoxelMaps::create_hash_buckets(const UnorderedVoxelSet& occup
 
   Buckets buckets;
   const std::size_t maximum_bucket_count =
-      occupied_voxels.size() > std::numeric_limits<std::size_t>::max() / 16U
-          ? std::numeric_limits<std::size_t>::max()
-          : occupied_voxels.size() * 16U;
+      occupied_voxels.size() > std::numeric_limits<std::size_t>::max() / 16U ? std::numeric_limits<std::size_t>::max() : occupied_voxels.size() * 16U;
   for (std::size_t num_buckets = occupied_voxels.size(); num_buckets <= maximum_bucket_count;) {
     buckets.resize(num_buckets);
     std::fill(buckets.begin(), buckets.end(), Eigen::Vector4i::Zero());

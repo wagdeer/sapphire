@@ -10,7 +10,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "map_database.hpp"
+#include "backend/storage/map_database.hpp"
 
 namespace {
 
@@ -24,14 +24,21 @@ void check(bool condition, const char* message) {
   std::exit(1);
 }
 
-std::shared_ptr<sapphire::vvec<float, 3>> make_cloud() {
-  auto cloud = std::make_shared<sapphire::vvec<float, 3>>();
+std::shared_ptr<sapphire::GaussianCloud> make_cloud() {
+  auto cloud = std::make_shared<sapphire::GaussianCloud>();
   cloud->reserve(32U * 32U * 8U);
   for (int x = 0; x < 32; ++x) {
     for (int y = 0; y < 32; ++y) {
       for (int z = 0; z < 8; ++z) {
-        cloud->emplace_back((x - 16) * 0.37F + y * 0.003F, (y - 16) * 0.41F + z * 0.005F,
-                            (z - 4) * 0.43F + static_cast<float>((x * y) % 7) * 0.007F);
+        sapphire::GaussianPoint point;
+        point.mean = Eigen::Vector3f(static_cast<float>((x - 16) * 0.37 + y * 0.003),
+                                     static_cast<float>((y - 16) * 0.41 + z * 0.005),
+                                     static_cast<float>((z - 4) * 0.43 + static_cast<double>((x * y) % 7) * 0.007));
+        point.covariance = Eigen::Matrix3f::Identity() / 9.0F;
+        point.voxel_key = sapphire::VOXEL_LOC(x, y, z, 0);
+        point.N = 1;
+        point.regularize();
+        cloud->emplace_back(std::move(point));
       }
     }
   }
@@ -74,20 +81,33 @@ std::size_t occupied_bucket_count(const cpu::VoxelBuckets& buckets) {
 }  // namespace
 
 int main() {
-  const std::shared_ptr<sapphire::vvec<float, 3>> cloud = make_cloud();
+  const std::shared_ptr<sapphire::GaussianCloud> cloud = make_cloud();
+  sapphire::vvec<float, 3> means;
+  means.reserve(cloud->size());
+  for (const sapphire::GaussianPoint& point : *cloud) {
+    means.emplace_back(point.mean);
+  }
   cpu::VoxelMaps voxelmaps;
   voxelmaps.set_min_res(0.5F);
   voxelmaps.set_max_level(3);
-  voxelmaps.create_voxelmaps(cloud->data(), cloud->size());
+  voxelmaps.create_voxelmaps(means.data(), means.size());
   const cpu::VoxelMapsData original = voxelmaps.release_data();
+  cpu::VoxelMaps accessor_voxelmaps;
+  accessor_voxelmaps.set_min_res(0.5F);
+  accessor_voxelmaps.set_max_level(3);
+  accessor_voxelmaps.create_voxelmaps(
+      cloud->size(), [cloud](std::size_t index) { return (*cloud)[index].mean; });
+  const cpu::VoxelMapsData accessor_built = accessor_voxelmaps.release_data();
+  check(equivalent(original, accessor_built),
+        "Gaussian-mean accessor builds the same occupancy as the legacy point range");
   check(original.level_buckets.size() == static_cast<std::size_t>(original.max_level + 1),
         "original-style tolerant occupancy stores every pyramid level");
   check(original.resolution(0) == 0.5F && original.resolution(3) == 4.0F,
         "pyramid resolutions are derived from a fixed factor of two");
 
   std::unordered_set<Eigen::Vector3i, cpu::VoxelMaps::VectorHash, cpu::VoxelMaps::VctorEqual> unique_exact;
-  for (const Eigen::Vector3f& point : *cloud) {
-    unique_exact.insert((point.array() / original.min_level_resolution).floor().cast<int>());
+  for (const sapphire::GaussianPoint& point : *cloud) {
+    unique_exact.insert((point.mean.array() / original.min_level_resolution).floor().cast<int>());
   }
   check(occupied_bucket_count(original.level_buckets.front()) > unique_exact.size(),
         "level zero includes the original neighborhood tolerance");
@@ -138,7 +158,10 @@ int main() {
     lio.timestamp = 1.0;
     sapphire::NavigationPath navigation;
     navigation.samples.push_back({1.0, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F});
-    sapphire::SubmapFrame submap(0, std::move(lio), 0, 9, 10, 0.0, 15.0, original, std::move(navigation), {});
+    sapphire::OdomPoses odom_poses;
+    odom_poses.push_back({1.0, lio.T_odom_base});
+    sapphire::SubmapFrame submap(0, std::move(lio), 0, 0, 1, 0.0, 15.0, original, std::move(odom_poses),
+                                 std::move(navigation), {});
     sapphire::LocalGrid local_grid(0.1F);
     sapphire::MapDatabase database(database_path.string());
 

@@ -65,42 +65,36 @@ set(_gtsam_sources
   gtsam/base/types.cpp
   gtsam/base/utilities.cpp
 
-  gtsam/discrete/DecisionTreeFactor.cpp
-  gtsam/discrete/DiscreteBayesNet.cpp
-  gtsam/discrete/DiscreteBayesTree.cpp
-  gtsam/discrete/DiscreteConditional.cpp
-  gtsam/discrete/DiscreteEliminationTree.cpp
-  gtsam/discrete/DiscreteFactor.cpp
-  gtsam/discrete/DiscreteFactorGraph.cpp
-  gtsam/discrete/DiscreteJunctionTree.cpp
+  # NonlinearFactor/Values expose HybridValues in their public API. Keep only
+  # the discrete value bridge required by that header dependency.
   gtsam/discrete/DiscreteKey.cpp
-  gtsam/discrete/DiscreteLookupDAG.cpp
-  gtsam/discrete/DiscreteMarginals.cpp
   gtsam/discrete/DiscreteValues.cpp
-  gtsam/discrete/Signature.cpp
-  gtsam/discrete/SignatureParser.cpp
-  gtsam/discrete/TableDistribution.cpp
-  gtsam/discrete/TableFactor.cpp
 
+  # Geometry required by pose-graph optimization, visual bundle adjustment
+  # and AttitudeFactor<Pose3>.
+  gtsam/geometry/Cal3.cpp
+  gtsam/geometry/Cal3_S2.cpp
+  gtsam/geometry/Cal3_S2Stereo.cpp
+  gtsam/geometry/CalibratedCamera.cpp
+  gtsam/geometry/Event.cpp
+  gtsam/geometry/ExtendedPose3.cpp
+  gtsam/geometry/Gal3.cpp
   gtsam/geometry/Kernel.cpp
+  gtsam/geometry/Point2.cpp
   gtsam/geometry/Point3.cpp
+  gtsam/geometry/Pose2.cpp
   gtsam/geometry/Pose3.cpp
+  gtsam/geometry/Rot2.cpp
   gtsam/geometry/Rot3.cpp
   gtsam/geometry/Rot3M.cpp
   gtsam/geometry/SO3.cpp
+  gtsam/geometry/SOn.cpp
+  gtsam/geometry/StereoCamera.cpp
+  gtsam/geometry/StereoPoint2.cpp
   gtsam/geometry/Unit3.cpp
 
-  gtsam/hybrid/HybridBayesNet.cpp
-  gtsam/hybrid/HybridBayesTree.cpp
-  gtsam/hybrid/HybridConditional.cpp
-  gtsam/hybrid/HybridEliminationTree.cpp
-  gtsam/hybrid/HybridFactor.cpp
-  gtsam/hybrid/HybridFactorGraph.cpp
-  gtsam/hybrid/HybridGaussianConditional.cpp
-  gtsam/hybrid/HybridGaussianFactor.cpp
-  gtsam/hybrid/HybridGaussianFactorGraph.cpp
-  gtsam/hybrid/HybridGaussianProductFactor.cpp
-  gtsam/hybrid/HybridJunctionTree.cpp
+  # Continuous SLAM does not use hybrid elimination, but Values requires this
+  # lightweight adapter implementation.
   gtsam/hybrid/HybridValues.cpp
 
   gtsam/inference/BayesTree.cpp
@@ -115,6 +109,7 @@ set(_gtsam_sources
   gtsam/inference/inferenceExceptions.cpp
 
   gtsam/linear/Errors.cpp
+  gtsam/linear/ConjugateGradientSolver.cpp
   gtsam/linear/GaussianBayesNet.cpp
   gtsam/linear/GaussianBayesTree.cpp
   gtsam/linear/GaussianConditional.cpp
@@ -125,22 +120,48 @@ set(_gtsam_sources
   gtsam/linear/HessianFactor.cpp
   gtsam/linear/JacobianFactor.cpp
   gtsam/linear/JointMarginal.cpp
+  gtsam/linear/IterativeSolver.cpp
   gtsam/linear/LossFunctions.cpp
+  gtsam/linear/MultifrontalClique.cpp
+  gtsam/linear/MultifrontalSolver.cpp
   gtsam/linear/NoiseModel.cpp
+  gtsam/linear/PCGSolver.cpp
+  gtsam/linear/Preconditioner.cpp
   gtsam/linear/Sampler.cpp
   gtsam/linear/Scatter.cpp
+  gtsam/linear/SubgraphBuilder.cpp
+  gtsam/linear/SubgraphPreconditioner.cpp
+  gtsam/linear/SubgraphSolver.cpp
   gtsam/linear/VectorValues.cpp
   gtsam/linear/linearExceptions.cpp
 
+  # Hard-constraint discovery used by the GTSAM 4.3 nonlinear
+  # multifrontal solver.
+  gtsam/constrained/NonlinearEqualityConstraint.cpp
+
+  # Gravity/attitude constraints used by RTAB-Map's GTSAM backend.
+  gtsam/navigation/AttitudeFactor.cpp
+  gtsam/navigation/NavState.cpp
+
+  # Batch optimizers, marginals and incremental iSAM2.
+  gtsam/nonlinear/DoglegOptimizer.cpp
   gtsam/nonlinear/DoglegOptimizerImpl.cpp
+  gtsam/nonlinear/GaussNewtonOptimizer.cpp
+  gtsam/nonlinear/GncOptimizer.cpp
   gtsam/nonlinear/GraphvizFormatting.cpp
   gtsam/nonlinear/ISAM2-impl.cpp
   gtsam/nonlinear/ISAM2.cpp
   gtsam/nonlinear/ISAM2Clique.cpp
   gtsam/nonlinear/ISAM2Params.cpp
+  gtsam/nonlinear/LevenbergMarquardtOptimizer.cpp
+  gtsam/nonlinear/LevenbergMarquardtParams.cpp
   gtsam/nonlinear/LinearContainerFactor.cpp
+  gtsam/nonlinear/Marginals.cpp
   gtsam/nonlinear/NonlinearFactor.cpp
   gtsam/nonlinear/NonlinearFactorGraph.cpp
+  gtsam/nonlinear/NonlinearMultifrontalSolver.cpp
+  gtsam/nonlinear/NonlinearOptimizer.cpp
+  gtsam/nonlinear/NonlinearOptimizerParams.cpp
   gtsam/nonlinear/Values.cpp
 
   gtsam/symbolic/SymbolicBayesNet.cpp
@@ -177,6 +198,7 @@ target_include_directories(gtsam SYSTEM
 
 target_link_libraries(gtsam PUBLIC Eigen3::Eigen)
 target_link_libraries(gtsam PUBLIC m)
+target_compile_definitions(gtsam PUBLIC EIGEN_DONT_PARALLELIZE)
 
 unset(_gtsam_sources)
 unset(_gtsam_root)

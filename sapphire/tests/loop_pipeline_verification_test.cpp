@@ -8,9 +8,10 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <vector>
 
-#include "loop_closure.hpp"
+#include "backend/registration/loop_closure.hpp"
 
 namespace {
 
@@ -262,14 +263,52 @@ void verifyOnlyTop1EntersGicp() {
   check(selected.accepted && selected.target_id == 42 && selected.overlap > 0.9,
         "global BBS emits one deterministic Top1 when several candidates pass");
 
+  sapphire::GaussianCloud query_gaussians;
+  sapphire::GaussianCloud target_gaussians;
+  query_gaussians.reserve(query.size());
+  target_gaussians.reserve(target.size());
+  const Eigen::Matrix3f query_covariance = Eigen::Vector3f(0.0F, 0.02F, 0.04F).asDiagonal();
+  const Eigen::Matrix3f target_covariance =
+      (expected.linear() * query_covariance.cast<double>() * expected.linear().transpose()).cast<float>();
+  for (std::size_t index = 0; index < query.size(); ++index) {
+    sapphire::GaussianPoint query_gaussian;
+    query_gaussian.mean = query[index];
+    query_gaussian.covariance = query_covariance;
+    query_gaussian.N = 8;
+    query_gaussian.regularize();
+    query_gaussians.push_back(query_gaussian);
+
+    sapphire::GaussianPoint target_gaussian;
+    target_gaussian.mean = target[index];
+    target_gaussian.covariance = target_covariance;
+    target_gaussian.N = 8;
+    target_gaussian.regularize();
+    target_gaussians.push_back(target_gaussian);
+  }
+  const sapphire::GaussianCloudPtr query_cloud =
+      std::make_shared<const sapphire::GaussianCloud>(std::move(query_gaussians));
+  const sapphire::GaussianCloudPtr target_cloud =
+      std::make_shared<const sapphire::GaussianCloud>(std::move(target_gaussians));
+  check(std::abs(query_cloud->front().radius - 0.6F) < 1e-5F,
+        "Gaussian radius stores the three-sigma major-axis extent");
+  const sapphire::BbsResult gaussian_selected = sapphire::alignLoopBbs(*query_cloud, candidates);
+  check(gaussian_selected.accepted && gaussian_selected.target_id == selected.target_id &&
+            std::abs(gaussian_selected.overlap - selected.overlap) < 1e-12 &&
+            gaussian_selected.T_target_query.matrix().isApprox(selected.T_target_query.matrix(), 1e-6),
+        "production Gaussian BBS query matches the equivalent XYZ device-upload packing");
+
   std::size_t gicp_count = 0;
   sapphire::GicpResult refined;
+  const sapphire::GaussianPoint* const query_gaussian_data = query_cloud->data();
+  const sapphire::GaussianPoint* const target_gaussian_data = target_cloud->data();
   if (selected.accepted) {
     ++gicp_count;
-    refined = sapphire::refineLoopGicp(query, target, selected.T_target_query);
+    refined = sapphire::refineLoopGicp(query_cloud, target_cloud, selected.T_target_query);
   }
   check(gicp_count == 1, "only the selected Top1 invokes GICP");
-  check(refined.attempted && refined.accepted, "Top1 GICP succeeds");
+  check(refined.attempted && refined.accepted, "Top1 GICP consumes precomputed regularized covariances");
+  check(query_cloud->data() == query_gaussian_data && target_cloud->data() == target_gaussian_data,
+        "production GICP preserves the DB-backed Gaussian storage");
 }
 
 Cloud makeLowPruningQuery() {

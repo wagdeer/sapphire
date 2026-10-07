@@ -1,0 +1,26 @@
+cmn_sapphire:
+  ros__parameters:
+    lidar_mode: single
+    lidar_type: livox
+    obs_mode: lio
+    finish: false
+    topics:
+      lidar: "/front_lidar"
+      imu: "/front_lidar/imu"
+      image: "/front_camera/image_compressed"
+      scan: "/sapphire/current_scan"
+      local_map: "/sapphire/local_map"
+      trajectory: "/sapphire/trajectory"
+      odom: "/sapphire/odom_psoe"
+      map_pose: "/sapphire/map_pose"
+      navigation: "/sapphire/gridmap"
+    frames:
+      map: "map"
+      odom: "odom"
+      base: "base_link"
+    qos:
+      imu_depth: 2000
+      lidar_depth: 5
+      image_depth: 2
+    image:
+      compressed: true

@@ -3,7 +3,7 @@ save_path = "/userdata/software/map/lio_map/"
 save_map = 1
 
 [sensor]
-lidar_type = 0
+lidar_type = "livox"
 point_filter_num = 1
 blind = 0.10
 extrinsic_tran = [-0.011, -0.02329, 0.04412]
@@ -32,6 +32,15 @@ beam_err = 0.05
 voxel_size = 1.0
 min_eigen_value = 0.0025
 degrade_bound = 10
+
+# ESKF: use shared-map Gaussian observations only after geometric rejection.
+# Set enabled=true to let the ESKF path call the RICP observation component.
+[odometry.gicp_fallback]
+enabled = false
+source_resolution = 0.25  # m; source voxel statistics, computed only on fallback
+max_distance = 0.5        # m; must not exceed odometry.voxel_size when enabled
+variance_floor = 0.0005  # m^2; geometric covariance regularization
+max_iterations = 20      # small_gicp default; range 1..20
 
 [local_submap]
 win_size = 10

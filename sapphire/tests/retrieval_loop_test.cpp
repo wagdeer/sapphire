@@ -3,9 +3,11 @@
 #include <cstdlib>
 #include <bbs3d.hpp>
 #include <iostream>
+#include <chrono>
+#include <string>
 
-#include "loop_closure.hpp"
-#include "retrieval_index.hpp"
+#include "backend/registration/loop_closure.hpp"
+#include "backend/storage/retrieval_index.hpp"
 
 namespace {
 
@@ -43,7 +45,39 @@ sapphire::vvec<float, 3> makeCloud() {
 
 }  // namespace
 
-int main() {
+// Isolated query A/B: historical tree + postfilter versus active tree. Both modes
+// use the same current index code, data and checks; no SQLite/GPU/solver timings.
+int spatialBenchmark(const std::string &mode, std::size_t count) {
+  check((mode=="historical"||mode=="active")&&count>=16&&count<=1000000,"benchmark arguments");
+  sapphire::SubmapSpatialIndex index;
+  const sapphire::AABB box{Eigen::Vector3f(-10,-10,-1),Eigen::Vector3f(10,10,1)};
+  const auto live=[&](std::uint64_t id){return id>=count-16;};
+  for(std::size_t i=0;i<count;++i) {
+    // Slight differing placements, all intersect; imitate repeated nearby visits.
+    index.upsert(i,box,pose(float(i%8)*.01f,0,0),mode=="historical"||live(i));
+  }
+  std::size_t visited=0;
+  const auto run=[&] {
+    auto found=index.query(box,Eigen::Isometry3f::Identity());visited+=found.size();
+    found.erase(std::remove_if(found.begin(),found.end(),[&](const auto &m){return !live(m.submap_id);}),found.end());
+    std::sort(found.begin(),found.end(),[](const auto &a,const auto &b){return a.submap_id<b.submap_id;});
+    check(found.size()==16,"benchmark exact active target count");
+    for(std::size_t i=0;i<16;++i)check(found[i].submap_id==count-16+i&&found[i].map_T_submap.matrix().isApprox(pose(float((count-16+i)%8)*.01f,0,0).matrix()),"benchmark exact target identity/pose");
+  };
+  for(int i=0;i<10;++i)run(); // warm caches/allocator, exclude construction
+  visited=0;std::vector<double> samples;
+  for(int i=0;i<200;++i) {
+    const auto start=std::chrono::steady_clock::now();run();
+    samples.push_back(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count());
+  }
+  std::sort(samples.begin(),samples.end());
+  std::cout<<"mode="<<mode<<" identities="<<index.size()<<" tree_entries="<<index.activeSize()
+           <<" returned_per_query="<<visited/200<<" kept=16 median_us="<<samples[100]<<" p95_us="<<samples[190]<<'\n';
+  return 0;
+}
+
+int main(int argc,char **argv) {
+  if(argc==4&&std::string(argv[1])=="--spatial-benchmark")return spatialBenchmark(argv[2],std::stoull(argv[3]));
   sapphire::PoseRecallIndex pose_index;
   pose_index.upsert(10, pose(0.0F, 0.0F, 0.0F));
   pose_index.upsert(15, pose(1.0F, 0.0F, 0.0F));
@@ -99,6 +133,23 @@ int main() {
   spatial_matches = spatial_index.query(1, pose(8.0F, 0.0F, 0.0F));
   check(spatial_matches.size() == 1 && spatial_matches.front().submap_id == 1,
         "R-tree removes stale bounds after optimized-pose update");
+  spatial_index.setActive(1,false);
+  spatial_index.setActive(1,false);
+  check(spatial_index.size()==4&&spatial_index.contains(1)&&spatial_index.activeSize()==3&&!spatial_index.active(1),
+        "retirement preserves dense identity and idempotently removes tree membership");
+  spatial_index.updatePoses({{1,pose(9.0F,0,0)}});
+  check(spatial_index.query(1,pose(8,0,0)).empty(),"pose update cannot resurrect retired spatial target");
+  spatial_index.setActive(1,true);
+  spatial_matches=spatial_index.query(local_bounds,pose(9,0,0));
+  check(std::any_of(spatial_matches.begin(),spatial_matches.end(),[](const auto &m){return m.submap_id==1&&m.map_T_submap.translation().x()==9;}),
+        "explicit reactivation uses latest committed pose");
+  spatial_index.upsert(1,local_bounds,pose(8,0,0),false);
+  check(!spatial_index.active(1)&&spatial_index.query(1,pose(8,0,0)).empty(),"rebuild can directly create inactive membership");
+  sapphire::SubmapSpatialIndex sparse;
+  for(std::size_t i=0;i<65536;++i)sparse.upsert(i,local_bounds,pose(8,0,0),i==65535);
+  auto sparse_matches=sparse.query(0,pose(8,0,0));
+  check(sparse.size()==65536&&sparse.activeSize()==1&&sparse_matches.size()==1&&sparse_matches.front().submap_id==65535,
+        "large dense history yields only active target without losing query identity");
 
   sapphire::LoopCandidateStats adjacent_stats;
   check(!sapphire::isEligibleLoopTarget(2, 5, adjacent_stats) && adjacent_stats.rejected_adjacent == 1,

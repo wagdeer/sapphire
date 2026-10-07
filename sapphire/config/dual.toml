@@ -1,0 +1,82 @@
+# Calibration template: fill both extrinsics before running.
+# Works for overlapping and non-overlapping Airy96 installations.
+[general]
+save_path = "/tmp/sapphire_dual"
+save_map = 0
+
+[sensor]
+lidar_type = "airy"
+max_scan_duration = 0.25
+point_filter_num = 1
+blind = 0.10
+# REQUIRED: front LiDAR -> selected IMU, in meters.
+extrinsic_tran = []
+# REQUIRED: front LiDAR -> selected IMU, row-major rotation matrix.
+extrinsic_rota = []
+
+[initializer]
+imu_init_samples = 30
+down_size = 0.5
+max_iterations = 10
+min_plane_factors = 10
+ba_iterations = 3
+convergence_threshold = 0.05
+refined_convergence_threshold = 0.01
+degeneracy_threshold = 15.0
+min_eigen_value = 0.02
+plane_eigen_value_thre = 4.0
+
+[odometry]
+cov_gyr = 0.1
+cov_acc = 1.0
+rdw_gyr = 0.0001
+rdw_acc = 0.0001
+down_size = 0.1
+dept_err = 0.02
+beam_err = 0.05
+voxel_size = 1.0
+min_eigen_value = 0.0025
+degrade_bound = 10
+
+# ESKF: use shared-map Gaussian observations only after geometric rejection.
+# Set enabled=true to let the ESKF path call the RICP observation component.
+[odometry.gicp_fallback]
+enabled = false
+source_resolution = 0.25  # m; source voxel statistics, computed only on fallback
+max_distance = 0.5        # m; must not exceed odometry.voxel_size when enabled
+variance_floor = 0.0005  # m^2; geometric covariance regularization
+max_iterations = 20      # small_gicp default; range 1..20
+
+[local_submap]
+win_size = 10
+max_layer = 2
+cov_gyr = 0.01
+cov_acc = 2.0
+rdw_gyr = 0.0001
+rdw_acc = 0.0001
+plane_eigen_value_thre = [4.0, 4.0, 4.0, 4.0]
+imu_coef = 0.0002
+thread_num = 5
+
+[pose_graph]
+enabled = true
+submap_voxel_size = 0.25
+submap_travel_distance = 15.0
+submap_max_point_range = 20.0
+update_period_sec = 1.0
+
+[navi_map]
+enabled = false
+resolution = 0.1
+h_clearance = 2.0
+ground_margin = 0.5
+clear_height_eps = 0.1
+d_max = 6.0
+occ_threshold = 0.3
+usable_range = 40.0
+min_range = 0.5
+margin = 5.0
+hit_probability = 0.7
+miss_probability = 0.4
+clamp_min_probability = 0.1192
+clamp_max_probability = 0.971

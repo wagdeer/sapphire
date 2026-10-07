@@ -1,15 +1,18 @@
 #pragma once
 
+#include <Eigen/Eigenvalues>
 #include <algorithm>
 #include <cmath>
 #include <deque>
 #include <limits>
 #include <memory>
+#include <small_gicp/points/traits.hpp>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
-#include "../thirdparty/nanoflann.hpp"
-#include "state_group.hpp"
+#include "thirdparty/nanoflann.hpp"
+#include "common/state_group.hpp"
 
 namespace sapphire {
 
@@ -57,9 +60,121 @@ struct alignas(16) pointVar {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   Eigen::Vector3d pnt;
   Eigen::Matrix3d var;
+
+  // Right attitude error and world position error: J = [-R[p]x, I].
+  // Project the point/pose covariance without discarding their pose cross terms.
+  // Jacobian is caller-owned scratch; no pose or scratch is stored per point.
+  double projectVariance(const Eigen::Vector3d &normal, const Eigen::Matrix3d &rotation,
+                         const Eigen::Matrix<double, POSE_DOF, POSE_DOF> &covariance,
+                         Eigen::Matrix<double, POSE_DOF, 1> &jacobian) const {
+    const Eigen::Vector3d body_normal = rotation.transpose() * normal;
+    jacobian.head<3>() = pnt.cross(body_normal);
+    jacobian.tail<3>() = normal;
+    return body_normal.dot(var * body_normal) + jacobian.dot(covariance * jacobian);
+  }
 };
+
 using PointCloud = std::vector<pointVar>;
 using PointCloudPtr = std::shared_ptr<PointCloud>;
+
+class VOXEL_LOC {
+ public:
+  int64_t x, y, z;
+  int level;
+
+  VOXEL_LOC(int64_t vx = 0, int64_t vy = 0, int64_t vz = 0, int voxel_level = 0) : x(vx), y(vy), z(vz), level(voxel_level) {}
+
+  bool operator==(const VOXEL_LOC &other) const { return x == other.x && y == other.y && z == other.z && level == other.level; }
+};
+
+struct alignas(16) GaussianPoint {
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  Eigen::Vector3f mean = Eigen::Vector3f::Zero();
+  Eigen::Matrix3f covariance = Eigen::Matrix3f::Identity();
+  VOXEL_LOC voxel_key;
+  float radius = 0.0F;
+  int N = 0;
+  bool is_plane = false;
+
+  bool valid() const { return N > 0 && mean.allFinite() && covariance.allFinite() && std::isfinite(radius) && radius > 0.0F; }
+
+  GaussianPoint transformed(const Eigen::Matrix3d &rotation, const Eigen::Vector3d &translation) const {
+    GaussianPoint output = *this;
+    const Eigen::Vector3d mean_d = mean.cast<double>();
+    const Eigen::Matrix3d covariance_d = covariance.cast<double>();
+    output.mean = (rotation * mean_d + translation).cast<float>();
+    output.covariance = (rotation * covariance_d * rotation.transpose()).cast<float>();
+    return output;
+  }
+
+  GaussianPoint &operator+=(const GaussianPoint &source) {
+    if (!(voxel_key == source.voxel_key)) {
+      throw std::invalid_argument("Cannot merge Gaussian points with different voxel keys");
+    }
+    if (N < 0 || source.N < 0) {
+      throw std::invalid_argument("Cannot merge Gaussian points with negative counts");
+    }
+    if (!mean.allFinite() || !covariance.allFinite() || !source.mean.allFinite() || !source.covariance.allFinite()) {
+      throw std::invalid_argument("Cannot merge Gaussian points with non-finite moments");
+    }
+    if (source.N == 0) {
+      return *this;
+    }
+    if (N > std::numeric_limits<int>::max() - source.N) {
+      throw std::overflow_error("Gaussian point count overflow");
+    }
+    if (N <= 0) {
+      *this = source;
+      return *this;
+    }
+
+    is_plane = is_plane && source.is_plane;
+    const double target_count = static_cast<double>(N);
+    const double source_count = static_cast<double>(source.N);
+    const double total_count = target_count + source_count;
+    const Eigen::Vector3d target_mean = mean.cast<double>();
+    const Eigen::Vector3d delta = source.mean.cast<double>() - target_mean;
+    const Eigen::Matrix3d merged_covariance =
+        (target_count * covariance.cast<double>() + source_count * source.covariance.cast<double>() +
+         (target_count * source_count / total_count) * delta * delta.transpose()) / total_count;
+    mean = (target_mean + (source_count / total_count) * delta).cast<float>();
+    covariance = merged_covariance.cast<float>();
+    N += source.N;
+    radius = 0.0F;
+    return *this;
+  }
+
+  void regularize(Eigen::Vector3d eigenvalues, const Eigen::Matrix3d &eigenvectors) {
+    if (!eigenvalues.allFinite() || !eigenvectors.allFinite()) {
+      covariance = (1e-6 * Eigen::Matrix3d::Identity()).cast<float>();
+      radius = static_cast<float>(3.0 * std::sqrt(1e-6));
+      return;
+    }
+    const double largest = std::max(1e-6, eigenvalues.maxCoeff());
+    eigenvalues = eigenvalues.cwiseMax(std::max(1e-6, largest / 1e3));
+    covariance = (eigenvectors * eigenvalues.asDiagonal() * eigenvectors.transpose()).cast<float>();
+    radius = static_cast<float>(3.0 * std::sqrt(eigenvalues.maxCoeff()));
+  }
+
+  void regularize() {
+    const Eigen::Matrix3d covariance_d = covariance.cast<double>();
+    const Eigen::Matrix3d symmetric = 0.5 * (covariance_d + covariance_d.transpose());
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(symmetric);
+    if (solver.info() != Eigen::Success) {
+      covariance = (1e-6 * Eigen::Matrix3d::Identity()).cast<float>();
+      radius = static_cast<float>(3.0 * std::sqrt(1e-6));
+      return;
+    }
+    regularize(solver.eigenvalues(), solver.eigenvectors());
+  }
+};
+using GaussianCloud = std::vector<GaussianPoint, Eigen::aligned_allocator<GaussianPoint>>;
+using GaussianCloudPtr = std::shared_ptr<const GaussianCloud>;
+
+inline GaussianPoint operator+(GaussianPoint lhs, const GaussianPoint &rhs) {
+  lhs += rhs;
+  return lhs;
+}
 
 inline void calcMeasVar(Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &var) {
   if (pb[2] == 0) {
@@ -144,9 +259,36 @@ class PointCluster {
     v += vec;
   }
 
-  Eigen::Matrix3d cov() {
-    Eigen::Vector3d center = v / N;
-    return P / N - center * center.transpose();
+  Eigen::Vector3d mean() const {
+    if (N <= 0) {
+      return Eigen::Vector3d::Zero();
+    }
+    return v / static_cast<double>(N);
+  }
+
+  Eigen::Matrix3d cov() const {
+    if (N <= 0) {
+      return Eigen::Matrix3d::Zero();
+    }
+    const Eigen::Vector3d center = mean();
+    return P / static_cast<double>(N) - center * center.transpose();
+  }
+
+  GaussianPoint to_gaussianpoint(const VOXEL_LOC &voxel_key = VOXEL_LOC()) const {
+    GaussianPoint output;
+    output.mean = mean().cast<float>();
+    output.covariance = cov().cast<float>();
+    output.voxel_key = voxel_key;
+    output.N = N;
+    return output;
+  }
+
+  GaussianPoint to_gaussianpoint(const Eigen::Vector3d &eigenvalues, const Eigen::Matrix3d &eigenvectors) const {
+    GaussianPoint output;
+    output.mean = mean().cast<float>();
+    output.N = N;
+    output.regularize(eigenvalues, eigenvectors);
+    return output;
   }
 
   PointCluster &operator+=(const PointCluster &sigv) {
@@ -190,14 +332,33 @@ class EigenVectorAdapter {
 };
 using KDTree = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<double, EigenVectorAdapter>, EigenVectorAdapter, 3, size_t>;
 
-class VOXEL_LOC {
- public:
-  int64_t x, y, z;
-  VOXEL_LOC(int64_t vx = 0, int64_t vy = 0, int64_t vz = 0) : x(vx), y(vy), z(vz) {}
-  bool operator==(const VOXEL_LOC &other) const { return (x == other.x && y == other.y && z == other.z); }
+}  // namespace sapphire
+
+namespace small_gicp::traits {
+
+template <>
+struct Traits<sapphire::GaussianCloud> {
+  using Points = sapphire::GaussianCloud;
+
+  static std::size_t size(const Points &points) { return points.size(); }
+
+  static bool has_points(const Points &points) { return !points.empty(); }
+
+  static bool has_covs(const Points &points) { return !points.empty(); }
+
+  static Eigen::Vector4d point(const Points &points, std::size_t index) {
+    const Eigen::Vector3d mean = points[index].mean.cast<double>();
+    return Eigen::Vector4d(mean.x(), mean.y(), mean.z(), 1.0);
+  }
+
+  static Eigen::Matrix4d cov(const Points &points, std::size_t index) {
+    Eigen::Matrix4d covariance = Eigen::Matrix4d::Zero();
+    covariance.topLeftCorner<3, 3>() = points[index].covariance.cast<double>();
+    return covariance;
+  }
 };
 
-}  // namespace sapphire
+}  // namespace small_gicp::traits
 
 namespace std {
 template <>
@@ -205,7 +366,11 @@ struct hash<sapphire::VOXEL_LOC> {
   size_t operator()(const sapphire::VOXEL_LOC &s) const {
     using std::hash;
     using std::size_t;
-    return (((hash<int64_t>()(s.z) * 116101) % 10000000000 + hash<int64_t>()(s.y)) * 116101) % 10000000000 + hash<int64_t>()(s.x);
+    size_t seed = hash<int64_t>()(s.x);
+    seed ^= hash<int64_t>()(s.y) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= hash<int64_t>()(s.z) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= hash<int>()(s.level) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    return seed;
   }
 };
 }  // namespace std
