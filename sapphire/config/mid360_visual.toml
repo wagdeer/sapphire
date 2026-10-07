@@ -1,0 +1,107 @@
+[general]
+save_path = "/userdata/software/map/lio_map/"
+save_map = 1
+
+[sensor]
+lidar_type = "livox"
+point_filter_num = 1
+blind = 0.10
+extrinsic_tran = [-0.011, -0.02329, 0.04412]
+extrinsic_rota = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+
+[initializer]
+imu_init_samples = 30
+down_size = 0.5
+max_iterations = 10
+min_plane_factors = 10
+ba_iterations = 3
+convergence_threshold = 0.05
+refined_convergence_threshold = 0.01
+degeneracy_threshold = 15.0
+min_eigen_value = 0.02
+plane_eigen_value_thre = 4.0
+
+[odometry]
+cov_gyr = 0.1
+cov_acc = 1.0
+rdw_gyr = 0.0001
+rdw_acc = 0.0001
+down_size = 0.1
+dept_err = 0.02
+beam_err = 0.05
+voxel_size = 1.0
+min_eigen_value = 0.0025
+degrade_bound = 10
+
+# ESKF: use shared-map Gaussian observations only after geometric rejection.
+# Set enabled=true to let the ESKF path call the RICP observation component.
+[odometry.gicp_fallback]
+enabled = false
+source_resolution = 0.25  # m; source voxel statistics, computed only on fallback
+max_distance = 0.5        # m; must not exceed odometry.voxel_size when enabled
+variance_floor = 0.0005  # m^2; geometric covariance regularization
+max_iterations = 20      # small_gicp default; range 1..20
+
+[local_submap]
+win_size = 10
+max_layer = 2
+cov_gyr = 0.01
+cov_acc = 2.0
+rdw_gyr = 0.0001
+rdw_acc = 0.0001
+plane_eigen_value_thre = [4.0, 4.0, 4.0, 4.0]
+imu_coef = 0.0002
+thread_num = 5
+
+[pose_graph]
+enabled = true
+submap_voxel_size = 0.25
+submap_travel_distance = 15.0
+submap_max_point_range = 20.0
+update_period_sec = 1.0
+
+[navi_map]
+enabled = false
+adaptive_ground = true
+ground_plane_tolerance = 0.05
+ground_max_correction = 0.3
+resolution = 0.1
+h_clearance = 2.0
+ground_margin = 0.15
+clear_height_eps = 0.1
+d_max = 6.0
+occ_threshold = 0.3
+usable_range = 40.0
+min_range = 0.5
+margin = 5.0
+hit_probability = 0.7
+miss_probability = 0.4
+clamp_min_probability = 0.1192
+clamp_max_probability = 0.971
+
+# Legacy engineering replay only; not a geometry-validation profile.
+# Calibration copied from VoxelSLAM/config/mid360.yaml; its association with
+# the 0519 front camera is unverified. See docs/HILTI2022_ACCEPTANCE.md.
+# Source R_cam_imu/T_cam_imu map IMU -> camera; inverted here to camera -> IMU.
+[visual_loop]
+enabled = false  # Visual processing is opt-in.
+attributes_only = true
+keyframe_selection = true
+tracking_interval = 0.1
+mode = "mono"
+image_interval = 0.5
+max_frames = 8
+max_features = 500
+top_k = 5
+min_matches = 20
+
+[visual_loop.left]
+width = 640
+height = 352
+input_width = 1920
+input_height = 1080
+intrinsics = [263.46443769085454, 257.7000475565234, 324.7579471769214, 185.33756087619622]
+distortion = [-0.1013472987020521, 0.007747773349448296, 0.00004506461676006537, 0.0002729776283961719, 0.0008831003755268599]
+time_offset = 0.0
+camera_to_imu_rotation = [0.0077758134337822, 0.2468791368219704, 0.969015088830428, -0.9999686117078631, 0.0034040234234411, 0.007156940247557, -0.0015316514648676, -0.9690402958312317, 0.2468978482305606]
+camera_to_imu_translation = [0.04067401797951524, -0.021240259992648284, -0.10790552437237563]

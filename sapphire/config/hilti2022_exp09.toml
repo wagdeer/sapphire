@@ -1,0 +1,131 @@
+# Hilti 2022 exp09: two raw 720x540 cameras, processed at 360x270.
+# Original calibrated profile: audit/2026-10-01-hilti-exp09/stereo-template.toml.
+# INTER_AREA 2x reduction occurs in SlamPipeline::push_image before tracking.
+# Intrinsics use the pixel-center transform u_out=(u_in+0.5)/2-0.5.
+# Distortion, extrinsics and time offsets remain in their original conventions.
+# max_features bounds runtime FAST/LK per camera; features are not archived.
+# Flow/LIO selects image attributes; no descriptors, depth or visual loop retrieval.
+# Selected rectified grayscale PNGs attach to independently switched LiDAR submaps.
+[general]
+save_path = "/tmp/sapphire-hilti2022-exp09-360/maps/"
+save_map = 1
+
+[sensor]
+lidar_type = "hesai"
+point_filter_num = 1
+blind = 0.10
+extrinsic_tran = [-0.001, -0.00855, 0.055]
+extrinsic_rota = [0.0, -1.0000000000000002, 0.0, -1.0000000000000002, 0.0, -0.0, 0.0, 0.0, -1.0000000000000002]
+
+[initializer]
+imu_init_samples = 30
+down_size = 0.5
+max_iterations = 10
+min_plane_factors = 10
+ba_iterations = 3
+convergence_threshold = 0.05
+refined_convergence_threshold = 0.01
+degeneracy_threshold = 15.0
+min_eigen_value = 0.02
+plane_eigen_value_thre = 4.0
+
+[odometry]
+cov_gyr = 0.1
+cov_acc = 1.0
+rdw_gyr = 0.0001
+rdw_acc = 0.0001
+down_size = 0.1
+dept_err = 0.02
+beam_err = 0.05
+voxel_size = 1.0
+min_eigen_value = 0.0025
+degrade_bound = 10
+
+# ESKF: use shared-map Gaussian observations only after geometric rejection.
+# Set enabled=true to let the ESKF path call the RICP observation component.
+[odometry.gicp_fallback]
+enabled = false
+source_resolution = 0.25  # m; source voxel statistics, computed only on fallback
+max_distance = 0.5        # m; must not exceed odometry.voxel_size when enabled
+variance_floor = 0.0005  # m^2; geometric covariance regularization
+max_iterations = 20      # small_gicp default; range 1..20
+
+[local_submap]
+win_size = 10
+max_layer = 2
+cov_gyr = 0.01
+cov_acc = 2.0
+rdw_gyr = 0.0001
+rdw_acc = 0.0001
+plane_eigen_value_thre = [4.0, 4.0, 4.0, 4.0]
+imu_coef = 0.0002
+thread_num = 5
+
+[pose_graph]
+enabled = true
+submap_voxel_size = 0.25
+submap_travel_distance = 15.0
+submap_max_point_range = 20.0
+update_period_sec = 1.0
+
+[navi_map]
+enabled = false
+resolution = 0.1
+h_clearance = 2.0
+ground_margin = 0.5
+clear_height_eps = 0.1
+d_max = 6.0
+occ_threshold = 0.3
+usable_range = 40.0
+min_range = 0.5
+margin = 5.0
+hit_probability = 0.7
+miss_probability = 0.4
+clamp_min_probability = 0.1192
+clamp_max_probability = 0.971
+
+[map]
+scene_refresh = true
+
+[visual_loop]
+enabled = false  # Visual processing is opt-in.
+attributes_only = true
+mode = "stereo"
+stereo_depth = false
+keyframe_selection = true
+keyframe_min_interval = 1.0
+keyframe_translation_m = 0.5
+keyframe_rotation_deg = 60.0
+keyframe_renewal = 0.4
+keyframe_min_coverage = 0.5
+tracking_enabled = false
+tracking_interval = 0.1
+image_interval = 0.5
+max_frames = 8
+max_features = 500
+top_k = 5
+min_matches = 20
+
+[visual_loop.left]
+width = 360
+height = 270
+input_width = 720
+input_height = 540
+distortion_model = "equidistant"
+intrinsics = [175.65700182096649, 175.74558723283926, 183.67613966879975, 126.6701072490498]
+distortion = [-0.03696737352869157, -0.008917880497032812, 0.008912969593422046, -0.0037685977496087313]
+time_offset = 0.0019071204237431304
+camera_to_imu_rotation = [0.006708021451800523, 0.002425643641803467, 0.9999745590269414, 0.9999264200621182, 0.010091197021688297, -0.006732176797021075, -0.010107270153659895, 0.9999461405473763, -0.0023577731969992165]
+camera_to_imu_translation = [0.0512635496824681, 0.04539012201223678, -0.013214912698709419]
+
+[visual_loop.right]
+width = 360
+height = 270
+input_width = 720
+input_height = 540
+distortion_model = "equidistant"
+intrinsics = [176.3244897216947, 176.4293249285793, 173.6585005155041, 135.0403346242734]
+distortion = [-0.039086652082708805, -0.005525347047415151, 0.004398151558986798, -0.0019701263170917808]
+time_offset = 0.001901867458041627
+camera_to_imu_rotation = [0.0016556126470598073, 0.000935008953537886, 0.9999981923508761, 0.9999840642813064, 0.005395690615039729, -0.0016606342845620786, -0.005397233569448982, 0.9999850060281121, -0.0009260608798763888]
+camera_to_imu_translation = [0.05039201821992372, -0.0627831669975007, -0.01314326804268527]

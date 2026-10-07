@@ -1,0 +1,6 @@
+https://github.com/pedropro/CAPE
+Commit: 404fd75586e64034d9ef16318e22cbd1da273936
+MIT license: LICENSE
+Only runtime sources are vendored. Cylinder extraction is disabled by the adapter.
+Local fixes: release owned buffers in destructor; clear deleted cell pointers; disable copying.
+Numerical fixes: clamp roundoff-negative plane covariance residuals; avoid 0/0 in normal azimuth and clamp acos input.

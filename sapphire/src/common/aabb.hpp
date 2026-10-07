@@ -4,7 +4,7 @@
 #include <cmath>
 #include <limits>
 
-#include "common.hpp"
+#include "common/common.hpp"
 
 namespace sapphire {
 
@@ -16,6 +16,18 @@ struct AABB {
   explicit AABB(const vvec<float, 3> &cloud) {
     for (const Eigen::Vector3f &point : cloud) {
       include(point);
+    }
+  }
+
+  explicit AABB(const GaussianCloud &cloud) {
+    for (const GaussianPoint &point : cloud) {
+      if (!point.mean.allFinite() || !std::isfinite(point.radius) || point.radius < 0.0) {
+        continue;
+      }
+      const Eigen::Vector3f mean = point.mean.cast<float>();
+      const Eigen::Vector3f margin = Eigen::Vector3f::Constant(static_cast<float>(point.radius));
+      include(mean - margin);
+      include(mean + margin);
     }
   }
 

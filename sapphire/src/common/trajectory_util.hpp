@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include "common.hpp"
+#include "common/common.hpp"
 
 namespace sapphire {
 

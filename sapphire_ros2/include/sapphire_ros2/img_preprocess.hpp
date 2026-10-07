@@ -11,7 +11,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <string>
 
-#include "visual_frame.hpp"
+#include "common/visual_frame.hpp"
 
 namespace sapphire_ros {
 

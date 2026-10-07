@@ -1,0 +1,38 @@
+cmn_sapphire:
+  ros__parameters:
+    lidar_mode: dual
+    lidar_type: airy
+    obs_mode: lio
+    topics:
+      lidar: /front_lidar
+      rear_lidar: /rear_lidar
+      imu: /front_lidar/imu
+      image: /camera/image
+      scan: /sapphire/current_scan
+      local_map: /sapphire/local_map
+      trajectory: /sapphire/trajectory
+      odom: /sapphire/odom_psoe
+      map_pose: /sapphire/map_pose
+      navigation: /sapphire/gridmap
+    lidar:
+      # REQUIRED: p_front = R_front_rear * p_rear + t_front_rear.
+      # Set from the actual installation; both overlap and non-overlap use this.
+      # extrinsic_tran: [tx, ty, tz]
+      # extrinsic_rota: [r00, r01, r02, r10, r11, r12, r20, r21, r22]
+      front_time_offset: 0.0
+      rear_time_offset: 0.0
+      # LIO update rate; neither driver publication rate nor hardware rotation rate.
+      # <= imu_rate_hz / 5; leave margin (e.g. 20 Hz for a 200 Hz IMU).
+      # 0 restores the original front-frame windows.
+      lidar_merge_hz: 10.0
+      imu_rate_hz: 200.0
+      min_points: 1
+      max_time_gap: 0.02
+      max_wait: 0.3
+      queue_size: 8
+    qos:
+      imu_depth: 2000
+      lidar_depth: 8
+      image_depth: 2
+    image:
+      compressed: false

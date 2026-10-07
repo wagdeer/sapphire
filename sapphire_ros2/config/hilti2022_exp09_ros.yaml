@@ -1,0 +1,27 @@
+cmn_sapphire:
+  ros__parameters:
+    lidar_mode: single
+    lidar_type: hesai
+    obs_mode: lio
+    finish: false
+    topics:
+      lidar: "/hesai/pandar"
+      imu: "/alphasense/imu"
+      image: "/alphasense/cam0/image_raw"
+      image_right: "/alphasense/cam1/image_raw"
+      scan: "/sapphire/current_scan"
+      local_map: "/sapphire/local_map"
+      trajectory: "/sapphire/trajectory"
+      odom: "/sapphire/odom_psoe"
+      map_pose: "/sapphire/map_pose"
+      navigation: "/sapphire/gridmap"
+    frames:
+      map: "map"
+      odom: "odom"
+      base: "base_link"
+    qos:
+      imu_depth: 2000
+      lidar_depth: 5
+      image_depth: 2
+    image:
+      compressed: false

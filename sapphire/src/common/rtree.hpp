@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include "aabb.hpp"
+#include "common/aabb.hpp"
 
 namespace boost::geometry::traits {
 template <>
@@ -43,23 +43,38 @@ class DenseAABBIndex final {
   using Tree = boost::geometry::index::rtree<std::pair<AABB, std::uint64_t>, boost::geometry::index::quadratic<16>>;
 
  public:
-  void upsert(std::uint64_t id, const AABB &bounds) {
+  void upsert(std::uint64_t id, const AABB &bounds, bool active = true) {
     if (!bounds.valid()) {
       throw std::invalid_argument("Spatial index requires finite bounds");
     }
     const std::pair<AABB, std::uint64_t> value{bounds, id};
     if (id < values_.size()) {
-      tree_.remove(values_[id]);
+      if (active_[id]) tree_.remove(values_[id]);
       values_[id] = value;
-      tree_.insert(value);
+      active_[id] = false;
+      if (active) { tree_.insert(value); active_[id] = true; }
       return;
     }
     if (id != values_.size()) {
       throw std::invalid_argument("Dense spatial index requires contiguous IDs");
     }
-    tree_.insert(value);
+    if (values_.size() == values_.capacity()) values_.reserve(values_.empty() ? 1 : values_.size() * 2);
+    if (active_.size() == active_.capacity()) active_.reserve(active_.empty() ? 1 : active_.size() * 2);
+    if (active) tree_.insert(value);
     values_.push_back(value);
+    active_.push_back(active);
   }
+
+  void setActive(std::uint64_t id, bool active) {
+    if (!contains(id)) throw std::out_of_range("Unknown spatial identity");
+    if (active_[id] == active) return;
+    if (active) tree_.insert(values_[id]);
+    else tree_.remove(values_[id]);
+    active_[id] = active;
+  }
+
+  bool active(std::uint64_t id) const noexcept { return id < active_.size() && active_[id]; }
+  std::size_t activeSize() const noexcept { return tree_.size(); }
 
   template <typename Visitor>
   void visitIntersections(const AABB &bounds, Visitor &&visitor) const {
@@ -80,6 +95,7 @@ class DenseAABBIndex final {
  private:
   Tree tree_;
   std::vector<std::pair<AABB, std::uint64_t>> values_;
+  std::vector<bool> active_;
 };
 
 }  // namespace sapphire

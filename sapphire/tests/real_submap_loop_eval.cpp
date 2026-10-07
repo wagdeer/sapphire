@@ -15,9 +15,9 @@
 #include <utility>
 #include <vector>
 
-#include "loop_closure.hpp"
+#include "backend/registration/loop_closure.hpp"
 #include "parameters.h"
-#include "retrieval_index.hpp"
+#include "backend/storage/retrieval_index.hpp"
 
 namespace {
 
@@ -27,6 +27,7 @@ struct EvalFrame {
   std::uint64_t id = 0;
   Eigen::Isometry3f pose = Eigen::Isometry3f::Identity();
   std::shared_ptr<const sapphire::vvec<float, 3>> cloud;
+  sapphire::GaussianCloudPtr gaussian_cloud;
   sapphire::AABB bounds;
   cpu::VoxelMapsData pyramid;
 };
@@ -74,6 +75,22 @@ std::shared_ptr<const sapphire::vvec<float, 3>> loadAsciiPly(const std::filesyst
   return cloud;
 }
 
+/// Offline adapter for legacy XYZ evaluation data. It assigns a fixed regularized
+/// covariance and intentionally performs no neighborhood covariance estimation.
+sapphire::GaussianCloudPtr makeGaussianCloud(const sapphire::vvec<float, 3> &points) {
+  auto cloud = std::make_shared<sapphire::GaussianCloud>();
+  cloud->reserve(points.size());
+  for (const Eigen::Vector3f &point : points) {
+    sapphire::GaussianPoint gaussian;
+    gaussian.mean = point;
+    gaussian.covariance = Eigen::Matrix3f::Identity() / 9.0F;
+    gaussian.N = 1;
+    gaussian.regularize();
+    cloud->push_back(gaussian);
+  }
+  return cloud;
+}
+
 std::vector<EvalFrame> loadFrames(const std::filesystem::path &directory) {
   std::ifstream pose_stream(directory / "poses.txt");
   if (!pose_stream) {
@@ -101,6 +118,7 @@ std::vector<EvalFrame> loadFrames(const std::filesystem::path &directory) {
     frame.pose.linear() = orientation.toRotationMatrix();
     frame.pose.translation() = translation;
     frame.cloud = loadAsciiPly(directory / (std::to_string(frame.id) + ".ply"));
+    frame.gaussian_cloud = makeGaussianCloud(*frame.cloud);
     frame.bounds = sapphire::AABB(*frame.cloud);
 
     cpu::VoxelMaps voxelmaps;
@@ -180,7 +198,8 @@ int main(int argc, char **argv) {
         const EvalFrame &target = frames[top_candidate->target_id];
         const auto gicp_start = Clock::now();
         ++total_gicp_attempted;
-        const sapphire::GicpResult refined = sapphire::refineLoopGicp(*query.cloud, *target.cloud, bbs_result.T_target_query);
+        const sapphire::GicpResult refined =
+            sapphire::refineLoopGicp(query.gaussian_cloud, target.gaussian_cloud, bbs_result.T_target_query);
         total_gicp_accepted += refined.accepted;
         std::cout << "  top1=" << top_candidate->target_id << " tolerant_overlap=" << bbs_result.overlap << " gicp_count=1"
                   << " gicp_fitness=" << refined.fitness << " gicp_inliers=" << refined.inliers << " gicp_accept=" << refined.accepted

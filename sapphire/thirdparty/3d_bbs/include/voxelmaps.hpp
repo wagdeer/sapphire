@@ -34,13 +34,9 @@ struct VoxelMapsData {
     return true;
   }
 
-  float resolution(int level) const {
-    return std::ldexp(min_level_resolution, level);
-  }
+  float resolution(int level) const { return std::ldexp(min_level_resolution, level); }
 
-  const VoxelBuckets& buckets_for_level(int level) const {
-    return level_buckets.at(static_cast<std::size_t>(level));
-  }
+  const VoxelBuckets& buckets_for_level(int level) const { return level_buckets.at(static_cast<std::size_t>(level)); }
 };
 
 void save_voxelmaps(std::ostream& stream, const VoxelMapsData& data);
@@ -69,12 +65,15 @@ class VoxelMaps {
 
   using UnorderedVoxelSet = std::unordered_set<Eigen::Vector3i, VectorHash, VctorEqual>;
   using Buckets = VoxelBuckets;
+  using PointAccessor = std::function<Eigen::Vector3f(std::size_t)>;
 
   void set_min_res(float min_level_res) { min_level_res_ = min_level_res; }
 
   void set_max_level(int max_level) { max_level_ = max_level; }
 
   void create_voxelmaps(const Eigen::Vector3f* points, std::size_t point_count);
+
+  void create_voxelmaps(std::size_t point_count, const PointAccessor& point_at);
 
   VoxelMapsData release_data();
 

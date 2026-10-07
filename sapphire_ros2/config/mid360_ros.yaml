@@ -1,5 +1,8 @@
 cmn_sapphire:
   ros__parameters:
+    lidar_mode: single
+    lidar_type: livox
+    obs_mode: lio
     finish: false
     topics:
       lidar: "/front_lidar"
