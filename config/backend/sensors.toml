@@ -1,0 +1,48 @@
+# 安装到 config/backend/sensors.toml；修改后重启。
+# 每路相机集中定义标定、矫正、图像/深度地址、重叠关系与 mask。
+# calibration_key 精确对应标定文件 topics 下的条目；不是订阅地址。
+# 原始采集经过等比例 binning/缩放时，在对应 cam 下同时声明（宽、高）：
+# calibration_image_size = [1080, 1280]  # 原始 K 的标定像素尺寸
+# raw_image_size = [540, 640]           # 实际输入；不改变 rectify_params
+# 使用 K 的坐标原点缩放约定；裁剪/旋转/非等比变形须提供对应的新标定。
+# 不声明时沿用原始 K；运行时不会根据主点或黑边猜测缩放比例。
+# mask 空为禁用；相对 install/data/backend（例如 masks/left.png），也支持绝对路径。
+
+[device]
+batch_endpoint = "/camera_node/batch/cameras/rgb"
+
+[cam0] # 前左目
+calibration_key = "/camera_left_right/image_jpeg/compressed"
+rectify_key = "/camera_left_right/image_jpeg/compressed"
+rostopic = "/camera_left_eye/image_raw"
+device_index = 3
+depth = "/perception/panorama_stereo/depth"
+cam_overlaps = [1]
+mask = ""
+
+[cam1] # 前右目
+calibration_key = "/camera_left_right/image_jpeg/compressed"
+rectify_key = "/camera_left_right/image_jpeg/compressed"
+rostopic = "/camera_right_eye/image_raw"
+device_index = 1
+depth = ""
+cam_overlaps = [0]
+mask = ""
+
+[cam2] # 左侧目
+calibration_key = "/camera_left/image_jpeg/compressed"
+rectify_key = ""
+rostopic = "/camera_left/image_raw"
+device_index = 4
+depth = ""
+cam_overlaps = []
+mask = ""
+
+[cam3] # 右侧目
+calibration_key = "/camera_right/image_jpeg/compressed"
+rectify_key = ""
+rostopic = "/camera_right/image_raw"
+device_index = 2
+depth = ""
+cam_overlaps = []
+mask = ""
