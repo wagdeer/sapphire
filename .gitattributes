@@ -1,0 +1,2 @@
+data/models/*.rknn filter=lfs diff=lfs merge=lfs -text
+data/models/*.fbow filter=lfs diff=lfs merge=lfs -text

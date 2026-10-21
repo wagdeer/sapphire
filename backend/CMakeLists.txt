@@ -1,0 +1,61 @@
+find_package(CUDAToolkit REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs features2d highgui photo videoio calib3d)
+find_package(ZLIB REQUIRED)
+find_package(SQLite3 REQUIRED)
+find_package(nlohmann_json REQUIRED)
+find_package(tomlplusplus REQUIRED)
+find_package(grid_map_core REQUIRED)
+find_library(LZ4_LIBRARY NAMES lz4 REQUIRED)
+function(sapphire_add_faiss)
+ set(BUILD_TESTING OFF)
+ set(BUILD_SHARED_LIBS OFF)
+ foreach(feature GPU PYTHON MKL SVS METAL CUVS ROCM)
+  set(FAISS_ENABLE_${feature} OFF)
+ endforeach()
+ set(FAISS_OPT_LEVEL generic)
+ add_subdirectory("${SAPPHIRE_SOURCE}/thirdparty/faiss" faiss EXCLUDE_FROM_ALL)
+endfunction()
+sapphire_add_faiss()
+add_subdirectory("${SAPPHIRE_SOURCE}/thirdparty/poselib" poselib EXCLUDE_FROM_ALL)
+add_subdirectory("${SAPPHIRE_SOURCE}/thirdparty/fbow" fbow EXCLUDE_FROM_ALL)
+target_link_libraries(poselibplus PRIVATE grid_map_core::grid_map_core)
+configure_file(src/database/schema.sql.in DatabaseSchema.sql @ONLY)
+file(READ "${CMAKE_CURRENT_BINARY_DIR}/DatabaseSchema.sql" SCHEMA_HEX HEX)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/DatabaseSchema_sql.h" "#pragma once\nnamespace sapphire::backend { static const char * DATABASESCHEMA_SQL = \"${SCHEMA_HEX}\"; }\n")
+file(GLOB_RECURSE BACKEND_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+target_sources(sapphire_core PRIVATE ${BACKEND_SOURCES}
+ "${SAPPHIRE_SOURCE}/thirdparty/cape/CAPE.cpp" "${SAPPHIRE_SOURCE}/thirdparty/cape/PlaneSeg.cpp"
+ "${SAPPHIRE_SOURCE}/thirdparty/cape/CylinderSeg.cpp" "${SAPPHIRE_SOURCE}/thirdparty/cape/Histogram.cpp"
+ "${SAPPHIRE_SOURCE}/thirdparty/3d_bbs/src/voxelmaps.cpp" "${SAPPHIRE_SOURCE}/thirdparty/3d_bbs/src/bbs3d.cu")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/include")
+file(CREATE_LINK "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}/include/backend" SYMBOLIC)
+target_include_directories(sapphire_core PUBLIC
+ $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+ $<BUILD_INTERFACE:${SAPPHIRE_SOURCE}/thirdparty/3d_bbs/include>
+ $<INSTALL_INTERFACE:include> $<INSTALL_INTERFACE:include/thirdparty/3d_bbs>
+ PRIVATE "${SAPPHIRE_SOURCE}/thirdparty" "${SAPPHIRE_SOURCE}/thirdparty/cape" "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_definitions(sapphire_core PUBLIC EIGEN_DONT_PARALLELIZE)
+option(SAPPHIRE_WITH_RKNN "Build Sapphire FAST/XFeat and SigLIP RK3588 inference" OFF)
+if(SAPPHIRE_WITH_RKNN)
+ find_path(RKNN_INCLUDE_DIR rknn_api.h HINTS "$ENV{RKNN_INCLUDE_DIR}" REQUIRED)
+ find_library(RKNN_LIBRARY NAMES rknnrt HINTS "$ENV{RKNN_RUNTIME_DIR}" REQUIRED)
+ target_include_directories(sapphire_core PRIVATE "${RKNN_INCLUDE_DIR}")
+ target_link_libraries(sapphire_core PRIVATE "${RKNN_LIBRARY}")
+ target_compile_definitions(sapphire_core PRIVATE EXTERIOR_WITH_RKNN=1)
+else()
+ target_compile_definitions(sapphire_core PRIVATE EXTERIOR_WITH_RKNN=0)
+endif()
+set_source_files_properties(src/io/runtime_resources.cpp TARGET_DIRECTORY sapphire_core PROPERTIES COMPILE_DEFINITIONS
+ "EXTERIOR_BUILD_LIBRARY_DIR=\"${CMAKE_BINARY_DIR}\";EXTERIOR_SOURCE_MODEL_DIR=\"${SAPPHIRE_SOURCE}/data/models\";EXTERIOR_MODELS_FROM_LIB=\"../share/sapphire/data/models\"")
+set_property(SOURCE src/common/depth_frame.cpp TARGET_DIRECTORY sapphire_core APPEND PROPERTY COMPILE_OPTIONS -ffp-contract=off)
+target_link_libraries(sapphire_core PUBLIC sapphire::gtsam CUDA::cudart
+ nlohmann_json::nlohmann_json tomlplusplus::tomlplusplus grid_map_core::grid_map_core ${OpenCV_LIBS}
+ PRIVATE poselibplus::poselibplus fbow::fbow faiss ZLIB::ZLIB SQLite::SQLite3 ${LZ4_LIBRARY} ${CMAKE_DL_LIBS})
+install(TARGETS faiss poselibplus fbow
+ ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(CODE [[file(REMOVE_RECURSE "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/include/backend")]])
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/" DESTINATION include/backend FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h")
+install(DIRECTORY "${SAPPHIRE_SOURCE}/thirdparty/3d_bbs/include/" DESTINATION include/thirdparty/3d_bbs FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h" PATTERN "*.cuh")
+install(DIRECTORY "${SAPPHIRE_SOURCE}/data/models/" DESTINATION share/sapphire/data/models)
+install(DIRECTORY "${SAPPHIRE_SOURCE}/data/masks/" DESTINATION share/sapphire/data/masks)
+install(DIRECTORY "${SAPPHIRE_SOURCE}/config/backend/" DESTINATION share/sapphire/backend/config)

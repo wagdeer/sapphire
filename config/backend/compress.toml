@@ -1,0 +1,21 @@
+# Offline compression settings. CLI accepts --config and the map path only.
+# Algorithm defaults fill omitted fields; saved database parameters are metadata.
+[registration.feature]
+method = 0
+
+[memory]
+load_all_nodes_on_start = true
+preload_visual_features = false
+
+[compression.detect]
+min_radius_m = 0.0
+max_radius_m = 1.0
+angle_deg = 30.0
+iterations = 1
+scope = "both" # both | intra | inter
+session_id = -2 # -2: all; -1: latest; >= 0: selected session
+
+[compression.merge]
+radius_m = 1.0
+keep_latest = false
+keep_linked = false

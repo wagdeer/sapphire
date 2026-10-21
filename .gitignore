@@ -1,0 +1,26 @@
+build*/
+CMakeFiles/
+*.o
+*.a
+*.so
+.DS_Store
+__pycache__/
+.vscode/
+.idea/
+
+# ROS 2 workspace outputs
+install/
+log/
+
+# Python and editor temporary files
+*.py[cod]
+*.swp
+*~
+
+# Local agent instructions are not project source.
+[Aa][Gg][Ee][Nn][Tt].md
+[Aa][Gg][Ee][Nn][Tt][Ss].md
+
+# Test sources and fixtures stay local, including bundled dependency tests.
+test/
+tests/

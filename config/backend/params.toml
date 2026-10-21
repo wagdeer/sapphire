@@ -1,0 +1,111 @@
+# 后端算法调参入口，安装到 config/backend/params.toml；修改后重启。
+# 面向算法开发者，按模块列出关键阈值、精度与性能预算；省略项采用 include/params/*.hpp 默认值。
+# 不放 ROS 话题、启停、地图路径、节点 ID 分配或输入管线固定策略。
+# 开关和输入输出在同目录 mapping.yaml；未知、移除或归属错误的参数启动时报错。
+
+[preprocess]
+stereo_image_width = 320                # 后端新建双目特征帧统一画布；左右图、mask、深度与内参同步
+stereo_image_height = 240               # 0/0 保留输入；不与 feature/storage decimation 叠加
+
+[registration.solving]
+min_inliers = 20
+max_reprojection_error_px = 2.0
+ransac_iterations = 100
+refine_iterations = 3                  # PnP 后的位姿精修与束调整次数
+min_inlier_distribution = 0.0          # 内点分布下限 [0, 0.5]；0 关闭
+[registration.matching]
+distance_ratio = 0.75                  # 最佳 / 次佳距离比；越小越严格
+max_hamming_distance = 50              # 仅 ORB：汉明距离上限
+max_comparisons = 50000                # 比较次数上限；预计超限则拒绝候选
+
+[registration.feature]
+enabled = false
+method = 0                            # 0：FAST + ORB + FBoW；1：FAST + XFeat + SigLIP
+max_features = 500
+# 模型随程序部署并自动加载；method = 1 要求 320×240 画布、1..512 特征点。
+[registration.feature.fast]
+threshold = 20
+secondary_detection_enabled = true    # 特征不足时，以较低阈值补充检测
+secondary_threshold = 7
+harris_k = 0.04                        # 角点评分系数
+[registration.feature.pyramid]
+levels = 4
+scale = 1.2
+
+[relocalizer.spatial]
+enabled = true
+max_candidates = 5                    # 每帧最多补试的候选数，必须 > 0
+radius_m = 1.0                        # 搜索半径及验收后的相对平移上限
+max_view_angle_deg = 45.0              # 视角差上限；0 不筛视角
+max_graph_hops = 49                    # 图上最多相隔的边数；0 不限制图距离
+
+[relocalizer.visit_history]
+enabled = true
+max_entries = 4096                    # 最多保存的地点访问记录数
+max_gap_s = 5.0                       # 连续访问的最大观测时间间隔
+
+[topograph]
+persistent_root_frames = true
+use_odometry_gravity = true
+
+[pose_graph]
+anchor_at_last_node = false
+max_iterations = 20
+max_constraint_error_sigma = 3.0
+gravity_sigma = 0.3                    # 重力约束标准差；0 关闭重力约束
+[pose_graph.isam2]
+relinearize_rotation_rad = 0.01         # Pose3 旋转增量门限（弧度）
+relinearize_translation_m = 0.05        # Pose3 / Point3 平移增量门限（米）
+relinearize_skip = 1                    # 每 N 次 update 检查重线性化，必须 >0
+wildfire_threshold = 0.001             # 增量回代的变化截断门限，越小计算越充分
+adaptive_reorder_enabled = true        # Bayes 树填充增长过多时重新排序
+reorder_growth_ratio = 2.0             # 相对上次排序的非零项增长倍数，必须 >1
+
+# 持久节点的更新和局部优化预算。
+[node]
+refresh_enabled = true
+merge_previous = true
+merge_max_comparisons = 1000000
+[node.local_ba]
+max_iterations = 20
+max_optimized_points = 512
+
+# 导航栅格：先重力对齐，再估计地面高度；无可靠地面的帧不融合。
+[node.navimap]
+method = 1                              # 0 二维投影；1 三维点云与高程
+cell_size_m = 0.05
+depth_decimation = 2                     # 每 2 个深度像素采样一次
+max_depth_m = 3.0                        # 光轴深度；射线达到上限只更新 free
+min_obstacle_height_m = 0.15              # 相对地面的障碍高度带
+max_obstacle_height_m = 0.55
+ray_tracing_enabled = true
+erode_obstacles = true                # 输出栅格的障碍/未知格腐蚀：四邻域至少三格空闲，单轮
+[node.navimap.tsdf]
+truncation_cells = 3.0                  # 水平距离场截断带，以栅格数计
+surface_weight = 1.0                    # 提取零交叉轮廓的最低观测权重
+maximum_weight = 10.0
+[node.navimap.ground_seg]
+method = 0                              # 0 图像分块；1 CAPE
+plane_tolerance_m = 0.03
+max_height_correction_m = 0.1
+
+# 内存和持久化预算。
+[memory]
+resident_budget_bytes = 67108864
+predictive_prefetch_enabled = true      # 沿用有界特征缓存；访问序列辅助现有 Bayes 预取
+
+[database.sqlite]
+cache_size_pages = 10000               # SQLite 页缓存预算（页数，非字节）
+temp_store = 2                         # 临时表/索引：0 编译默认；1 文件；2 内存
+journal_mode = 5
+synchronous_mode = 2
+
+# 异步落盘：队列预算控制内存占用，事务批量控制吞吐与延迟。
+[database.writer]
+max_bytes = 268435456                  # 待处理及执行中的估算字节上限；0 不限制
+max_items = 1024                       # 待处理及执行中的完整批次数量上限；0 不限制
+batch_max_bytes = 33554432             # 单次事务的估算字节上限
+batch_max_items = 128                  # 单次事务最多写入的完整批次数量
+batch_max_latency_ms = 50              # 最早排队条目的最大组批等待时间
+producer_wait_ms = 0                   # 默认容量耗尽立即报错；非零值显式设置容量等待期限，不重试
+commit_timeout_ms = 2000                # 接收到提交完成的总期限，包含排队和执行
