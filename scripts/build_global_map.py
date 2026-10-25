@@ -9,13 +9,14 @@ import os
 import sqlite3
 import struct
 import sys
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 
-GAUSSIAN_MAGIC = b"SAPHGAUS"
+GAUSSIAN_MAGIC = b"SAPLID01"
 GAUSSIAN_HEADER = struct.Struct("<8sQ")
 GAUSSIAN_DTYPE = np.dtype(
     [
@@ -23,12 +24,12 @@ GAUSSIAN_DTYPE = np.dtype(
         ("level", "<i4"),
         ("sample_count", "<i4"),
         ("mean", "<f4", (3,)),
-        ("covariance", "<f4", (6,)),
+        ("covariance", "<f4", (3, 3)),
         ("radius", "<f4"),
         ("is_plane", "u1"),
     ]
 )
-GAUSSIAN_RECORD_BYTES = 73
+GAUSSIAN_RECORD_BYTES = 85
 PLY_VERTEX_DTYPE = np.dtype(
     [
         ("x", "<f4"),
@@ -75,45 +76,86 @@ def resolve_database(input_path: Path) -> tuple[Path, Path]:
 
 
 def decode_pose(node_id: int, blob: bytes) -> np.ndarray:
-    if blob is None or len(blob) != 16 * 4:
+    if blob is None or len(blob) != 12 * 4:
         raise RuntimeError(f"数据库节点 {node_id} 的位姿长度无效")
-    pose = np.frombuffer(blob, dtype="<f4").reshape((4, 4), order="F").astype(np.float64)
-    if not np.isfinite(pose).all():
-        raise RuntimeError(f"数据库节点 {node_id} 的位姿包含非有限值")
-    if not np.allclose(pose[3], (0.0, 0.0, 0.0, 1.0), atol=1e-4):
-        raise RuntimeError(f"数据库节点 {node_id} 的位姿不是齐次变换矩阵")
+    pose = np.eye(4)
+    pose[:3] = np.frombuffer(blob, dtype="<f4").reshape(3, 4)
+    rotation = pose[:3, :3]
+    if (not np.isfinite(pose).all() or
+        not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-3) or
+        not np.isclose(np.linalg.det(rotation), 1., atol=1e-3)):
+        raise RuntimeError(f"数据库节点 {node_id} 的位姿无效")
     return pose
 
 
-def decode_gaussians(node_id: int, database_count: int, payload: bytes) -> np.ndarray:
-    if database_count < 0 or payload is None or len(payload) < GAUSSIAN_HEADER.size:
-        raise RuntimeError(f"数据库节点 {node_id} 的 Gaussian payload 元数据无效")
-    magic, payload_count = GAUSSIAN_HEADER.unpack_from(payload)
-    if magic != GAUSSIAN_MAGIC:
-        raise RuntimeError(f"数据库节点 {node_id} 的 Gaussian magic 无效")
-    if payload_count != database_count:
-        raise RuntimeError(f"数据库节点 {node_id} 的 Gaussian 数量不一致")
-    expected_bytes = GAUSSIAN_HEADER.size + payload_count * GAUSSIAN_RECORD_BYTES
-    if len(payload) != expected_bytes:
-        raise RuntimeError(f"数据库节点 {node_id} 的 Gaussian payload 长度无效")
+def decode_matrix(blob: bytes, dtype: str, cv_type: int, max_elements: int) -> np.ndarray:
+    if blob is None or len(blob) < 12:
+        raise RuntimeError("压缩矩阵缺失或截断")
+    rows, columns, stored_type = struct.unpack("=iii", blob[-12:])
+    if rows != 1 or not 0 < columns <= max_elements or stored_type != cv_type:
+        raise RuntimeError("压缩矩阵类型、维度或大小无效")
+    expected = columns * np.dtype(dtype).itemsize
+    decoder = zlib.decompressobj()
+    try:
+        raw = decoder.decompress(blob[:-12], expected + 1)
+    except zlib.error as error:
+        raise RuntimeError("压缩矩阵内容损坏") from error
+    if len(raw) != expected or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+        raise RuntimeError("压缩矩阵长度不匹配")
+    return np.frombuffer(raw, dtype=dtype)
 
-    records = np.frombuffer(
-        payload,
-        dtype=GAUSSIAN_DTYPE,
-        count=payload_count,
-        offset=GAUSSIAN_HEADER.size,
-    )
-    if (
-        np.any(records["level"] < 0)
-        or np.any(records["level"] > 30)
-        or np.any(records["sample_count"] <= 0)
-        or not np.isfinite(records["mean"]).all()
-        or not np.isfinite(records["covariance"]).all()
-        or not np.isfinite(records["radius"]).all()
-        or np.any(records["radius"] <= 0.0)
-        or np.any(records["is_plane"] > 1)
-    ):
-        raise RuntimeError(f"数据库节点 {node_id} 包含无效 Gaussian 固定字段")
+
+def load_optimized_poses(connection: sqlite3.Connection) -> dict[int, np.ndarray]:
+    if connection.execute("PRAGMA user_version").fetchone()[0] != 14:
+        raise RuntimeError("导出只支持当前 schema 14")
+    node_ids = {row[0] for row in connection.execute("SELECT id FROM Node")}
+    if not node_ids:
+        raise RuntimeError("map.db 中没有地图节点")
+    rows = connection.execute("SELECT opt_ids, opt_poses FROM Admin").fetchall()
+    if len(rows) != 1:
+        raise RuntimeError("数据库必须包含一个优化结果记录")
+    ids = decode_matrix(rows[0][0], "<i4", 4, len(node_ids))
+    matrices = decode_matrix(rows[0][1], "<f4", 5, len(node_ids) * 12)
+    if len(matrices) != len(ids) * 12 or len(set(ids)) != len(ids) or not set(ids) <= node_ids:
+        raise RuntimeError("优化位姿和节点 ID 不一致")
+    poses = {int(node): decode_pose(int(node), values.tobytes())
+             for node, values in zip(ids, matrices.reshape(-1, 12))}
+    # Disconnected components may have different datums; never overlay them as one map.
+    neighbors = {node: set() for node in node_ids}
+    for first, second in connection.execute("SELECT from_id,to_id FROM Link WHERE type IN (0,1)"):
+        if first not in neighbors or second not in neighbors:
+            raise RuntimeError("图约束引用了缺失的节点")
+        neighbors[first].add(second); neighbors[second].add(first)
+    reached = set()
+    pending = [next(iter(node_ids))]
+    while pending:
+        node = pending.pop()
+        if node in reached: continue
+        reached.add(node); pending.extend(neighbors[node] - reached)
+    if reached != node_ids:
+        raise RuntimeError("数据库包含未对齐的独立分量，不能合成单一全局地图或轨迹")
+    return poses
+
+
+def decode_gaussians(node_id: int, archive: bytes) -> np.ndarray:
+    raw = decode_matrix(archive, "u1", 0, np.iinfo(np.int32).max)
+    if raw.nbytes < GAUSSIAN_HEADER.size:
+        raise RuntimeError(f"数据库节点 {node_id} 的 Gaussian header 截断")
+    magic, count = GAUSSIAN_HEADER.unpack_from(raw)
+    if magic != GAUSSIAN_MAGIC or count == 0 or raw.nbytes != 16 + count * GAUSSIAN_RECORD_BYTES:
+        raise RuntimeError(f"数据库节点 {node_id} 的 Gaussian header/长度无效")
+    records = np.frombuffer(raw, dtype=GAUSSIAN_DTYPE, count=count, offset=16)
+    covariances = records["covariance"]
+    if (np.any(records["level"] < 0) or np.any(records["level"] > 30) or
+        np.any(records["sample_count"] <= 0) or not np.isfinite(records["mean"]).all() or
+        not np.isfinite(covariances).all() or not np.isfinite(records["radius"]).all() or
+        np.any(records["radius"] <= 0.) or np.any(records["is_plane"] > 1) or
+        not np.allclose(covariances, covariances.transpose(0, 2, 1), rtol=1e-5, atol=1e-8)):
+        raise RuntimeError(f"数据库节点 {node_id} 的 Gaussian 字段无效")
+    try:
+        np.linalg.cholesky(covariances)
+    except np.linalg.LinAlgError as error:
+        raise RuntimeError(f"数据库节点 {node_id} 的 Gaussian 协方差不是正定矩阵") from error
     return records
 
 
@@ -222,10 +264,7 @@ def _ellipsoid_grid(radii: np.ndarray, requested: float, cap: int) -> np.ndarray
 
 
 def _covariance(record: np.void) -> np.ndarray:
-    xx, xy, xz, yy, yz, zz = record["covariance"].astype(np.float64)
-    return np.asarray(
-        ((xx, xy, xz), (xy, yy, yz), (xz, yz, zz)), dtype=np.float64
-    )
+    return record["covariance"].astype(np.float64)
 
 
 def sample_gaussian(
@@ -293,7 +332,7 @@ def transform_points(node_id: int, local_points: np.ndarray, pose: np.ndarray) -
         transformed = local_points @ pose[:3, :3].T + pose[:3, 3]
     if not np.isfinite(transformed).all() or np.any(np.abs(transformed) > FLOAT32_MAX):
         raise RuntimeError(
-            f"数据库节点 {node_id} 的采样点经 submap_pose 变换后超出 float32 PLY 数值范围"
+            f"数据库节点 {node_id} 的采样点经 优化位姿 变换后超出 float32 PLY 数值范围"
         )
     transformed_float = transformed.astype("<f4", copy=False)
     if not np.isfinite(transformed_float).all():
@@ -367,33 +406,11 @@ def assemble(
 
     connection = sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True)
     try:
-        expected_nodes = int(connection.execute("SELECT COUNT(*) FROM Node").fetchone()[0])
-        scene_join = ""
-        if connection.execute("PRAGMA user_version").fetchone()[0] == 3:
-            missing = connection.execute(
-                "SELECT 1 FROM Node n LEFT JOIN SceneState s ON s.node_id=n.id WHERE s.node_id IS NULL LIMIT 1"
-            ).fetchone()
-            orphan = connection.execute(
-                "SELECT 1 FROM SceneState s LEFT JOIN Node n ON n.id=s.node_id WHERE n.id IS NULL LIMIT 1"
-            ).fetchone()
-            retained_payload = connection.execute(
-                "SELECT 1 FROM SceneState s JOIN LaserRecord l ON l.node_id=s.node_id WHERE s.retired_by IS NOT NULL LIMIT 1"
-            ).fetchone()
-            if missing or orphan or retained_payload:
-                raise RuntimeError("场景保留状态与 Node/LaserRecord 不一致")
-            expected_nodes = int(connection.execute(
-                "SELECT COUNT(*) FROM SceneState WHERE retired_by IS NULL"
-            ).fetchone()[0])
-            scene_join = "JOIN SceneState s ON s.node_id=n.id AND s.retired_by IS NULL"
-        rows = connection.execute(
-            f"""
-            SELECT n.id, n.submap_pose, l.gaussian_count, l.payload
-            FROM Node AS n
-            JOIN LaserRecord AS l ON l.node_id = n.id
-            {scene_join}
-            ORDER BY n.id
-            """
-        )
+        connection.execute("BEGIN")  # geometry and optimized poses share one read snapshot
+        poses = load_optimized_poses(connection)
+        expected_nodes = connection.execute("SELECT COUNT(*) FROM Node WHERE weight >= 0").fetchone()[0]
+        rows = connection.execute("SELECT id,lidar_geometry FROM Node WHERE weight >= 0 ORDER BY id")
+
         try:
             file_mode = "w+" if ascii_output else "w+b"
             open_kwargs = {"encoding": "ascii", "newline": "\n"} if ascii_output else {}
@@ -401,10 +418,12 @@ def assemble(
                 initial_header = ply_header(0, ascii_output)
                 output.write(initial_header if ascii_output else initial_header.encode("ascii"))
 
-                for raw_node_id, pose_blob, gaussian_count, payload in rows:
+                for raw_node_id, payload in rows:
                     node_id = int(raw_node_id)
-                    pose = decode_pose(node_id, pose_blob)
-                    records = decode_gaussians(node_id, int(gaussian_count), payload)
+                    if node_id not in poses:
+                        raise RuntimeError(f"数据库节点 {node_id} 缺少优化位姿")
+                    pose = poses[node_id]
+                    records = decode_gaussians(node_id, payload)
                     if mode_name == "trivial":
                         local_points = records["mean"].astype(np.float64)
                         labels = records["is_plane"]
@@ -450,7 +469,7 @@ def assemble(
 
                 if node_count != expected_nodes:
                     raise RuntimeError(
-                        "活跃场景与 LaserRecord 不是一一对应，拒绝生成不完整地图"
+                        "节点数量发生变化，拒绝生成不完整地图"
                     )
                 if node_count == 0:
                     raise RuntimeError("map.db 中没有地图节点")
@@ -556,7 +575,7 @@ def main() -> int:
         )
         print(
             f"完成：mode={arguments.mode}，{output_path}，{node_count} 个节点，"
-            f"共 {point_count:,} 点；使用 map.db 中的当前 submap_pose"
+            f"共 {point_count:,} 点；使用 map.db 中的当前 优化位姿"
         )
         return 0
     except (OSError, RuntimeError, sqlite3.Error, ValueError, struct.error) as error:

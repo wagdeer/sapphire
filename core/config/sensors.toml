@@ -1,0 +1,41 @@
+# One installation. lidar0 alone = single; add lidar1 = dual.
+# Both extrinsics map LiDAR -> selected IMU: p_imu = R * p_lidar + t.
+# Translation: meters. Rotation: row-major 3x3. Time: seconds.
+
+[imu]
+topic = "/front_lidar/imu"
+rate_hz = 200.0
+
+[preprocess]
+max_scan_duration = 0.11
+point_filter_num = 1
+blind = 0.10
+
+[lidar0]
+type = 0 # 0: Livox, 1: RoboSense/Airy, 2: Hesai XT, 3: Velodyne
+topic = "/front_lidar"
+time_offset = 0.0
+extrinsic_tran = [-0.011, -0.02329, 0.04412]
+extrinsic_rota = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+
+# Dual RoboSense/Airy: change lidar0 type/calibration, set max_scan_duration=0.25,
+# then uncomment lidar1 and fill its measured LiDAR -> SAME IMU calibration.
+# Empty arrays deliberately fail validation; do not substitute guessed identity.
+# [lidar1]
+# type = 1
+# topic = "/rear_lidar"
+# time_offset = 0.0
+# extrinsic_tran = []
+# extrinsic_rota = []
+
+[sync]
+lidar_merge_hz = 10.0 # 0: lidar0 frame windows; >0: fixed windows
+max_time_gap = 0.02
+max_wait = 0.3
+min_points = 1
+queue_size = 8
+
+# Existing Hilti 2022 exp09 calibration (replace imu/lidar0 above for that rig):
+# imu.topic = "/alphasense/imu"; lidar0.type = 2; lidar0.topic = "/hesai/pandar"
+# extrinsic_tran = [-0.001, -0.00855, 0.055]
+# extrinsic_rota = [0.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, -1.0]

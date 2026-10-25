@@ -1,2 +1,0 @@
-# This directory's sources are compiled as part of the top-level faiss target.
-# No separate BUCK file is needed here.
