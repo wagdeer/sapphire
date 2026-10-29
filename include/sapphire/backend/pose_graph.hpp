@@ -19,6 +19,9 @@ struct PoseGraphStats {
     size_t loop_residual_rejections = 0;
     size_t loop_edges = 0;
     double last_loop_fitness = -1.0;
+    /// Source points of the latest GICP attempt, after the query window,
+    /// body-frame range gate, and source voxel. Zero before any attempt.
+    size_t last_loop_source_points = 0;
     double correction_translation = 0.0;
     double correction_rotation = 0.0;
     size_t revision = 0;

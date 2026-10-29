@@ -2,6 +2,7 @@
 
 #include <pcl/common/transforms.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -129,6 +130,7 @@ void testLoopClosureAddsConstraint() {
     config.loop_search_radius = 2.0;
     config.loop_search_stride = 1;
     config.target_frame_count = 0;
+    config.source_travel_radius_m = 0.0;
     config.source_voxel_size = 0.05;
     config.target_voxel_size = 0.05;
 
@@ -224,6 +226,7 @@ void testLoopRelinearizationMovesDistantKeyframe() {
     config.loop_search_radius = 2.0;
     config.loop_search_stride = 1;
     config.target_frame_count = 0;
+    config.source_travel_radius_m = 0.0;
     config.source_voxel_size = 0.05;
     config.target_voxel_size = 0.05;
     config.lidar_translation_sigma_m = 0.02;
@@ -313,6 +316,7 @@ void testSecondLoopCommitsAfterFirst() {
     config.loop_search_radius = 2.0;
     config.loop_search_stride = 1;
     config.target_frame_count = 0;
+    config.source_travel_radius_m = 0.0;
     config.source_voxel_size = 0.05;
     config.target_voxel_size = 0.05;
 
@@ -364,6 +368,7 @@ void testInconsistentLoopLeavesCommittedGraph() {
     config.loop_search_radius = 2.0;
     config.loop_search_stride = 1;
     config.target_frame_count = 0;
+    config.source_travel_radius_m = 0.0;
     config.source_voxel_size = 0.05;
     config.target_voxel_size = 0.05;
     config.lidar_translation_sigma_m = 0.05;
@@ -461,6 +466,7 @@ void testHistoricalTrajectoryFollowsOwningKeyframe() {
     config.loop_search_radius = 2.0;
     config.loop_search_stride = 1;
     config.target_frame_count = 0;
+    config.source_travel_radius_m = 0.0;
     config.source_voxel_size = 0.05;
     config.target_voxel_size = 0.05;
     config.lidar_translation_sigma_m = 0.02;
@@ -625,6 +631,7 @@ void testSparseCloudRejectsLoop() {
     config.loop_search_radius = 2.0;
     config.loop_search_stride = 1;
     config.target_frame_count = 0;
+    config.source_travel_radius_m = 0.0;
     config.source_voxel_size = 0.05;
     config.target_voxel_size = 0.05;
 
@@ -680,6 +687,7 @@ void testFailedCandidateFallsThroughToNext() {
     config.loop_search_radius = 2.0;
     config.loop_search_stride = 1;
     config.target_frame_count = 0;
+    config.source_travel_radius_m = 0.0;
     config.source_voxel_size = 0.05;
     config.target_voxel_size = 0.05;
 
@@ -728,6 +736,7 @@ void testLinkedCandidateIsSkipped() {
     config.loop_search_radius = 2.0;
     config.loop_search_stride = 1;
     config.target_frame_count = 0;
+    config.source_travel_radius_m = 0.0;
     config.source_voxel_size = 0.05;
     config.target_voxel_size = 0.05;
     config.lidar_translation_sigma_m = 0.5;
@@ -780,6 +789,7 @@ void testSearchStopsAfterFiveCandidates() {
     config.loop_search_radius = 2.5;
     config.loop_search_stride = 1;
     config.target_frame_count = 0;
+    config.source_travel_radius_m = 0.0;
     config.source_voxel_size = 0.05;
     config.target_voxel_size = 0.05;
 
@@ -819,6 +829,251 @@ void testSearchStopsAfterFiveCandidates() {
            "stopping at five must leave the farther corner untried");
 }
 
+sapphire::PointCloudPtr sliceCloud(
+    const sapphire::PointCloud& cloud, size_t begin, size_t count)
+{
+    auto out = std::make_shared<sapphire::PointCloud>();
+    const size_t end = std::min(cloud.size(), begin + count);
+    for (size_t i = begin; i < end; ++i) {
+        out->push_back(cloud[i]);
+    }
+    return out;
+}
+
+void addWorldCloud(
+    sapphire::PoseGraphBackend& backend,
+    const sapphire::PointCloudConstPtr& world_cloud,
+    double x,
+    double stamp)
+{
+    sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+    pose.translation().x() = x;
+    backend.addFrame(world_cloud, pose, stamp);
+}
+
+template <typename Predicate>
+void waitUntil(
+    sapphire::PoseGraphBackend& backend, Predicate ready)
+{
+    for (int attempt = 0; attempt < 500 && !ready(); ++attempt) {
+        backend.requestSnapshot();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+/// The query scan is below the inlier gate. A keyframe inside the 10 m
+/// travel window supplies the rest of the same world corner, and a later
+/// keyframe adds points that survive the 0.05 m voxel. The target frame is
+/// outside that window, so the source is not the target cloud copied back.
+void testQueryCloudUsesNearbyKeyframes() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.2;
+    config.update_period_sec = 30.0;
+    config.loop_min_time_separation = 3.0;
+    config.loop_min_travel_distance = 5.0;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto corner = makeCornerCloud();
+    const auto head = sliceCloud(*corner, 0, 45);
+    const auto tail = sliceCloud(*corner, 45, corner->size() - 45);
+    sapphire::Isometry3d structure = sapphire::Isometry3d::Identity();
+    structure.translation().x() = 10.0;
+    const auto world_corner = transformCloud(corner, structure);
+    const auto world_head = transformCloud(head, structure);
+    const auto world_tail = transformCloud(tail, structure);
+
+    addWorldCloud(backend, world_corner, 10.0, 0.0);
+    addKeyframe(backend, makeLocalCloud(), 22.0, 1.0);
+    addWorldCloud(backend, world_tail, 10.2, 2.0);
+    addWorldCloud(backend, world_head, 10.5, 40.0);
+    auto extra = std::make_shared<sapphire::PointCloud>();
+    for (int i = 0; i < 20; ++i) {
+        addPoint(*extra, 5.0f, 5.0f, 0.2f * static_cast<float>(i));
+    }
+    addKeyframe(backend, extra, 10.8, 0.0);
+
+    waitUntil(backend, [&]() {
+        return backend.stats().loop_edges >= 1
+            && backend.stats().optimized_poses >= 5;
+    });
+
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.optimized_poses == 5,
+           "query-window test must optimize every keyframe");
+    expect(stats.last_loop_source_points >= 300,
+           "nearby and later keyframes must thicken the query cloud");
+    expect(stats.loop_registration_failures == 0,
+           "a thickened corner must pass GICP");
+    expect(stats.loop_edges == 1,
+           "a thickened query must close one loop");
+    expect(stats.last_loop_fitness <= config.lidar_max_fitness_m2,
+           "thickened query fitness must stay inside the metric gate");
+
+    backend.requestSnapshot();
+    waitUntil(backend, [&]() {
+        return backend.snapshot().optimized_poses.size() >= 5
+            && !backend.snapshot().loop_edges.empty();
+    });
+    const sapphire::PoseGraphSnapshot snapshot = backend.snapshot();
+    expect(std::abs(
+               snapshot.optimized_poses.front().translation().x() - 10.0)
+               < 1e-3,
+           "root prior must keep the historical keyframe in place");
+    expect(snapshot.loop_edges.size() == 1
+               && snapshot.loop_edges.front().source == 3
+               && snapshot.loop_edges.front().target == 0,
+           "the thickened query must loop to the historical frame");
+}
+
+/// The same extra corner points sit just outside the 10 m travel window.
+/// The query scan stays under the inlier gate.
+void testQueryCloudIgnoresDistantTravel() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.2;
+    config.update_period_sec = 30.0;
+    config.loop_min_time_separation = 3.0;
+    config.loop_min_travel_distance = 5.0;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto corner = makeCornerCloud();
+    const auto head = sliceCloud(*corner, 0, 45);
+    const auto tail = sliceCloud(*corner, 45, corner->size() - 45);
+    sapphire::Isometry3d structure = sapphire::Isometry3d::Identity();
+    structure.translation().x() = 10.0;
+
+    addWorldCloud(backend, transformCloud(corner, structure), 10.0, 0.0);
+    addWorldCloud(backend, transformCloud(tail, structure), 22.0, 1.0);
+    addWorldCloud(backend, transformCloud(head, structure), 10.5, 40.0);
+
+    waitUntil(backend, [&]() {
+        return backend.stats().last_loop_source_points > 0
+            && backend.stats().optimized_poses >= 3;
+    });
+
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.optimized_poses == 3,
+           "travel-window test must optimize every keyframe");
+    expect(stats.last_loop_source_points < 64,
+           "a keyframe outside the travel window must not thicken the query");
+    expect(stats.loop_edges == 0,
+           "a thin query must not close the loop");
+}
+
+/// Neighbor points beyond 20 m in that scan's body are dropped even when
+/// odometry would bring them inside 20 m of the query. Near points on the
+/// same scan are kept, which shows the scan was inside the travel window.
+void testQueryCloudDropsFarBodyPoints() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.2;
+    config.update_period_sec = 30.0;
+    config.loop_min_time_separation = 10.0;
+    config.loop_min_travel_distance = 1.0;
+    config.loop_search_radius = 30.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    auto target = std::make_shared<sapphire::PointCloud>();
+    for (int i = 0; i < 80; ++i) {
+        addPoint(*target, 0.2f * static_cast<float>(i % 10),
+                 0.2f * static_cast<float>(i / 10), 0.0f);
+    }
+    auto neighbor = std::make_shared<sapphire::PointCloud>();
+    for (int i = 0; i < 40; ++i) {
+        addPoint(*neighbor, 1.0f, 2.0f, 0.2f * static_cast<float>(i));
+    }
+    for (int iy = 0; iy < 10; ++iy) {
+        for (int iz = 0; iz < 10; ++iz) {
+            addPoint(*neighbor,
+                     25.0f,
+                     0.2f * static_cast<float>(iy),
+                     0.2f * static_cast<float>(iz));
+        }
+    }
+    auto query = std::make_shared<sapphire::PointCloud>();
+    for (int i = 0; i < 30; ++i) {
+        addPoint(*query, 1.0f, 0.0f, 0.2f * static_cast<float>(i));
+    }
+
+    addKeyframe(backend, target, 0.0, 0.0);
+    addKeyframe(backend, neighbor, 7.0, 1.0);
+    addKeyframe(backend, query, 16.0, 100.0);
+
+    waitUntil(backend, [&]() {
+        return backend.stats().last_loop_source_points > 0
+            && backend.stats().optimized_poses >= 3;
+    });
+
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.optimized_poses == 3,
+           "range-gate test must optimize every keyframe");
+    expect(stats.last_loop_source_points >= 60
+               && stats.last_loop_source_points <= 80,
+           "body-frame range gate must drop the far points and keep the near ones");
+}
+
+/// Three hundred keyframes stay inside 10 m of travel. Only the oldest
+/// holds a dense cloud. The 256-frame cap must leave that cloud out.
+void testQueryCloudCapsStationaryWindow() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.01;
+    config.update_period_sec = 30.0;
+    config.loop_min_time_separation = 1.0;
+    config.loop_min_travel_distance = 0.5;
+    config.loop_search_radius = 30.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    auto dense = std::make_shared<sapphire::PointCloud>();
+    for (int i = 0; i < 100; ++i) {
+        addPoint(*dense, 2.0f, 0.2f * static_cast<float>(i), 0.0f);
+    }
+    auto filler = std::make_shared<sapphire::PointCloud>();
+    addPoint(*filler, 0.0f, 0.0f, 0.0f);
+    auto query = std::make_shared<sapphire::PointCloud>();
+    for (int i = 0; i < 30; ++i) {
+        addPoint(*query, 1.0f, 0.2f * static_cast<float>(i), 0.0f);
+    }
+
+    addKeyframe(backend, dense, 0.0, 0.0);
+    for (int i = 1; i < 299; ++i) {
+        addWorldCloud(backend, filler, 0.02 * static_cast<double>(i), 0.0);
+    }
+    addKeyframe(backend, query, 0.02 * 299.0, 1000.0);
+
+    waitUntil(backend, [&]() {
+        return backend.stats().last_loop_source_points > 0
+            && backend.stats().keyframes >= 300;
+    });
+
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.keyframes == 300,
+           "frame-cap test must keep every micro-step as a keyframe");
+    expect(stats.last_loop_source_points < 50,
+           "the 256-frame cap must exclude the oldest dense cloud");
+    expect(stats.loop_edges == 0,
+           "a capped thin query must not close a loop");
+}
+
 }  // namespace
 
 int main() {
@@ -832,6 +1087,10 @@ int main() {
     testFailedCandidateFallsThroughToNext();
     testLinkedCandidateIsSkipped();
     testSearchStopsAfterFiveCandidates();
+    testQueryCloudUsesNearbyKeyframes();
+    testQueryCloudIgnoresDistantTravel();
+    testQueryCloudDropsFarBodyPoints();
+    testQueryCloudCapsStationaryWindow();
     std::cout << "All pose graph tests passed\n";
     return EXIT_SUCCESS;
 }

@@ -364,6 +364,17 @@ Config loadConfig(const std::filesystem::path& path) {
     if (const auto value = root["pgo"]["target_voxel_size"].value<double>()) {
         config.pgo.target_voxel_size = *value;
     }
+    if (const auto value =
+            root["pgo"]["source_travel_radius_m"].value<double>()) {
+        config.pgo.source_travel_radius_m = *value;
+    }
+    if (const auto value =
+            root["pgo"]["source_max_range_m"].value<double>()) {
+        config.pgo.source_max_range_m = *value;
+    }
+    if (const auto value = root["pgo"]["source_max_frames"].value<int>()) {
+        config.pgo.source_max_frames = *value;
+    }
     if (const auto value = root["pgo"]["lidar_min_inliers"].value<int>()) {
         config.pgo.lidar_min_inliers = *value;
     }
@@ -671,6 +682,16 @@ void validateConfig(const Config& config) {
     requireFinitePositive(
         config.pgo.target_voxel_size,
         "pgo.target_voxel_size");
+    requireFiniteNonnegative(
+        config.pgo.source_travel_radius_m,
+        "pgo.source_travel_radius_m");
+    requireFinitePositive(
+        config.pgo.source_max_range_m,
+        "pgo.source_max_range_m");
+    if (config.pgo.source_max_frames < 1) {
+        throw std::invalid_argument(
+            "pgo.source_max_frames must be positive");
+    }
     if (config.pgo.lidar_min_inliers < 6
         || config.pgo.lidar_max_iterations < 1) {
         throw std::invalid_argument(

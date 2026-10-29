@@ -542,6 +542,7 @@ private:
         PoseGraphEdge edge;
         size_t source_points = 0;
         size_t target_points = 0;
+        size_t source_frames = 0;
         size_t inliers = 0;
         double overlap = 0.0;
         double fitness = 0.0;
@@ -803,6 +804,86 @@ private:
         return voxelized(merged, config_.target_voxel_size);
     }
 
+    /// Inclusive index window of keyframes merged into the query cloud.
+    /// Travel is monotonic, so the frames inside the radius are contiguous.
+    /// Expanding one step backward then one forward keeps a stationary run
+    /// centered on the query once the frame cap binds.
+    void queryCloudWindow(
+        size_t query_id, size_t& begin, size_t& end) const
+    {
+        const double travel = frames_[query_id].travel_distance;
+        const double radius = std::max(0.0, config_.source_travel_radius_m);
+        const size_t cap = static_cast<size_t>(
+            std::max(1, config_.source_max_frames));
+        begin = query_id;
+        end = query_id;
+        const auto inside = [&](size_t id) {
+            return std::abs(frames_[id].travel_distance - travel) <= radius;
+        };
+        while (end - begin + 1 < cap) {
+            const bool backward = begin > 0 && inside(begin - 1);
+            const bool forward =
+                end + 1 < frames_.size() && inside(end + 1);
+            if (!backward && !forward) {
+                break;
+            }
+            if (backward) {
+                --begin;
+            }
+            if (end - begin + 1 >= cap) {
+                break;
+            }
+            if (forward) {
+                ++end;
+            }
+        }
+    }
+
+    /// Query scan plus keyframes within the travel window, expressed in the
+    /// query body by odometry. Points farther than source_max_range_m in the
+    /// scan that observed them are dropped first. The voxel is unchanged.
+    PointCloudPtr buildQueryCloud(
+        size_t query_id, size_t& frame_count) const
+    {
+        size_t begin = query_id;
+        size_t end = query_id;
+        queryCloudWindow(query_id, begin, end);
+        frame_count = end - begin + 1;
+
+        const Isometry3d& T_query = frames_[query_id].T_odom_lidar;
+        const double max_range_sq = config_.source_max_range_m
+            * config_.source_max_range_m;
+        auto merged = std::make_shared<PointCloud>();
+        for (size_t id = begin; id <= end; ++id) {
+            const PointCloud& scan = *frames_[id].cloud_lidar;
+            auto kept = std::make_shared<PointCloud>();
+            kept->reserve(scan.size());
+            for (const Point& point : scan.points) {
+                if (!std::isfinite(point.x) || !std::isfinite(point.y)
+                    || !std::isfinite(point.z)) {
+                    continue;
+                }
+                const double range_sq =
+                    static_cast<double>(point.x) * point.x
+                    + static_cast<double>(point.y) * point.y
+                    + static_cast<double>(point.z) * point.z;
+                if (range_sq > max_range_sq) {
+                    continue;
+                }
+                Point copy = point;
+                copy.data[3] = 1.0f;
+                kept->push_back(copy);
+            }
+            if (kept->empty()) {
+                continue;
+            }
+            const Isometry3d T_query_scan =
+                T_query.inverse() * frames_[id].T_odom_lidar;
+            *merged += *transformedCloud(kept, T_query_scan);
+        }
+        return voxelized(merged, config_.source_voxel_size);
+    }
+
     LoopAlignment registerLoop(
         const Isometry3d& initial_pose,
         const PointCloudConstPtr& source,
@@ -956,18 +1037,17 @@ private:
                 continue;
             }
 
-            // One voxelized query scan for every candidate. Thickening this
-            // cloud is a later step.
+            // One thickened query cloud for every candidate of this query.
+            size_t source_frames = 0;
             const PointCloudPtr source =
-                voxelized(
-                    frames_[query_id].cloud_lidar,
-                    config_.source_voxel_size);
+                buildQueryCloud(query_id, source_frames);
             for (const size_t target_index : target_ids) {
                 const int target_id = static_cast<int>(target_index);
                 ++loop_candidate_count_;
                 const PointCloudPtr target = buildTargetCloud(target_id);
                 const LoopAlignment alignment =
                     registerLoop(query_pose, source, target);
+                last_loop_source_points_ = alignment.source_points;
                 if (!alignment.accepted) {
                     ++loop_registration_failure_count_;
                     last_loop_fitness_ = std::isfinite(alignment.fitness)
@@ -975,12 +1055,13 @@ private:
                         : -1.0;
                     spdlog::warn(
                         "[pgo] loop GICP rejected: {} -> {}, points={}/{}, "
-                        "inliers={}, overlap={:.3f}, fitness={:.4f}, "
-                        "min_eig={:.3e} ({})",
+                        "source_frames={}, inliers={}, overlap={:.3f}, "
+                        "fitness={:.4f}, min_eig={:.3e} ({})",
                         query_id,
                         target_id,
                         alignment.source_points,
                         alignment.target_points,
+                        source_frames,
                         alignment.inliers,
                         alignment.overlap,
                         alignment.fitness,
@@ -1052,6 +1133,7 @@ private:
                 // candidate ends this query; later candidates are not added.
                 PendingLoop loop;
                 loop.edge = {query_id, static_cast<size_t>(target_id)};
+                loop.source_frames = source_frames;
                 loop.source_points = alignment.source_points;
                 loop.target_points = alignment.target_points;
                 loop.inliers = alignment.inliers;
@@ -1075,18 +1157,20 @@ private:
             loop_registration_failure_count_;
         stats_.loop_residual_rejections = loop_residual_rejection_count_;
         stats_.last_loop_fitness = last_loop_fitness_;
+        stats_.last_loop_source_points = last_loop_source_points_;
     }
 
     void logCommittedLoop(const PendingLoop& loop) const {
         spdlog::info(
             "[pgo] loop detected: factor {} -> {} gaussian information, "
-            "points={}/{}, inliers={}, overlap={:.3f}, fitness={:.4f}, "
-            "min_eig={:.3e}, info_diag=[{:.4e}, {:.4e}, {:.4e}, "
-            "{:.4e}, {:.4e}, {:.4e}]",
+            "points={}/{}, source_frames={}, inliers={}, overlap={:.3f}, "
+            "fitness={:.4f}, min_eig={:.3e}, info_diag=[{:.4e}, {:.4e}, "
+            "{:.4e}, {:.4e}, {:.4e}, {:.4e}]",
             loop.edge.target,
             loop.edge.source,
             loop.source_points,
             loop.target_points,
+            loop.source_frames,
             loop.inliers,
             loop.overlap,
             loop.fitness,
@@ -1471,6 +1555,7 @@ private:
     size_t loop_residual_rejection_count_ = 0;
     size_t loop_edge_count_ = 0;
     double last_loop_fitness_ = -1.0;
+    size_t last_loop_source_points_ = 0;
     std::vector<PoseGraphEdge> loop_edges_;
 
     mutable std::mutex output_mutex_;

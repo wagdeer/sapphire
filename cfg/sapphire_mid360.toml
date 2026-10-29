@@ -101,6 +101,14 @@ loop_search_stride = 1
 target_frame_count = 50
 source_voxel_size = 0.4
 target_voxel_size = 0.4
+# Query cloud only. Graph nodes stay at keyframe_distance.
+# Keyframes within this odometry travel are transformed into the query frame.
+source_travel_radius_m = 10.0
+# Drop points beyond this range in the scan that observed them, not after
+# they have been moved into the query frame.
+source_max_range_m = 20.0
+# Stationary cap. Travel does not grow while spinning in place.
+source_max_frames = 256
 lidar_min_inliers = 64
 lidar_max_iterations = 32
 lidar_max_correspondence_m = 2.0

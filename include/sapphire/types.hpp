@@ -229,6 +229,18 @@ struct Config {
         int target_frame_count = 50;
         double source_voxel_size = 0.4;
         double target_voxel_size = 0.4;
+        /// Odometry travel around the query whose keyframe clouds are
+        /// transformed into the query frame before GICP. The graph node
+        /// spacing stays keyframe_distance. Zero keeps the query scan alone.
+        double source_travel_radius_m = 10.0;
+        /// Drop a point farther than this from the scan that observed it.
+        /// The gate is in that scan's body frame, before the odometry
+        /// transform into the query. NodeBuilder uses the same 20 m.
+        double source_max_range_m = 20.0;
+        /// Cap on the query window. A stationary spin never leaves the
+        /// travel radius, so the frame count would otherwise grow without
+        /// bound. Same limit as NodeBuilder::max_history_frames.
+        int source_max_frames = 256;
         /// GICP loop acceptance. Point covariances use 20 neighbors.
         /// Translation and rotation convergence epsilons stay 0.01 in code.
         int lidar_min_inliers = 64;

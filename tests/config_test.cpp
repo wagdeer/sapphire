@@ -143,6 +143,17 @@ void testProjectConfig() {
     expectNear(
         config.pgo.map_voxel_size, 0.8,
         "PGO sparse-map voxel size");
+    expectNear(
+        config.pgo.source_voxel_size, 0.4,
+        "PGO query voxel size");
+    expectNear(
+        config.pgo.source_travel_radius_m, 10.0,
+        "PGO query travel window");
+    expectNear(
+        config.pgo.source_max_range_m, 20.0,
+        "PGO query body-frame range gate");
+    expect(config.pgo.source_max_frames == 256,
+           "PGO query window frame cap");
     expect(!config.pgo.occupancy.enabled,
            "default Mid-360 profile keeps occupancy off");
     expectNear(
