@@ -454,7 +454,7 @@ w=1 修复照搬 submap 模式，保证 small_gicp 兼容。
 ✅ RingBuffer<T,N> 自研完成
 ✅ PCL 原生 Point type：`sapphire::Point`，small_gicp 零转换
 ✅ 基础骨架：sapphire (STATIC) + sapphire_ros2 (ament_cmake)
-✅ Launch 文件：Mid-360 默认话题 + 可配置世界系/雷达系/acc_scale
+✅ Launch 文件：Mid-360 默认话题 + 可配置世界系/雷达系。加速度单位由 `accel_unit` 识别，没有 `acc_scale`
 
 ✅ IMU 预积分 + Lie 群数学库
 - `external/preintegration/` + `external/lie/` — header-only (SO3/SEn3/Gal3/TG)

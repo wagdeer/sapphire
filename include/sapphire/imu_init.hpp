@@ -4,6 +4,7 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace sapphire {
@@ -27,7 +28,8 @@ public:
         WAITING,      // not enough samples yet
         CALIBRATING,  // collecting, checking convergence periodically
         CONVERGED,    // converged — result available
-        TIMEOUT       // timed out — approximate result available
+        TIMEOUT,      // timed out — approximate result available
+        FAILED        // acceleration unit could not be resolved
     };
 
     struct Result {
@@ -39,12 +41,17 @@ public:
         double duration_sec;          // actual calibration duration
         int    sample_count;
         State  final_state;           // CONVERGED or TIMEOUT
+        /// Multiply a raw specific-force sample to obtain m/s².
+        double accel_scale = 1.0;
     };
 
-    explicit ImuInitializer(const ImuInitConfig& config = ImuInitConfig{});
+    explicit ImuInitializer(
+        const ImuInitConfig& config = ImuInitConfig{},
+        std::string accel_unit = "auto");
 
     /// Feed a raw IMU measurement.
-    /// Returns Result when the calibration is complete (converged or timed out).
+    /// Returns Result when calibration finishes and the acceleration unit is
+    /// known. Unknown units return nullopt and do not initialize the caller.
     /// The caller should not feed data after a result is returned.
     std::optional<Result> feedImu(double stamp,
                                    const Eigen::Vector3d& accel,
@@ -73,9 +80,15 @@ private:
     bool checkConvergence();
 
     /// Compute final result from accumulated samples.
-    Result computeResult();
+    /// Empty when the acceleration unit cannot be resolved.
+    std::optional<Result> computeResult();
+
+    /// g → 9.80665, m/s² → 1. auto uses |accel_mean|.
+    std::optional<double> resolveAccelScale(
+        const Eigen::Vector3d& accel_mean) const;
 
     ImuInitConfig cfg_;
+    std::string accel_unit_;
     State state_ = State::WAITING;
     std::vector<Sample> samples_;     // contiguous storage, reserved on first use
     double start_stamp_ = 0.0;

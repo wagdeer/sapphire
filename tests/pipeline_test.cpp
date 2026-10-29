@@ -105,6 +105,8 @@ void testImuInitializationCreatesGravityAlignedState() {
            "initial orientation must align measured gravity with world Z");
     expect(result.gyro_bias.isApprox(gyro_bias, 1e-12),
            "stationary gyro mean must initialize gyro bias");
+    expectNear(result.accel_scale, 1.0, 1e-12,
+               "magnitude near 9.8 must stay in m/s^2");
     expect(result.accel_bias.isZero(1e-9),
            "gravity-only acceleration must not become accelerometer bias");
     expect(pipeline.gyroBias().isApprox(gyro_bias, 1e-12),
@@ -408,6 +410,150 @@ void testDirectionalEskfPipelineUsesHessian() {
            "directional bring-up profile must keep bias injection frozen");
 }
 
+void testGravityUnitScalesBufferedSamples() {
+    sapphire::Config config;
+    config.imu.init.min_samples = 5;
+    config.imu.init.check_interval_sec = 0.05;
+    config.imu.init.timeout_sec = 1.0;
+    config.registration.gicp.min_num_points = 50;
+    config.odometry.voxel_size = 0.01;
+
+    sapphire::OdometryPipeline pipeline(config);
+    const Eigen::Vector3d accel(0.0, 0.0, 1.0);
+    for (int i = 0; i <= 16; ++i) {
+        pipeline.pushImu({
+            static_cast<double>(i) * 0.01,
+            accel,
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    expect(pipeline.initialized(), "g-unit IMU must initialize");
+    expectNear(
+        pipeline.imuInitResult().accel_scale, 9.80665, 1e-12,
+        "stationary magnitude near 1 must scale g to m/s^2");
+    expect(pipeline.accelBias().isZero(1e-9),
+           "scaled gravity must not be absorbed into accelerometer bias");
+    expect(pipeline.imuInitResult().accel_std < 1e-9,
+           "identical g samples must keep a zero acceleration std");
+
+    pipeline.pushLidar(0.10, makeStructuredScan(0.0f, 0.10));
+    pipeline.pushImu({0.20, accel, Eigen::Vector3d::Zero()});
+    const auto propagated = pipeline.latestPropagatedResult();
+    expect(propagated.has_value(),
+           "scaled stationary IMU must still propagate");
+    expect(propagated->v_world.norm() < 1e-6,
+           "buffered g-unit samples must be scaled before integration");
+}
+
+void testUnknownAccelUnitStaysUninitialized() {
+    const Eigen::Vector3d accel(0.0, 0.0, 3.0);
+
+    sapphire::Config timeout_config;
+    timeout_config.imu.init.min_samples = 5;
+    timeout_config.imu.init.check_interval_sec = 10.0;
+    timeout_config.imu.init.timeout_sec = 0.2;
+    sapphire::OdometryPipeline timeout_path(timeout_config);
+    for (int i = 0; i <= 40; ++i) {
+        timeout_path.pushImu({
+            static_cast<double>(i) * 0.01,
+            accel,
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    expect(!timeout_path.initialized(),
+           "unknown acceleration unit must not initialize on timeout");
+
+    sapphire::Config converged_config = timeout_config;
+    converged_config.imu.init.check_interval_sec = 0.05;
+    converged_config.imu.init.timeout_sec = 5.0;
+    sapphire::OdometryPipeline converged_path(converged_config);
+    for (int i = 0; i <= 20; ++i) {
+        converged_path.pushImu({
+            static_cast<double>(i) * 0.01,
+            accel,
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    expect(!converged_path.initialized(),
+           "unknown acceleration unit must stay uninitialized");
+}
+
+void testExplicitAccelUnitIgnoresMagnitude() {
+    sapphire::Config config;
+    config.sensor.imu.accel_unit = "g";
+    config.imu.init.min_samples = 5;
+    config.imu.init.check_interval_sec = 0.05;
+    config.imu.init.timeout_sec = 1.0;
+
+    sapphire::OdometryPipeline g_pipeline(config);
+    for (int i = 0; i <= 8; ++i) {
+        g_pipeline.pushImu({
+            static_cast<double>(i) * 0.01,
+            Eigen::Vector3d(0.0, 0.0, 1.0),
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    expect(g_pipeline.initialized(), "explicit g must initialize");
+    expectNear(
+        g_pipeline.imuInitResult().accel_scale, 9.80665, 1e-12,
+        "explicit g always scales by standard gravity");
+    expect(g_pipeline.accelBias().isZero(1e-9),
+           "explicit g bias is computed after scaling");
+
+    config.sensor.imu.accel_unit = "m_s2";
+    sapphire::OdometryPipeline si_pipeline(config);
+    for (int i = 0; i <= 8; ++i) {
+        si_pipeline.pushImu({
+            static_cast<double>(i) * 0.01,
+            Eigen::Vector3d(0.0, 0.0, 1.0),
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    expect(si_pipeline.initialized(),
+           "explicit m/s^2 must initialize without looking at magnitude");
+    expectNear(
+        si_pipeline.imuInitResult().accel_scale, 1.0, 1e-12,
+        "explicit m/s^2 must not scale");
+    expectNear(
+        si_pipeline.accelBias().z(),
+        1.0 - config.imu.init.gravity_mag,
+        1e-9,
+        "explicit m/s^2 subtracts gravity from the raw sample");
+}
+
+void testLargeGyroIsNotRescaled() {
+    sapphire::Config config;
+    config.imu.init.min_samples = 5;
+    config.imu.init.check_interval_sec = 0.05;
+    config.imu.init.timeout_sec = 1.0;
+    config.registration.gicp.min_num_points = 50;
+    config.odometry.voxel_size = 0.01;
+
+    sapphire::OdometryPipeline pipeline(config);
+    const Eigen::Vector3d accel(0.0, 0.0, config.imu.init.gravity_mag);
+    for (int i = 0; i <= 5; ++i) {
+        pipeline.pushImu({
+            static_cast<double>(i) * 0.01,
+            accel,
+            Eigen::Vector3d::Zero(),
+        });
+    }
+    expect(pipeline.initialized(), "m/s^2 IMU must initialize");
+    pipeline.pushLidar(0.05, makeStructuredScan(0.0f, 0.05));
+    pipeline.pushImu({
+        0.09,
+        accel,
+        Eigen::Vector3d(25.0, 0.0, 0.0),
+    });
+
+    const auto propagated = pipeline.latestPropagatedResult();
+    expect(propagated.has_value(), "large gyro sample must still propagate");
+    const Eigen::AngleAxisd rotation(propagated->T_world_lidar.rotation());
+    expectNear(
+        rotation.angle(), 1.0, 1e-6,
+        "gyro above 20 rad/s must stay in rad/s");
+}
+
 void testImuStatePropagatesBetweenLidarScans() {
     sapphire::Config config;
     config.imu.init.min_samples = 5;
@@ -450,6 +596,10 @@ void testImuStatePropagatesBetweenLidarScans() {
 
 int main() {
     testImuInitializationCreatesGravityAlignedState();
+    testGravityUnitScalesBufferedSamples();
+    testUnknownAccelUnitStaysUninitialized();
+    testExplicitAccelUnitIgnoresMagnitude();
+    testLargeGyroIsNotRescaled();
     testFirstLidarScanInitializesDeskewedTarget();
     testFirstKeyframeStoresDownsampledCloud();
     testEskfFusionRecoversTranslation();

@@ -150,6 +150,9 @@ margin = 5.0
 # header_tolerance = 0.5
 # require_point_time = false
 
+# [sensor.imu]
+# accel_unit = "auto"   # auto | g | m_s2
+
 [extrinsics.T_imu_lidar]
 translation = [0.0, 0.0, 0.0]
 rotation_xyzw = [0.0, 0.0, 0.0, 1.0]

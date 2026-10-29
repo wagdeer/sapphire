@@ -52,7 +52,7 @@ public:
     void pushLidar(double stamp, const PointCloudConstPtr& points);
 
     /// Feed raw IMU data. During initialization, routed to ImuInitializer.
-    /// After initialization, bias-corrected and buffered for deskew.
+    /// After initialization, scaled to m/s², bias-corrected, and buffered.
     void pushImu(const ImuData& imu);
 
     /// Retrieve the most recent LiDAR result in the map frame. When PGO is
@@ -184,6 +184,9 @@ private:
     Eskf eskf_;
     Eigen::Vector3d accel_bias_ = Eigen::Vector3d::Zero();
     Eigen::Vector3d gyro_bias_ = Eigen::Vector3d::Zero();
+    /// Raw specific force → m/s², resolved at IMU initialization.
+    double accel_unit_scale_ = 1.0;
+    bool warned_gyro_unit_ = false;
     mutable std::mutex state_mutex_;
     Eigen::Vector3d gravity_world_ = Eigen::Vector3d::Zero();
 

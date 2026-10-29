@@ -63,7 +63,7 @@ EskfConfig OdometryPipeline::makeEskfConfig(const Config& config) {
 
 OdometryPipeline::OdometryPipeline(const Config& config)
     : config_(config)
-    , imu_initializer_(config.imu.init)
+    , imu_initializer_(config.imu.init, config.sensor.imu.accel_unit)
     , eskf_(
           makeEskfConfig(config),
           config.imu.noise,
@@ -670,6 +670,7 @@ void OdometryPipeline::finalizeImuInitialization(
         std::lock_guard<std::mutex> lock(state_mutex_);
         accel_bias_ = imu_init_result_->accel_bias;
         gyro_bias_ = imu_init_result_->gyro_bias;
+        accel_unit_scale_ = imu_init_result_->accel_scale;
         imu_state_.stamp = trigger_sample.stamp;
         imu_state_.T_world_imu = Isometry3d::Identity();
         imu_state_.T_world_imu.linear() =
@@ -677,7 +678,8 @@ void OdometryPipeline::finalizeImuInitialization(
         imu_state_.v_world.setZero();
         imu_state_.valid = true;
         corrected.stamp = trigger_sample.stamp;
-        corrected.accel = trigger_sample.accel - accel_bias_;
+        corrected.accel =
+            accel_unit_scale_ * trigger_sample.accel - accel_bias_;
         corrected.gyro = trigger_sample.gyro - gyro_bias_;
     }
 
@@ -694,6 +696,13 @@ void OdometryPipeline::pushImu(const ImuData& imu) {
     if (!isFiniteImu(imu)) {
         spdlog::warn("[pipeline] dropping IMU sample with non-finite values");
         return;
+    }
+    if (!warned_gyro_unit_ && imu.gyro.norm() > 20.0) {
+        warned_gyro_unit_ = true;
+        spdlog::warn(
+            "[pipeline] gyro magnitude {:.3f} rad/s exceeds 20; "
+            "angular velocity may be in deg/s",
+            imu.gyro.norm());
     }
 
     if (!initialized_.load(std::memory_order_acquire)) {
@@ -726,7 +735,7 @@ void OdometryPipeline::pushImu(const ImuData& imu) {
             }
         }
         corrected.stamp = imu.stamp;
-        corrected.accel = imu.accel - accel_bias_;
+        corrected.accel = accel_unit_scale_ * imu.accel - accel_bias_;
         corrected.gyro = imu.gyro - gyro_bias_;
         imu_buffer_.push_back(corrected);
         propagateStateLocked(corrected);

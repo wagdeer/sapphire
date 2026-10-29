@@ -300,6 +300,13 @@ struct Config {
             double header_tolerance = 0.5;
             bool require_point_time = false;
         } lidar;
+
+        /// Acceleration unit of the raw IMU message.
+        /// auto: |mean| in [0.5, 1.5] is g, [5, 15] is m/s².
+        /// g and m_s2 skip the magnitude test.
+        struct Imu {
+            std::string accel_unit = "auto";
+        } imu;
     } sensor;
 };
 

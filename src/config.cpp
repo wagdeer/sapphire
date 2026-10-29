@@ -499,6 +499,10 @@ Config loadConfig(const std::filesystem::path& path) {
             root["sensor"]["lidar"]["require_point_time"].value<bool>()) {
         config.sensor.lidar.require_point_time = *value;
     }
+    if (const auto value =
+            root["sensor"]["imu"]["accel_unit"].value<std::string>()) {
+        config.sensor.imu.accel_unit = *value;
+    }
 
     const auto extrinsics = root["extrinsics"]["T_imu_lidar"];
     const Eigen::Vector3d translation = requiredVector3(
@@ -831,6 +835,10 @@ void validateConfig(const Config& config) {
     requireFiniteNonnegative(
         config.sensor.lidar.header_tolerance,
         "sensor.lidar.header_tolerance");
+    requireChoice(
+        config.sensor.imu.accel_unit,
+        "sensor.imu.accel_unit",
+        {"auto", "g", "m_s2"});
 
     const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;
     if (!extrinsic.matrix().allFinite()) {

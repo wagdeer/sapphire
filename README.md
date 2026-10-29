@@ -165,7 +165,6 @@ ros2 launch sapphire_ros2 sapphire.launch.py \
   lidar_topic:=/points \
   imu_topic:=/imu/data \
   odom_topic:=/sapphire/odometry \
-  acc_scale:=1.0 \
   config_file:=/absolute/path/to/sapphire_mid360.toml
 ```
 
@@ -174,8 +173,6 @@ Launch defaults:
 - LiDAR input: `/livox/lidar`
 - IMU input: `/livox/imu`
 - Odometry output: `/sapphire/odometry`
-- IMU acceleration scale: `9.80665` (Mid-360 messages report acceleration
-  in units of g)
 - Parent/child frames: `map` and `lidar`
 
 Published interfaces:
@@ -193,8 +190,9 @@ Check these before using a new sensor or dataset:
 1. Keep the platform stationary while IMU initialization is running.
 2. Supply monotonically increasing LiDAR and IMU timestamps from the same
    clock domain.
-3. Convert acceleration to m/s². Set `acc_scale:=1.0` if the ROS message
-   already uses SI units.
+3. Acceleration may arrive in g or m/s². Sapphire converts a stationary
+   magnitude near 1 g into m/s². Set `[sensor.imu] accel_unit` to `g` or
+   `m_s2` only when that check fails. Angular velocity stays in rad/s.
 4. Point timestamps enter the pipeline as absolute seconds on the IMU
    clock. The ROS adapter classifies the cloud; set `[sensor.lidar]` only
    when that classification fails.

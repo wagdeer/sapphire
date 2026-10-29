@@ -154,7 +154,6 @@ ros2 launch sapphire_ros2 sapphire.launch.py \
   lidar_topic:=/points \
   imu_topic:=/imu/data \
   odom_topic:=/sapphire/odometry \
-  acc_scale:=1.0 \
   config_file:=/absolute/path/to/sapphire_mid360.toml
 ```
 
@@ -163,7 +162,6 @@ Launch 默认值：
 - LiDAR 输入：`/livox/lidar`
 - IMU 输入：`/livox/imu`
 - 里程计输出：`/sapphire/odometry`
-- IMU 加速度缩放：`9.80665`（Mid-360 消息中的加速度以 g 为单位）
 - 父/子坐标系：`map` 和 `lidar`
 
 发布的接口：
@@ -180,8 +178,9 @@ Launch 默认值：
 
 1. IMU 初始化期间保持平台静止。
 2. LiDAR 和 IMU 时间戳来自同一时钟域且单调递增。
-3. 将加速度转换为 m/s²。如果 ROS 消息已使用 SI 单位，设置
-   `acc_scale:=1.0`。
+3. 加速度可以是 g 或 m/s²。静止模长接近 1 时，Sapphire 会把它换成 m/s²。
+   只有这次判断失败时才写 `[sensor.imu] accel_unit` 为 `g` 或 `m_s2`。
+   角速度保持 rad/s。
 4. 进入 pipeline 的点时间是绝对秒，和 IMU 同一个钟。ROS 适配器负责分类；
    只有分类失败时才需要写 `[sensor.lidar]`。
 5. 正确设置 `T_imu_lidar`。它将 LiDAR 系点映射到 IMU 系：

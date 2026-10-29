@@ -162,6 +162,8 @@ void testProjectConfig() {
                "Mid-360 profile uses the 0.5 s scan window");
     expect(!config.sensor.lidar.require_point_time,
            "Mid-360 profile keeps frames when time classification fails");
+    expect(config.sensor.imu.accel_unit == "auto",
+           "Mid-360 profile leaves accel_unit automatic");
     expect(!config.pgo.occupancy.enabled,
            "default Mid-360 profile keeps occupancy off");
     expectNear(
@@ -259,6 +261,34 @@ void testSensorLidarDefaultsWithoutSection() {
         "missing sensor.lidar keeps header_tolerance at 0.5");
     expect(!config.sensor.lidar.require_point_time,
            "missing sensor.lidar does not require point time");
+    expect(config.sensor.imu.accel_unit == "auto",
+           "missing sensor.imu keeps accel_unit auto");
+}
+
+void testExplicitAccelUnit() {
+    const auto path = writeConfig(
+        "sapphire_config_accel_unit.toml",
+        validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]")
+            + "[sensor.imu]\naccel_unit = \"g\"\n");
+    const auto config = sapphire::loadConfig(path);
+    std::filesystem::remove(path);
+    expect(config.sensor.imu.accel_unit == "g",
+           "sensor.imu.accel_unit must override the default");
+}
+
+void testInvalidAccelUnitRejected() {
+    const auto path = writeConfig(
+        "sapphire_config_bad_accel_unit.toml",
+        validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]")
+            + "[sensor.imu]\naccel_unit = \"meters\"\n");
+    bool threw = false;
+    try {
+        (void)sapphire::loadConfig(path);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    std::filesystem::remove(path);
+    expect(threw, "unknown accel_unit must be rejected");
 }
 
 void testMissingFieldRejected() {
@@ -279,6 +309,8 @@ void testMissingFieldRejected() {
 
 int main() {
     testSensorLidarDefaultsWithoutSection();
+    testExplicitAccelUnit();
+    testInvalidAccelUnitRejected();
     testProjectConfig();
     testDirectionalEskfProfile();
     testQuaternionNormalization();

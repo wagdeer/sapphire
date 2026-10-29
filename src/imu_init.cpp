@@ -9,9 +9,17 @@
 #include <spdlog/spdlog.h>
 
 namespace sapphire {
+namespace {
 
-ImuInitializer::ImuInitializer(const ImuInitConfig& config)
+constexpr double kStandardGravity = 9.80665;
+
+}  // namespace
+
+ImuInitializer::ImuInitializer(
+    const ImuInitConfig& config,
+    std::string accel_unit)
     : cfg_(config)
+    , accel_unit_(std::move(accel_unit))
 {
     // Reserve for 5s at 200Hz = 1000 samples — single allocation
     constexpr int kExpectedMaxSamples = 1200;
@@ -29,7 +37,9 @@ std::optional<ImuInitializer::Result>
 ImuInitializer::feedImu(double stamp,
                          const Eigen::Vector3d& accel,
                          const Eigen::Vector3d& gyro) {
-    if (state_ == State::CONVERGED || state_ == State::TIMEOUT) {
+    if (state_ == State::CONVERGED
+        || state_ == State::TIMEOUT
+        || state_ == State::FAILED) {
         return std::nullopt;
     }
     if (!std::isfinite(stamp)
@@ -67,17 +77,29 @@ ImuInitializer::feedImu(double stamp,
         last_check_stamp_ = stamp;
 
         if (checkConvergence()) {
-            state_ = State::CONVERGED;
             std::fprintf(stderr, "\n");
-            return computeResult();
+            state_ = State::CONVERGED;
+            auto result = computeResult();
+            if (!result) {
+                state_ = State::FAILED;
+                return std::nullopt;
+            }
+            return result;
         }
     }
 
     if (elapsed >= cfg_.timeout_sec) {
-        state_ = State::TIMEOUT;
         std::fprintf(stderr, "\n");
-        spdlog::warn("[imu_init] timed out after {:.1f}s, using approximate result", elapsed);
-        return computeResult();
+        state_ = State::TIMEOUT;
+        auto result = computeResult();
+        if (!result) {
+            state_ = State::FAILED;
+            return std::nullopt;
+        }
+        spdlog::warn(
+            "[imu_init] timed out after {:.1f}s, using approximate result",
+            elapsed);
+        return result;
     }
 
     return std::nullopt;
@@ -193,7 +215,49 @@ bool ImuInitializer::checkConvergence() {
         && accel_std < cfg_.convergence_accel_std;
 }
 
-ImuInitializer::Result ImuInitializer::computeResult() {
+std::optional<double> ImuInitializer::resolveAccelScale(
+    const Eigen::Vector3d& accel_mean) const
+{
+    const double magnitude = accel_mean.norm();
+    double scale = 1.0;
+    const char* resolved = nullptr;
+    if (accel_unit_ == "g") {
+        scale = kStandardGravity;
+        resolved = "g";
+    } else if (accel_unit_ == "m_s2") {
+        scale = 1.0;
+        resolved = "m_s2";
+    } else if (accel_unit_ == "auto") {
+        if (magnitude >= 0.5 && magnitude <= 1.5) {
+            scale = kStandardGravity;
+            resolved = "g";
+        } else if (magnitude >= 5.0 && magnitude <= 15.0) {
+            scale = 1.0;
+            resolved = "m_s2";
+        } else {
+            spdlog::warn(
+                "[imu_init] unknown acceleration unit: |accel_mean|={:.3f} "
+                "(expected [0.5, 1.5] for g or [5, 15] for m/s^2). "
+                "Set sensor.imu.accel_unit to \"g\" or \"m_s2\"",
+                magnitude);
+            return std::nullopt;
+        }
+    } else {
+        spdlog::warn(
+            "[imu_init] unknown sensor.imu.accel_unit '{}'",
+            accel_unit_);
+        return std::nullopt;
+    }
+
+    spdlog::info(
+        "[imu_init] acceleration unit={} |accel_mean|={:.3f} scale={:.5f}",
+        resolved,
+        magnitude,
+        scale);
+    return scale;
+}
+
+std::optional<ImuInitializer::Result> ImuInitializer::computeResult() {
     rejectOutliers();
 
     Eigen::Vector3d gyro_sum = Eigen::Vector3d::Zero();
@@ -217,13 +281,19 @@ ImuInitializer::Result ImuInitializer::computeResult() {
     double gyro_std  = std::sqrt((gyro_var.x() + gyro_var.y() + gyro_var.z()) / n);
     double accel_std = std::sqrt((accel_var.x() + accel_var.y() + accel_var.z()) / n);
 
+    const auto accel_scale = resolveAccelScale(accel_mean);
+    if (!accel_scale) {
+        return std::nullopt;
+    }
+    const Eigen::Vector3d accel_mps2 = accel_mean * (*accel_scale);
+
     // ── Gravity alignment: IMU accel direction → world Z-up ────
     //    At rest, accel measures support force = −g.
     //    lie::SO3d(u, v) constructs the rotation mapping measured-up to world-up.
     //    When the vectors are anti-parallel (IMU inverted), SO3's library-internal
     //    fallback uses a non-deterministic random axis.  We handle that case here
     //    with a deterministic perpendicular axis so that results are reproducible.
-    Eigen::Vector3d grav_imu = accel_mean.normalized();
+    Eigen::Vector3d grav_imu = accel_mps2.normalized();
     Eigen::Vector3d grav_world(0.0, 0.0, 1.0);  // world Z = up
     Eigen::Quaterniond q_gravity;
     if (grav_imu.dot(grav_world) < -0.999999) {
@@ -242,7 +312,7 @@ ImuInitializer::Result ImuInitializer::computeResult() {
     //   = points downward in IMU coordinates
     Eigen::Vector3d grav_in_imu =
         q_gravity.inverse() * Eigen::Vector3d(0, 0, cfg_.gravity_mag);
-    Eigen::Vector3d accel_bias = accel_mean - grav_in_imu;
+    Eigen::Vector3d accel_bias = accel_mps2 - grav_in_imu;
     Eigen::Vector3d gyro_bias = gyro_mean;
 
     double elapsed = samples_.back().stamp - start_stamp_;
@@ -267,6 +337,7 @@ ImuInitializer::Result ImuInitializer::computeResult() {
         .duration_sec = elapsed,
         .sample_count = static_cast<int>(samples_.size()),
         .final_state  = state_,
+        .accel_scale  = *accel_scale,
     };
 }
 
