@@ -7,8 +7,11 @@
 #include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
 #include <gtsam/geometry/Pose3.h>
+#include <gtsam/inference/Symbol.h>
 #include <gtsam/linear/NoiseModel.h>
 #include <gtsam/nonlinear/ISAM2.h>
+#include <gtsam/nonlinear/ISAM2Params.h>
+#include <gtsam/nonlinear/ISAM2UpdateParams.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/slam/BetweenFactor.h>
@@ -26,6 +29,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -78,6 +82,23 @@ constexpr int kLoopCovarianceNeighbors = 20;
 /// intern GICP registrar. small_gicp checks rotation against rotation_eps
 /// and translation against translation_eps.
 constexpr double kLoopConvergenceEpsilon = 0.01;
+
+/// ISAM2 looks up a per-character relinearization threshold. Integer keys
+/// never match 'x', so every pose variable uses Symbol('x', id).
+constexpr unsigned char kPoseSymbol = 'x';
+constexpr double kRelinearizeRotationRad = 0.01;
+constexpr double kRelinearizeTranslationM = 0.05;
+/// Gauss-Newton wildfire. This is also the GTSAM default. Dogleg is not used.
+constexpr double kGaussNewtonWildfire = 0.001;
+/// Empty updates after a new factor, until no variable still exceeds the
+/// relinearization threshold. The intern default is 20 and toml does not
+/// override it. The installed GTSAM has no predictUpdateInfo; the stop
+/// check below is the full-graph threshold test that call uses.
+constexpr int kIsamRelinearizeIterations = 20;
+
+gtsam::Key poseKey(std::uint64_t id) {
+    return gtsam::Symbol(kPoseSymbol, id);
+}
 
 struct LoopAlignment {
     bool accepted = false;
@@ -150,8 +171,18 @@ public:
             return;
         }
 
-        gtsam::ISAM2Params params;
-        params.relinearizeThreshold = 0.01;
+        gtsam::ISAM2GaussNewtonParams gauss_newton(kGaussNewtonWildfire);
+        gtsam::ISAM2Params params(gauss_newton);
+        gtsam::ISAM2ThresholdMap thresholds;
+        thresholds[kPoseSymbol] =
+            (gtsam::Vector(6) << kRelinearizeRotationRad,
+             kRelinearizeRotationRad,
+             kRelinearizeRotationRad,
+             kRelinearizeTranslationM,
+             kRelinearizeTranslationM,
+             kRelinearizeTranslationM)
+                .finished();
+        params.relinearizeThreshold = thresholds;
         params.relinearizeSkip = 1;
         isam2_ = std::make_unique<gtsam::ISAM2>(params);
 
@@ -350,7 +381,7 @@ private:
         gtsam::Values initial;
         bool odom_updated = false;
         if (buildOdometryGraph(odom_graph, initial)) {
-            updateIsam(odom_graph, initial);
+            updateIsam(odom_graph, initial, false);
             updateCorrection();
             odom_updated = true;
         }
@@ -358,7 +389,7 @@ private:
         const size_t loops_before = loop_edge_count_;
         gtsam::NonlinearFactorGraph loop_graph;
         if (buildLoopEdges(loop_graph)) {
-            updateIsam(loop_graph, {});
+            updateIsam(loop_graph, {}, true);
             updateCorrection();
         }
         const bool loop_updated = loop_edge_count_ > loops_before;
@@ -401,8 +432,8 @@ private:
         if (added_odom_id_ == 0) {
             const gtsam::Pose3 first = toGtsam(frames_.front().T_odom_lidar);
             graph.add(gtsam::PriorFactor<gtsam::Pose3>(
-                0, first, prior_noise_));
-            initial.insert(0, first);
+                poseKey(0), first, prior_noise_));
+            initial.insert(poseKey(0), first);
             added_odom_id_ = 1;
         }
 
@@ -410,21 +441,23 @@ private:
             optimized_.empty() ? 0 : optimized_.size() - 1;
         const Isometry3d last_optimized = optimized_.empty()
             ? frames_.front().T_odom_lidar
-            : fromGtsam(
-                optimized_.at<gtsam::Pose3>(last_optimized_id));
+            : fromGtsam(optimizedPose(last_optimized_id));
 
         for (size_t i = added_odom_id_; i < frames_.size(); ++i) {
             const Isometry3d relative =
                 frames_[i - 1].T_odom_lidar.inverse()
                 * frames_[i].T_odom_lidar;
             graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
-                i - 1, i, toGtsam(relative), odom_noise_));
+                poseKey(i - 1),
+                poseKey(i),
+                toGtsam(relative),
+                odom_noise_));
 
             const Isometry3d estimate =
                 last_optimized
                 * frames_[last_optimized_id].T_odom_lidar.inverse()
                 * frames_[i].T_odom_lidar;
-            initial.insert(i, toGtsam(estimate));
+            initial.insert(poseKey(i), toGtsam(estimate));
             ++added_odom_id_;
         }
         return !graph.empty();
@@ -442,8 +475,7 @@ private:
         const size_t candidate_count =
             std::min(query_id, optimized_.size());
         for (size_t candidate = 0; candidate < candidate_count; ++candidate) {
-            const Isometry3d target =
-                fromGtsam(optimized_.at<gtsam::Pose3>(candidate));
+            const Isometry3d target = fromGtsam(optimizedPose(candidate));
             const double squared_distance =
                 (query_pose.translation() - target.translation()).squaredNorm();
             if (squared_distance > best_squared_distance) {
@@ -475,8 +507,8 @@ private:
             static_cast<int>(optimized_.size()) - 1,
             target_id + config_.target_frame_count);
         for (int i = begin; i <= end; ++i) {
-            const Isometry3d pose =
-                fromGtsam(optimized_.at<gtsam::Pose3>(i));
+            const Isometry3d pose = fromGtsam(
+                optimizedPose(static_cast<size_t>(i)));
             *merged += *transformedCloud(frames_[i].cloud_lidar, pose);
         }
         return voxelized(merged, config_.target_voxel_size);
@@ -616,7 +648,7 @@ private:
 
         const size_t last_optimized_id = optimized_.size() - 1;
         const Isometry3d last_optimized =
-            fromGtsam(optimized_.at<gtsam::Pose3>(last_optimized_id));
+            fromGtsam(optimizedPose(last_optimized_id));
         const size_t stride =
             static_cast<size_t>(std::max(1, config_.loop_search_stride));
 
@@ -662,9 +694,8 @@ private:
             }
             last_loop_fitness_ = alignment.fitness;
 
-            const Isometry3d target_pose =
-                fromGtsam(optimized_.at<gtsam::Pose3>(
-                    static_cast<size_t>(target_id)));
+            const Isometry3d target_pose = fromGtsam(
+                optimizedPose(static_cast<size_t>(target_id)));
             // The target cloud is already in the world frame, so
             // T_target_source is T_world_query, not the relative pose.
             // BetweenFactor(target, query) wants
@@ -688,8 +719,8 @@ private:
                 continue;
             }
             graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
-                static_cast<size_t>(target_id),
-                query_id,
+                poseKey(static_cast<std::uint64_t>(target_id)),
+                poseKey(query_id),
                 toGtsam(measurement),
                 loop_noise));
             // Visualization stores query → historical frame. The factor
@@ -732,24 +763,122 @@ private:
         stats_.last_loop_fitness = last_loop_fitness_;
     }
 
+    /// Keys whose linear delta still exceeds the per-axis threshold.
+    /// Matches ISAM2's full relinearization check for a Symbol map:
+    /// a component must be strictly larger than its threshold.
+    size_t keysNeedingRelinearization() const {
+        const gtsam::VectorValues& delta = isam2_->getDelta();
+        size_t count = 0;
+        for (const auto& entry : delta) {
+            const gtsam::Vector& value = entry.second;
+            if (value.size() != 6) {
+                continue;
+            }
+            const bool rotation =
+                value.head<3>().cwiseAbs().maxCoeff()
+                > kRelinearizeRotationRad;
+            const bool translation =
+                value.tail<3>().cwiseAbs().maxCoeff()
+                > kRelinearizeTranslationM;
+            if (rotation || translation) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
     void updateIsam(
         const gtsam::NonlinearFactorGraph& graph,
-        const gtsam::Values& initial)
+        const gtsam::Values& initial,
+        bool force_relinearize)
     {
-        if (initial.empty()) {
-            isam2_->update(graph);
-        } else {
-            isam2_->update(graph, initial);
+        std::vector<Eigen::Vector3d> translation_before;
+        if (force_relinearize) {
+            translation_before.reserve(optimized_.size());
+            for (size_t i = 0; i < optimized_.size(); ++i) {
+                translation_before.push_back(
+                    fromGtsam(optimizedPose(i)).translation());
+            }
         }
-        isam2_->update();
+
+        gtsam::ISAM2UpdateParams update_params;
+        update_params.force_relinearize = force_relinearize;
+        isam2_->update(graph, initial, update_params);
+
+        int passes = 1;
+        while (passes < kIsamRelinearizeIterations
+               && keysNeedingRelinearization() > 0) {
+            isam2_->update(
+                gtsam::NonlinearFactorGraph(),
+                gtsam::Values(),
+                gtsam::ISAM2UpdateParams{});
+            ++passes;
+        }
         optimized_ = isam2_->calculateEstimate();
+
+        if (!force_relinearize) {
+            return;
+        }
+        const size_t still_moving = keysNeedingRelinearization();
+        size_t moved = 0;
+        double max_shift = 0.0;
+        size_t max_id = 0;
+        const size_t comparable = std::min(
+            translation_before.size(), optimized_.size());
+        double mid_shift = 0.0;
+        const size_t mid_id = comparable / 2;
+        for (size_t i = 0; i < comparable; ++i) {
+            const double shift =
+                (fromGtsam(optimizedPose(i)).translation()
+                 - translation_before[i])
+                    .norm();
+            if (shift > 0.01) {
+                ++moved;
+            }
+            if (shift > max_shift) {
+                max_shift = shift;
+                max_id = i;
+            }
+            if (i == mid_id) {
+                mid_shift = shift;
+            }
+        }
+        if (still_moving > 0) {
+            spdlog::warn(
+                "[pgo] loop relinearization stopped at {} passes "
+                "with {} variables still above threshold, "
+                "keyframes_moved>1cm={}, max_shift={:.3f}m at {}, "
+                "mid_shift={:.3f}m at {}",
+                passes,
+                still_moving,
+                moved,
+                max_shift,
+                max_id,
+                mid_shift,
+                mid_id);
+            return;
+        }
+        spdlog::info(
+            "[pgo] loop relinearization passes={}, "
+            "keyframes_moved>1cm={}, max_shift={:.3f}m at {}, "
+            "mid_shift={:.3f}m at {}",
+            passes,
+            moved,
+            max_shift,
+            max_id,
+            mid_shift,
+            mid_id);
+    }
+
+    gtsam::Pose3 optimizedPose(size_t id) const {
+        return optimized_.at<gtsam::Pose3>(poseKey(id));
     }
 
     void rebuildSnapshot() {
         std::vector<Isometry3d> poses;
         poses.reserve(optimized_.size());
         for (size_t i = 0; i < optimized_.size(); ++i) {
-            poses.push_back(fromGtsam(optimized_.at<gtsam::Pose3>(i)));
+            poses.push_back(fromGtsam(optimizedPose(i)));
         }
 
         std::lock_guard<std::mutex> lock(output_mutex_);
@@ -762,8 +891,7 @@ private:
         const size_t stride =
             static_cast<size_t>(config_.map_frame_stride);
         for (size_t i = 0; i < optimized_.size(); i += stride) {
-            const Isometry3d pose =
-                fromGtsam(optimized_.at<gtsam::Pose3>(i));
+            const Isometry3d pose = fromGtsam(optimizedPose(i));
             *merged += *transformedCloud(frames_[i].cloud_lidar, pose);
         }
         const PointCloudPtr sparse =
@@ -784,7 +912,7 @@ private:
         }
         const size_t last_id = optimized_.size() - 1;
         const Isometry3d optimized_pose =
-            fromGtsam(optimized_.at<gtsam::Pose3>(last_id));
+            fromGtsam(optimizedPose(last_id));
         const Isometry3d correction =
             optimized_pose * frames_[last_id].T_odom_lidar.inverse();
 
@@ -802,8 +930,8 @@ private:
             return;
         }
         while (occupancy_inserted_id_ < optimized_.size()) {
-            const Isometry3d pose = fromGtsam(
-                optimized_.at<gtsam::Pose3>(occupancy_inserted_id_));
+            const Isometry3d pose =
+                fromGtsam(optimizedPose(occupancy_inserted_id_));
             occupancy_->insertScan(
                 frames_[occupancy_inserted_id_].cloud_lidar, pose);
             ++occupancy_inserted_id_;

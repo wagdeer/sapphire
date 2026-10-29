@@ -207,6 +207,95 @@ void testLoopClosureAddsConstraint() {
            "requested sparse global map must be built asynchronously");
 }
 
+/// A long odometry chain whose only accepted loop is back to the root.
+/// Intermediate stamps sit inside the time gate, so the search cannot
+/// latch onto a neighbor of the return pose. The translation floor is
+/// tighter than the production 0.2 m so the loop information is comparable
+/// to a few dozen odometry edges; otherwise the chain hides the correction.
+/// Production defaults are unchanged.
+void testLoopRelinearizationMovesDistantKeyframe() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.05;
+    config.update_period_sec = 0.02;
+    config.loop_min_time_separation = 1000.0;
+    config.loop_min_travel_distance = 1.0;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+    config.lidar_translation_sigma_m = 0.05;
+
+    constexpr int kOutbound = 40;
+    constexpr double kStep = 0.5;
+    constexpr double kReturnX = 1.2;
+    constexpr int kDistant = 8;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto local = makeCornerCloud();
+    {
+        sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+        backend.addFrame(transformCloud(local, pose), pose, 0.0);
+    }
+    // Every outbound frame shares a stamp equal to the time gate, so none
+    // of them is old enough to close against the root or against each other.
+    // The return is one second later and is the only query that qualifies.
+    for (int i = 1; i <= kOutbound; ++i) {
+        sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+        pose.translation().x() = static_cast<double>(i) * kStep;
+        backend.addFrame(
+            transformCloud(local, pose),
+            pose,
+            config.loop_min_time_separation);
+    }
+    {
+        sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+        pose.translation().x() = kReturnX;
+        backend.addFrame(
+            transformCloud(local, pose),
+            pose,
+            config.loop_min_time_separation + 1.0);
+    }
+
+    const int pose_count = kOutbound + 2;
+    for (int attempt = 0;
+         attempt < 400 && backend.stats().loop_edges == 0;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    backend.requestSnapshot();
+    for (int attempt = 0;
+         attempt < 200
+             && static_cast<int>(backend.snapshot().optimized_poses.size())
+                 < pose_count;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    const sapphire::PoseGraphSnapshot snapshot = backend.snapshot();
+    expect(static_cast<int>(snapshot.optimized_poses.size()) == pose_count,
+           "long chain must publish an optimized pose for every keyframe");
+    expect(snapshot.loop_edges.size() == 1,
+           "one query must add one loop edge");
+    const sapphire::PoseGraphEdge& edge = snapshot.loop_edges.front();
+    expect(edge.source == static_cast<size_t>(pose_count - 1)
+               && edge.target == 0,
+           "the only loop must join the return frame to the root");
+
+    const double root_x = snapshot.optimized_poses.front().translation().x();
+    const double distant_x =
+        snapshot.optimized_poses[kDistant].translation().x();
+    const double distant_odom = static_cast<double>(kDistant) * kStep;
+    const double query_x = snapshot.optimized_poses.back().translation().x();
+    expect(std::abs(root_x) < 1e-3,
+           "root prior must keep the first keyframe in place");
+    expect(query_x < kReturnX - 1e-2,
+           "loop factor must pull the return keyframe toward the root");
+    expect(distant_x < distant_odom - 0.02,
+           "relinearization must move a keyframe that is not a loop endpoint");
+}
+
 void testSparseCloudRejectsLoop() {
     sapphire::Config::Pgo config;
     config.enabled = true;
@@ -253,6 +342,7 @@ void testSparseCloudRejectsLoop() {
 int main() {
     testOdometryOnlyGraphPreservesFrontendFrame();
     testLoopClosureAddsConstraint();
+    testLoopRelinearizationMovesDistantKeyframe();
     testSparseCloudRejectsLoop();
     std::cout << "All pose graph tests passed\n";
     return EXIT_SUCCESS;
