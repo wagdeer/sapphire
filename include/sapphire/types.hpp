@@ -226,7 +226,17 @@ struct Config {
         int target_frame_count = 50;
         double source_voxel_size = 0.4;
         double target_voxel_size = 0.4;
-        double fitness_threshold = 0.3;
+        /// GICP loop acceptance. Point covariances use 20 neighbors.
+        /// Translation and rotation convergence epsilons stay 0.01 in code.
+        int lidar_min_inliers = 64;
+        int lidar_max_iterations = 32;
+        double lidar_max_correspondence_m = 2.0;
+        double lidar_min_overlap = 0.5;
+        double lidar_max_fitness_m2 = 0.5;
+        /// Diagonal floors for the registration covariance. The loop factor
+        /// still uses a scalar Cauchy variance until that covariance is wired in.
+        double lidar_translation_sigma_m = 0.2;
+        double lidar_rotation_sigma_rad = 0.1;
         double update_period_sec = 1.0;
         int map_frame_stride = 3;
         double map_voxel_size = 0.8;

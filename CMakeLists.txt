@@ -34,6 +34,10 @@ endfunction()
 # Dependencies (only what the skeleton actually uses)
 find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
+# C++-only projects do not define MPI::MPI_C. System PCL loads VTK, and
+# VTK::mpi names that target. The SLAM does not call MPI.
+enable_language(C)
+find_package(MPI REQUIRED COMPONENTS C)
 find_package(PCL REQUIRED)
 find_package(GTSAM REQUIRED)
 find_package(OpenMP REQUIRED)

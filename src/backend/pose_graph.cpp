@@ -4,6 +4,7 @@
 
 #include <SO3.hpp>
 
+#include <Eigen/Eigenvalues>
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/nonlinear/ISAM2.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
@@ -11,7 +12,11 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
 #include <pcl/common/transforms.h>
-#include <pcl/registration/icp.h>
+#include <small_gicp/ann/kdtree.hpp>
+#include <small_gicp/factors/gicp_factor.hpp>
+#include <small_gicp/points/point_cloud.hpp>
+#include <small_gicp/registration/registration.hpp>
+#include <small_gicp/util/normal_estimation.hpp>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -63,6 +68,41 @@ PointCloudPtr voxelized(
         return std::make_shared<PointCloud>(*cloud);
     }
     return deterministicVoxelDownsample(*cloud, leaf_size);
+}
+
+/// Neighbor count for loop-cloud covariances. Not a toml parameter.
+constexpr int kLoopCovarianceNeighbors = 20;
+/// Translation (m) and rotation (rad) convergence, fixed to match the
+/// intern GICP registrar. small_gicp checks rotation against rotation_eps
+/// and translation against translation_eps.
+constexpr double kLoopConvergenceEpsilon = 0.01;
+
+struct LoopAlignment {
+    bool accepted = false;
+    Isometry3d T_target_source = Isometry3d::Identity();
+    double fitness = std::numeric_limits<double>::infinity();
+    size_t source_points = 0;
+    size_t target_points = 0;
+    size_t inliers = 0;
+    double overlap = 0.0;
+    double min_eigenvalue = std::numeric_limits<double>::quiet_NaN();
+    const char* reason = "not attempted";
+};
+
+std::shared_ptr<small_gicp::PointCloud> toGicpCloud(const PointCloud& cloud) {
+    auto output = std::make_shared<small_gicp::PointCloud>();
+    output->resize(cloud.size());
+    size_t count = 0;
+    for (const Point& point : cloud.points) {
+        if (!std::isfinite(point.x) || !std::isfinite(point.y)
+            || !std::isfinite(point.z)) {
+            continue;
+        }
+        output->point(count) << point.x, point.y, point.z, 1.0;
+        ++count;
+    }
+    output->resize(count);
+    return output;
 }
 
 }  // namespace
@@ -408,33 +448,110 @@ private:
         return voxelized(merged, config_.target_voxel_size);
     }
 
-    bool registerLoop(
+    LoopAlignment registerLoop(
         const Isometry3d& initial_pose,
         const PointCloudConstPtr& source,
-        const PointCloudConstPtr& target,
-        Isometry3d& result,
-        double& fitness) const
+        const PointCloudConstPtr& target) const
     {
-        pcl::IterativeClosestPoint<Point, Point> icp;
-        icp.setMaximumIterations(50);
-        // Match the DLIO/SimpleLoopClosure setup. The default PCL
-        // correspondence distance is far too small for accumulated odometry
-        // drift at the end of a large loop.
-        icp.setMaxCorrespondenceDistance(
-            config_.loop_search_radius * 2.0);
-        icp.setTransformationEpsilon(1e-4);
-        icp.setEuclideanFitnessEpsilon(1e-4);
-        icp.setRANSACIterations(0);
-        icp.setInputSource(source);
-        icp.setInputTarget(target);
-        PointCloud aligned;
-        icp.align(aligned, initial_pose.matrix().cast<float>());
-        result = Isometry3d(icp.getFinalTransformation().cast<double>());
-        fitness = icp.getFitnessScore();
-        return icp.hasConverged()
-            && result.matrix().allFinite()
-            && std::isfinite(fitness)
-            && fitness < config_.fitness_threshold;
+        LoopAlignment alignment;
+        const auto source_gicp = toGicpCloud(
+            source ? *source : PointCloud{});
+        const auto target_gicp = toGicpCloud(
+            target ? *target : PointCloud{});
+        alignment.source_points = source_gicp->size();
+        alignment.target_points = target_gicp->size();
+        const size_t min_points = static_cast<size_t>(
+            std::max(1, config_.lidar_min_inliers));
+        if (alignment.source_points < min_points
+            || alignment.target_points < min_points
+            || !initial_pose.matrix().allFinite()) {
+            alignment.reason = "too few points or non-finite initial pose";
+            return alignment;
+        }
+
+        small_gicp::estimate_covariances(
+            *source_gicp, kLoopCovarianceNeighbors);
+        small_gicp::estimate_covariances(
+            *target_gicp, kLoopCovarianceNeighbors);
+        const small_gicp::KdTree<small_gicp::PointCloud> tree(target_gicp);
+
+        small_gicp::Registration<
+            small_gicp::GICPFactor,
+            small_gicp::SerialReduction> solver;
+        solver.optimizer.max_iterations = config_.lidar_max_iterations;
+        const double max_correspondence = config_.lidar_max_correspondence_m;
+        solver.rejector.max_dist_sq =
+            max_correspondence * max_correspondence;
+        solver.criteria.translation_eps = kLoopConvergenceEpsilon;
+        solver.criteria.rotation_eps = kLoopConvergenceEpsilon;
+
+        const small_gicp::RegistrationResult result = solver.align(
+            *target_gicp, *source_gicp, tree, initial_pose);
+        alignment.inliers = result.num_inliers;
+        alignment.overlap = static_cast<double>(alignment.inliers)
+            / static_cast<double>(alignment.source_points);
+        alignment.T_target_source = result.T_target_source;
+
+        // Fitness is a second pass over inlier nearest-neighbor distances.
+        // It is not result.num_inliers and not PCL getFitnessScore().
+        double error = 0.0;
+        size_t fitness_count = 0;
+        for (size_t i = 0; i < source_gicp->size(); ++i) {
+            size_t neighbor = 0;
+            double distance = 0.0;
+            const Eigen::Vector4d point =
+                result.T_target_source * source_gicp->point(i);
+            if (small_gicp::traits::nearest_neighbor_search(
+                    tree, point, &neighbor, &distance)
+                && distance <= solver.rejector.max_dist_sq) {
+                error += distance;
+                ++fitness_count;
+            }
+        }
+        alignment.fitness = fitness_count == 0
+            ? std::numeric_limits<double>::infinity()
+            : error / static_cast<double>(fitness_count);
+
+        const Eigen::Matrix<double, 6, 6> information =
+            (result.H + result.H.transpose())
+            / (2.0 * static_cast<double>(
+                std::max<size_t>(1, result.num_inliers)));
+        const Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>>
+            eigenvalues(information);
+        const bool curvature_ok = eigenvalues.info() == Eigen::Success
+            && eigenvalues.eigenvalues().allFinite();
+        if (curvature_ok) {
+            alignment.min_eigenvalue = eigenvalues.eigenvalues().minCoeff();
+        }
+
+        if (!result.converged) {
+            alignment.reason = "not converged";
+            return alignment;
+        }
+        if (!alignment.T_target_source.matrix().allFinite()) {
+            alignment.reason = "non-finite result";
+            return alignment;
+        }
+        if (alignment.inliers < min_points) {
+            alignment.reason = "too few inliers";
+            return alignment;
+        }
+        if (alignment.overlap < config_.lidar_min_overlap) {
+            alignment.reason = "overlap below minimum";
+            return alignment;
+        }
+        if (!std::isfinite(alignment.fitness)
+            || alignment.fitness > config_.lidar_max_fitness_m2) {
+            alignment.reason = "fitness above maximum";
+            return alignment;
+        }
+        if (!curvature_ok || alignment.min_eigenvalue <= 0.0) {
+            alignment.reason = "singular Hessian";
+            return alignment;
+        }
+        alignment.accepted = true;
+        alignment.reason = "accepted";
+        return alignment;
     }
 
     bool buildLoopEdges(gtsam::NonlinearFactorGraph& graph) {
@@ -466,32 +583,38 @@ private:
                     frames_[query_id].cloud_lidar,
                     config_.source_voxel_size);
             const PointCloudPtr target = buildTargetCloud(target_id);
-            Isometry3d registered_pose;
-            double fitness = std::numeric_limits<double>::infinity();
-            if (!registerLoop(
-                    query_pose,
-                    source,
-                    target,
-                    registered_pose,
-                    fitness)) {
+            const LoopAlignment alignment =
+                registerLoop(query_pose, source, target);
+            if (!alignment.accepted) {
                 ++loop_registration_failure_count_;
-                last_loop_fitness_ =
-                    std::isfinite(fitness) ? fitness : -1.0;
-                spdlog::debug(
-                    "[pgo] loop ICP rejected: {} -> {}, fitness={:.4f}",
+                last_loop_fitness_ = std::isfinite(alignment.fitness)
+                    ? alignment.fitness
+                    : -1.0;
+                spdlog::warn(
+                    "[pgo] loop GICP rejected: {} -> {}, points={}/{}, "
+                    "inliers={}, overlap={:.3f}, fitness={:.4f}, "
+                    "min_eig={:.3e} ({})",
                     query_id,
                     target_id,
-                    fitness);
+                    alignment.source_points,
+                    alignment.target_points,
+                    alignment.inliers,
+                    alignment.overlap,
+                    alignment.fitness,
+                    alignment.min_eigenvalue,
+                    alignment.reason);
                 continue;
             }
-            last_loop_fitness_ = fitness;
+            last_loop_fitness_ = alignment.fitness;
 
             const Isometry3d target_pose =
                 fromGtsam(optimized_.at<gtsam::Pose3>(target_id));
             const Isometry3d relative =
-                registered_pose.inverse() * target_pose;
+                alignment.T_target_source.inverse() * target_pose;
+            // Scalar Cauchy stays until the registration covariance is
+            // attached to this factor. fitness is mean inlier distance squared.
             gtsam::Vector6 variances;
-            variances.setConstant(std::max(fitness, 1e-9));
+            variances.setConstant(std::max(alignment.fitness, 1e-9));
             const auto loop_noise = gtsam::noiseModel::Robust::Create(
                 gtsam::noiseModel::mEstimator::Cauchy::Create(1.0),
                 gtsam::noiseModel::Diagonal::Variances(variances));
@@ -506,10 +629,16 @@ private:
             });
             ++loop_edge_count_;
             spdlog::info(
-                "[pgo] loop detected: {} -> {}, fitness={:.4f}",
+                "[pgo] loop detected: {} -> {}, points={}/{}, inliers={}, "
+                "overlap={:.3f}, fitness={:.4f}, min_eig={:.3e}",
                 query_id,
                 target_id,
-                fitness);
+                alignment.source_points,
+                alignment.target_points,
+                alignment.inliers,
+                alignment.overlap,
+                alignment.fitness,
+                alignment.min_eigenvalue);
         }
         searched_loop_id_ = frames_.size();
         syncLoopStats();

@@ -364,8 +364,30 @@ Config loadConfig(const std::filesystem::path& path) {
     if (const auto value = root["pgo"]["target_voxel_size"].value<double>()) {
         config.pgo.target_voxel_size = *value;
     }
-    if (const auto value = root["pgo"]["fitness_threshold"].value<double>()) {
-        config.pgo.fitness_threshold = *value;
+    if (const auto value = root["pgo"]["lidar_min_inliers"].value<int>()) {
+        config.pgo.lidar_min_inliers = *value;
+    }
+    if (const auto value = root["pgo"]["lidar_max_iterations"].value<int>()) {
+        config.pgo.lidar_max_iterations = *value;
+    }
+    if (const auto value =
+            root["pgo"]["lidar_max_correspondence_m"].value<double>()) {
+        config.pgo.lidar_max_correspondence_m = *value;
+    }
+    if (const auto value = root["pgo"]["lidar_min_overlap"].value<double>()) {
+        config.pgo.lidar_min_overlap = *value;
+    }
+    if (const auto value =
+            root["pgo"]["lidar_max_fitness_m2"].value<double>()) {
+        config.pgo.lidar_max_fitness_m2 = *value;
+    }
+    if (const auto value =
+            root["pgo"]["lidar_translation_sigma_m"].value<double>()) {
+        config.pgo.lidar_translation_sigma_m = *value;
+    }
+    if (const auto value =
+            root["pgo"]["lidar_rotation_sigma_rad"].value<double>()) {
+        config.pgo.lidar_rotation_sigma_rad = *value;
     }
     if (const auto value = root["pgo"]["update_period_sec"].value<double>()) {
         config.pgo.update_period_sec = *value;
@@ -645,9 +667,30 @@ void validateConfig(const Config& config) {
     requireFinitePositive(
         config.pgo.target_voxel_size,
         "pgo.target_voxel_size");
+    if (config.pgo.lidar_min_inliers < 6
+        || config.pgo.lidar_max_iterations < 1) {
+        throw std::invalid_argument(
+            "pgo.lidar_min_inliers must be >= 6 and "
+            "lidar_max_iterations must be positive");
+    }
     requireFinitePositive(
-        config.pgo.fitness_threshold,
-        "pgo.fitness_threshold");
+        config.pgo.lidar_max_correspondence_m,
+        "pgo.lidar_max_correspondence_m");
+    if (!std::isfinite(config.pgo.lidar_min_overlap)
+        || config.pgo.lidar_min_overlap <= 0.0
+        || config.pgo.lidar_min_overlap > 1.0) {
+        throw std::invalid_argument(
+            "pgo.lidar_min_overlap must be in (0, 1]");
+    }
+    requireFinitePositive(
+        config.pgo.lidar_max_fitness_m2,
+        "pgo.lidar_max_fitness_m2");
+    requireFinitePositive(
+        config.pgo.lidar_translation_sigma_m,
+        "pgo.lidar_translation_sigma_m");
+    requireFinitePositive(
+        config.pgo.lidar_rotation_sigma_rad,
+        "pgo.lidar_rotation_sigma_rad");
     requireFinitePositive(
         config.pgo.update_period_sec,
         "pgo.update_period_sec");

@@ -116,6 +116,25 @@ void testProjectConfig() {
     expectNear(
         config.pgo.loop_search_radius, 15.0,
         "PGO loop search radius");
+    expect(config.pgo.lidar_min_inliers == 64,
+           "PGO loop minimum inliers");
+    expect(config.pgo.lidar_max_iterations == 32,
+           "PGO loop maximum iterations");
+    expectNear(
+        config.pgo.lidar_max_correspondence_m, 2.0,
+        "PGO loop correspondence distance");
+    expectNear(
+        config.pgo.lidar_min_overlap, 0.5,
+        "PGO loop minimum overlap");
+    expectNear(
+        config.pgo.lidar_max_fitness_m2, 0.5,
+        "PGO loop maximum fitness");
+    expectNear(
+        config.pgo.lidar_translation_sigma_m, 0.2,
+        "PGO loop translation sigma floor");
+    expectNear(
+        config.pgo.lidar_rotation_sigma_rad, 0.1,
+        "PGO loop rotation sigma floor");
     expect(config.pgo.map_frame_stride == 3,
            "PGO sparse-map frame stride");
     expectNear(
