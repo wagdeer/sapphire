@@ -656,6 +656,169 @@ void testSparseCloudRejectsLoop() {
            "rejected registration must not add a loop edge");
 }
 
+void addKeyframe(
+    sapphire::PoseGraphBackend& backend,
+    const sapphire::PointCloudConstPtr& cloud,
+    double x,
+    double stamp)
+{
+    sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+    pose.translation().x() = x;
+    backend.addFrame(transformCloud(cloud, pose), pose, stamp);
+}
+
+/// The nearest in-radius frame fails the point-count gate. The next frame
+/// is the same corner as the query, so it is accepted, and the farther
+/// frame is not added as a second edge.
+void testFailedCandidateFallsThroughToNext() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.05;
+    config.update_period_sec = 0.02;
+    config.loop_min_time_separation = 1.0;
+    config.loop_min_travel_distance = 0.5;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto corner = makeCornerCloud();
+    const auto sparse = makeLocalCloud();
+    addKeyframe(backend, corner, 0.0, 0.0);
+    addKeyframe(backend, sparse, 0.2, 2.0);
+    addKeyframe(backend, corner, 4.0, 3.0);
+    addKeyframe(backend, corner, 0.35, 5.0);
+
+    for (int attempt = 0;
+         attempt < 400 && backend.stats().loop_edges == 0;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    backend.requestSnapshot();
+    for (int attempt = 0;
+         attempt < 200 && backend.snapshot().optimized_poses.size() < 4;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const sapphire::PoseGraphSnapshot snapshot = backend.snapshot();
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.loop_registration_failures >= 1,
+           "the nearer sparse cloud must be rejected before the next try");
+    expect(stats.loop_edges == 1,
+           "a later candidate must still add one loop edge");
+    expect(snapshot.loop_edges.size() == 1,
+           "one query must not keep a second successful candidate");
+    expect(snapshot.loop_edges.front().source == 3
+               && snapshot.loop_edges.front().target == 0,
+           "the accepted loop must be the first candidate that passes GICP");
+}
+
+/// The nearest frame already has the odometry edge, so it is not registered.
+/// The next historical frame is the one loop.
+void testLinkedCandidateIsSkipped() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.05;
+    config.update_period_sec = 0.02;
+    config.loop_min_time_separation = 0.5;
+    config.loop_min_travel_distance = 0.3;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+    config.lidar_translation_sigma_m = 0.5;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto corner = makeCornerCloud();
+    // The predecessor is the nearest corner and would register, but it is
+    // only 0.4 s after the target, inside the time gate, so it never becomes
+    // a query. The return is later and closer to that predecessor than to
+    // the target, so skipping the odometry edge is what selects the target.
+    addKeyframe(backend, corner, 0.6, 0.0);
+    addKeyframe(backend, corner, 5.0, 0.2);
+    addKeyframe(backend, corner, 0.45, 0.4);
+    addKeyframe(backend, corner, 0.0, 1.2);
+
+    for (int attempt = 0;
+         attempt < 400 && backend.stats().loop_edges == 0;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    backend.requestSnapshot();
+    for (int attempt = 0;
+         attempt < 200 && backend.snapshot().optimized_poses.size() < 4;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const sapphire::PoseGraphSnapshot snapshot = backend.snapshot();
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.loop_registration_failures == 0,
+           "the odometry neighbor must be skipped before registration");
+    expect(stats.loop_edges == 1,
+           "the next unlinked candidate must be accepted");
+    expect(snapshot.loop_edges.size() == 1
+               && snapshot.loop_edges.front().source == 3
+               && snapshot.loop_edges.front().target == 0,
+           "the loop must skip the nearer keyframe that already has an edge");
+}
+
+/// Six historical frames sit inside the radius. Only the five nearest are
+/// registered. Those five are too sparse to pass, and the sixth is the
+/// corner that would have closed the loop.
+void testSearchStopsAfterFiveCandidates() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.05;
+    config.update_period_sec = 0.02;
+    config.loop_min_time_separation = 0.5;
+    config.loop_min_travel_distance = 0.3;
+    config.loop_search_radius = 2.5;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto corner = makeCornerCloud();
+    const auto sparse = makeLocalCloud();
+    // Shared stamps keep the historical frames inside the time gate of each
+    // other. Only the return is old enough to search, and its predecessor
+    // sits outside the radius.
+    addKeyframe(backend, corner, 1.8, 0.0);
+    addKeyframe(backend, sparse, 0.1, 0.0);
+    addKeyframe(backend, sparse, 0.2, 0.0);
+    addKeyframe(backend, sparse, 0.3, 0.0);
+    addKeyframe(backend, sparse, 0.4, 0.0);
+    addKeyframe(backend, sparse, 0.5, 0.0);
+    addKeyframe(backend, corner, 5.0, 0.0);
+    addKeyframe(backend, corner, 0.0, 2.0);
+
+    for (int attempt = 0;
+         attempt < 400
+             && (backend.stats().optimized_poses < 8
+                 || backend.stats().loop_candidates < 5);
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.optimized_poses == 8,
+           "every keyframe must enter the graph before the cap is checked");
+    expect(stats.loop_candidates == 5,
+           "a query must register at most five historical frames");
+    expect(stats.loop_registration_failures == 5,
+           "the five nearest frames are the sparse ones");
+    expect(stats.loop_residual_rejections == 0,
+           "the sixth frame must not be registered or committed");
+    expect(stats.loop_edges == 0,
+           "stopping at five must leave the farther corner untried");
+}
+
 }  // namespace
 
 int main() {
@@ -666,6 +829,9 @@ int main() {
     testInconsistentLoopLeavesCommittedGraph();
     testHistoricalTrajectoryFollowsOwningKeyframe();
     testSparseCloudRejectsLoop();
+    testFailedCandidateFallsThroughToNext();
+    testLinkedCandidateIsSkipped();
+    testSearchStopsAfterFiveCandidates();
     std::cout << "All pose graph tests passed\n";
     return EXIT_SUCCESS;
 }

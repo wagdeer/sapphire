@@ -221,7 +221,10 @@ struct Config {
         double loop_min_time_separation = 30.0;
         double loop_min_travel_distance = 30.0;
         double loop_max_rotation = 3.14;
-        double loop_search_radius = 15.0;
+        /// Radius for spatial loop candidates. Up to five historical frames
+        /// inside this radius are tried, nearest first; that count is fixed
+        /// in the backend, not a toml field.
+        double loop_search_radius = 30.0;
         int loop_search_stride = 2;
         int target_frame_count = 50;
         double source_voxel_size = 0.4;

@@ -98,6 +98,9 @@ constexpr int kIsamRelinearizeIterations = 20;
 /// Nonlinear error above this is divergence. The intern batch optimizer
 /// aborts a trial at the same 1e12 cutoff.
 constexpr double kMaxGraphError = 1.0e12;
+/// Nearest historical frames tried per query. Intern spatial_max_candidates.
+/// One query still contributes at most one loop factor.
+constexpr int kLoopMaxCandidates = 5;
 
 struct ResidualSummary {
     bool finite = false;
@@ -699,22 +702,53 @@ private:
         return !graph.empty();
     }
 
-    int searchLoopTarget(size_t query_id, const Isometry3d& query_pose) const {
-        int best_id = -1;
-        double best_squared_distance =
+    /// Odometry links consecutive keyframes. Committed loops are stored as
+    /// query → historical frame. Either one disqualifies another loop.
+    bool alreadyLinked(size_t query_id, size_t candidate_id) const {
+        if (candidate_id + 1 == query_id) {
+            return true;
+        }
+        for (const PoseGraphEdge& edge : loop_edges_) {
+            const bool same_pair =
+                (edge.source == query_id && edge.target == candidate_id)
+                || (edge.source == candidate_id && edge.target == query_id);
+            if (same_pair) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Historical frames inside the search radius, nearest first, at most
+    /// five. Time, travel, and heading gates stay. A frame that already has
+    /// an edge with the query is left out before the cap, so it does not
+    /// consume one of the five attempts.
+    std::vector<size_t> searchLoopCandidates(
+        size_t query_id, const Isometry3d& query_pose) const
+    {
+        const double radius_squared =
             config_.loop_search_radius * config_.loop_search_radius;
         const Eigen::Quaterniond query_rotation(query_pose.rotation());
+        struct Ranked {
+            size_t id = 0;
+            double squared_distance = 0.0;
+        };
+        std::vector<Ranked> ranked;
 
         // A loop target must be historical. When several frames are copied in
         // one worker cycle, optimized_ also contains nodes newer than an early
         // query; admitting those creates duplicate reciprocal loop edges.
         const size_t candidate_count =
             std::min(query_id, optimized_.size());
+        ranked.reserve(candidate_count);
         for (size_t candidate = 0; candidate < candidate_count; ++candidate) {
+            if (alreadyLinked(query_id, candidate)) {
+                continue;
+            }
             const Isometry3d target = fromGtsam(optimizedPose(candidate));
             const double squared_distance =
                 (query_pose.translation() - target.translation()).squaredNorm();
-            if (squared_distance > best_squared_distance) {
+            if (squared_distance > radius_squared) {
                 continue;
             }
             const double time_difference =
@@ -728,11 +762,30 @@ private:
             if (time_difference > config_.loop_min_time_separation
                 && travel_difference > config_.loop_min_travel_distance
                 && angle_difference < config_.loop_max_rotation) {
-                best_squared_distance = squared_distance;
-                best_id = static_cast<int>(candidate);
+                ranked.push_back({candidate, squared_distance});
             }
         }
-        return best_id;
+
+        const size_t count = std::min(
+            ranked.size(), static_cast<size_t>(kLoopMaxCandidates));
+        std::partial_sort(
+            ranked.begin(),
+            ranked.begin() + static_cast<std::ptrdiff_t>(count),
+            ranked.end(),
+            [](const Ranked& a, const Ranked& b) {
+                if (a.squared_distance != b.squared_distance) {
+                    return a.squared_distance < b.squared_distance;
+                }
+                // Same distance: prefer the later historical frame, matching
+                // the intern spatial candidate tie break.
+                return a.id > b.id;
+            });
+        std::vector<size_t> ids;
+        ids.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+            ids.push_back(ranked[i].id);
+        }
+        return ids;
     }
 
     PointCloudPtr buildTargetCloud(int target_id) const {
@@ -897,83 +950,118 @@ private:
                 last_optimized
                 * frames_[last_optimized_id].T_odom_lidar.inverse()
                 * frames_[query_id].T_odom_lidar;
-            const int target_id = searchLoopTarget(query_id, query_pose);
-            if (target_id < 0) {
+            const std::vector<size_t> target_ids =
+                searchLoopCandidates(query_id, query_pose);
+            if (target_ids.empty()) {
                 continue;
             }
-            ++loop_candidate_count_;
 
+            // One voxelized query scan for every candidate. Thickening this
+            // cloud is a later step.
             const PointCloudPtr source =
                 voxelized(
                     frames_[query_id].cloud_lidar,
                     config_.source_voxel_size);
-            const PointCloudPtr target = buildTargetCloud(target_id);
-            const LoopAlignment alignment =
-                registerLoop(query_pose, source, target);
-            if (!alignment.accepted) {
-                ++loop_registration_failure_count_;
-                last_loop_fitness_ = std::isfinite(alignment.fitness)
-                    ? alignment.fitness
-                    : -1.0;
-                spdlog::warn(
-                    "[pgo] loop GICP rejected: {} -> {}, points={}/{}, "
-                    "inliers={}, overlap={:.3f}, fitness={:.4f}, "
-                    "min_eig={:.3e} ({})",
-                    query_id,
-                    target_id,
-                    alignment.source_points,
-                    alignment.target_points,
-                    alignment.inliers,
-                    alignment.overlap,
-                    alignment.fitness,
-                    alignment.min_eigenvalue,
-                    alignment.reason);
-                continue;
-            }
-            last_loop_fitness_ = alignment.fitness;
+            for (const size_t target_index : target_ids) {
+                const int target_id = static_cast<int>(target_index);
+                ++loop_candidate_count_;
+                const PointCloudPtr target = buildTargetCloud(target_id);
+                const LoopAlignment alignment =
+                    registerLoop(query_pose, source, target);
+                if (!alignment.accepted) {
+                    ++loop_registration_failure_count_;
+                    last_loop_fitness_ = std::isfinite(alignment.fitness)
+                        ? alignment.fitness
+                        : -1.0;
+                    spdlog::warn(
+                        "[pgo] loop GICP rejected: {} -> {}, points={}/{}, "
+                        "inliers={}, overlap={:.3f}, fitness={:.4f}, "
+                        "min_eig={:.3e} ({})",
+                        query_id,
+                        target_id,
+                        alignment.source_points,
+                        alignment.target_points,
+                        alignment.inliers,
+                        alignment.overlap,
+                        alignment.fitness,
+                        alignment.min_eigenvalue,
+                        alignment.reason);
+                    continue;
+                }
+                last_loop_fitness_ = alignment.fitness;
 
-            const Isometry3d target_pose = fromGtsam(
-                optimizedPose(static_cast<size_t>(target_id)));
-            // The target cloud is already in the world frame, so
-            // T_target_source is T_world_query, not the relative pose.
-            // BetweenFactor(target, query) wants
-            // T_target_query = T_world_target^{-1} * T_world_query.
-            // A right perturbation of T_world_query is the same tangent
-            // vector on that relative pose, so the registration covariance
-            // attaches directly. The inverse measurement would need Ad(T^{-1}).
-            const Isometry3d measurement =
-                target_pose.inverse() * alignment.T_target_source;
-            gtsam::SharedNoiseModel loop_noise;
-            Eigen::Matrix<double, 6, 6> information;
-            if (!measurement.matrix().allFinite()
-                || !loopInformationNoise(
-                    alignment.covariance, loop_noise, information)) {
-                ++loop_registration_failure_count_;
-                spdlog::warn(
-                    "[pgo] loop covariance rejected: {} -> {} "
-                    "(non-finite measurement or indefinite covariance)",
-                    query_id,
-                    target_id);
-                continue;
+                const Isometry3d target_pose = fromGtsam(
+                    optimizedPose(static_cast<size_t>(target_id)));
+                // The target cloud is already in the world frame, so
+                // T_target_source is T_world_query, not the relative pose.
+                // BetweenFactor(target, query) wants
+                // T_target_query = T_world_target^{-1} * T_world_query.
+                // A right perturbation of T_world_query is the same tangent
+                // vector on that relative pose, so the registration covariance
+                // attaches directly. The inverse measurement would need Ad(T^{-1}).
+                const Isometry3d measurement =
+                    target_pose.inverse() * alignment.T_target_source;
+                // prepare_loops drops a match whose relative translation is
+                // longer than the search radius. max_loop_distance_m is left
+                // at 0, so there is no second, tighter limit. The intern
+                // checks translationNorm of that relative pose; here the same
+                // length is ||T_world_target^{-1} * T_target_source||, not
+                // the world-frame position of the query.
+                const double translation = measurement.translation().norm();
+                if (!measurement.matrix().allFinite()
+                    || !std::isfinite(translation)) {
+                    ++loop_registration_failure_count_;
+                    spdlog::warn(
+                        "[pgo] loop covariance rejected: {} -> {} "
+                        "(non-finite measurement)",
+                        query_id,
+                        target_id);
+                    continue;
+                }
+                if (translation > config_.loop_search_radius) {
+                    ++loop_registration_failure_count_;
+                    spdlog::warn(
+                        "[pgo] loop translation rejected: {} -> {}, "
+                        "translation={:.3f}m, limit={:.3f}m",
+                        query_id,
+                        target_id,
+                        translation,
+                        config_.loop_search_radius);
+                    continue;
+                }
+                gtsam::SharedNoiseModel loop_noise;
+                Eigen::Matrix<double, 6, 6> information;
+                if (!loopInformationNoise(
+                        alignment.covariance, loop_noise, information)) {
+                    ++loop_registration_failure_count_;
+                    spdlog::warn(
+                        "[pgo] loop covariance rejected: {} -> {} "
+                        "(indefinite covariance)",
+                        query_id,
+                        target_id);
+                    continue;
+                }
+                graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
+                    poseKey(static_cast<std::uint64_t>(target_id)),
+                    poseKey(query_id),
+                    toGtsam(measurement),
+                    loop_noise));
+                // Count and publish only after the residual trial accepts.
+                // Visualization stores query → historical frame. The factor
+                // above is historical frame → query. The first accepted
+                // candidate ends this query; later candidates are not added.
+                PendingLoop loop;
+                loop.edge = {query_id, static_cast<size_t>(target_id)};
+                loop.source_points = alignment.source_points;
+                loop.target_points = alignment.target_points;
+                loop.inliers = alignment.inliers;
+                loop.overlap = alignment.overlap;
+                loop.fitness = alignment.fitness;
+                loop.min_eigenvalue = alignment.min_eigenvalue;
+                loop.info_diag = information.diagonal();
+                pending.push_back(loop);
+                break;
             }
-            graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
-                poseKey(static_cast<std::uint64_t>(target_id)),
-                poseKey(query_id),
-                toGtsam(measurement),
-                loop_noise));
-            // Count and publish only after the residual trial accepts.
-            // Visualization stores query → historical frame. The factor
-            // above is historical frame → query.
-            PendingLoop loop;
-            loop.edge = {query_id, static_cast<size_t>(target_id)};
-            loop.source_points = alignment.source_points;
-            loop.target_points = alignment.target_points;
-            loop.inliers = alignment.inliers;
-            loop.overlap = alignment.overlap;
-            loop.fitness = alignment.fitness;
-            loop.min_eigenvalue = alignment.min_eigenvalue;
-            loop.info_diag = information.diagonal();
-            pending.push_back(loop);
         }
         searched_loop_id_ = frames_.size();
         syncLoopStats();

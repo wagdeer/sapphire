@@ -114,7 +114,7 @@ void testProjectConfig() {
         config.pgo.keyframe_distance, 0.5,
         "PGO keyframe translation threshold");
     expectNear(
-        config.pgo.loop_search_radius, 15.0,
+        config.pgo.loop_search_radius, 30.0,
         "PGO loop search radius");
     expect(config.pgo.lidar_min_inliers == 64,
            "PGO loop minimum inliers");
