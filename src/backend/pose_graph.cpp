@@ -34,6 +34,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -247,6 +248,9 @@ struct LoopAlignment {
     double overlap = 0.0;
     double min_eigenvalue = std::numeric_limits<double>::quiet_NaN();
     const char* reason = "not attempted";
+    /// True after GICP runs. Early rejects leave the identity result in
+    /// place, so the motion from the initial pose is only meaningful then.
+    bool registered = false;
 };
 
 /// Invert a floored registration covariance into a Gaussian information
@@ -789,17 +793,162 @@ private:
         return ids;
     }
 
-    PointCloudPtr buildTargetCloud(int target_id) const {
-        auto merged = std::make_shared<PointCloud>();
-        const int begin =
-            std::max(0, target_id - config_.target_frame_count);
-        const int end = std::min(
+    void targetCloudWindow(int target_id, int& begin, int& end) const {
+        begin = std::max(0, target_id - config_.target_frame_count);
+        end = std::min(
             static_cast<int>(optimized_.size()) - 1,
             target_id + config_.target_frame_count);
-        for (int i = begin; i <= end; ++i) {
-            const Isometry3d pose = fromGtsam(
-                optimizedPose(static_cast<size_t>(i)));
-            *merged += *transformedCloud(frames_[i].cloud_lidar, pose);
+    }
+
+    /// Target index ranges actually merged into the GICP target. The nominal
+    /// ±target_frame_count window is cut by the query window. A keyframe that
+    /// is in both clouds is the same scan twice: in the target it wears the
+    /// optimized pose, in the query it wears the odometry pose, and the
+    /// registration is initialized at that odometry pose. Nearest neighbors
+    /// then land on the copy, the residual is about 0, and the vote is to
+    /// stay on odometry rather than a second visit of the place. Up to two
+    /// segments remain when the query window sits in the middle.
+    struct TargetSegments {
+        std::pair<int, int> ranges[2];
+        int count = 0;
+        size_t frames = 0;
+    };
+
+    TargetSegments targetCloudSegments(
+        int target_id, size_t query_begin, size_t query_end) const
+    {
+        int begin = 0;
+        int end = 0;
+        targetCloudWindow(target_id, begin, end);
+        TargetSegments segments;
+        const auto push = [&](int lo, int hi) {
+            if (lo > hi || segments.count >= 2) {
+                return;
+            }
+            segments.ranges[segments.count] = {lo, hi};
+            ++segments.count;
+            segments.frames += static_cast<size_t>(hi - lo + 1);
+        };
+        const int query_lo = static_cast<int>(query_begin);
+        const int query_hi = static_cast<int>(query_end);
+        const int left_hi = std::min(end, query_lo - 1);
+        if (begin <= left_hi) {
+            push(begin, left_hi);
+        }
+        const int right_lo = std::max(begin, query_hi + 1);
+        if (right_lo <= end) {
+            push(right_lo, end);
+        }
+        return segments;
+    }
+
+    /// Keyframes present in both clouds. Zero after the query window is cut
+    /// out of the target. Logged so a hole in that cut is visible.
+    static size_t sharedKeyframeCount(
+        const TargetSegments& segments,
+        size_t query_begin,
+        size_t query_end)
+    {
+        const int query_lo = static_cast<int>(query_begin);
+        const int query_hi = static_cast<int>(query_end);
+        size_t shared = 0;
+        for (int i = 0; i < segments.count; ++i) {
+            const int lo = std::max(segments.ranges[i].first, query_lo);
+            const int hi = std::min(segments.ranges[i].second, query_hi);
+            if (lo <= hi) {
+                shared += static_cast<size_t>(hi - lo + 1);
+            }
+        }
+        return shared;
+    }
+
+    static std::string targetWindowText(const TargetSegments& segments) {
+        if (segments.count == 0) {
+            return "[]";
+        }
+        std::string text;
+        for (int i = 0; i < segments.count; ++i) {
+            if (i > 0) {
+                text += '+';
+            }
+            text += '[';
+            text += std::to_string(segments.ranges[i].first);
+            text += ',';
+            text += std::to_string(segments.ranges[i].second);
+            text += ']';
+        }
+        return text;
+    }
+
+    /// Query is on the left, historical frame on the right, matching the
+    /// rejection line. `gicp_dtrans` / `gicp_drot` are the motion from the
+    /// odometry initial pose. They are nan when registration did not run.
+    /// Both windows are the closed ranges actually passed to GICP. The target
+    /// may be two ranges when the query window was cut out of the middle.
+    void logLoopWindows(
+        size_t query_id,
+        int target_id,
+        const Isometry3d& initial_pose,
+        const LoopAlignment& alignment) const
+    {
+        size_t query_begin = query_id;
+        size_t query_end = query_id;
+        queryCloudWindow(query_id, query_begin, query_end);
+        const TargetSegments target_segments =
+            targetCloudSegments(target_id, query_begin, query_end);
+        const size_t shared = sharedKeyframeCount(
+            target_segments, query_begin, query_end);
+        const double travel = std::abs(
+            frames_[query_id].travel_distance
+            - frames_[static_cast<size_t>(target_id)].travel_distance);
+        double gicp_dtrans = std::numeric_limits<double>::quiet_NaN();
+        double gicp_drot = std::numeric_limits<double>::quiet_NaN();
+        if (alignment.registered
+            && alignment.T_target_source.matrix().allFinite()
+            && initial_pose.matrix().allFinite()) {
+            const Isometry3d delta =
+                initial_pose.inverse() * alignment.T_target_source;
+            if (delta.matrix().allFinite()) {
+                gicp_dtrans = delta.translation().norm();
+                gicp_drot = rotationAngle(delta);
+            }
+        }
+        spdlog::info(
+            "[pgo] loop windows: {} -> {}, index_gap={}, travel={:.2f}m, "
+            "query_window=[{},{}] frames={}, "
+            "target_window={} frames={}, shared_frames={}, "
+            "gicp_dtrans={:.3f}m, gicp_drot={:.4f}rad",
+            query_id,
+            target_id,
+            query_id - static_cast<size_t>(target_id),
+            travel,
+            query_begin,
+            query_end,
+            query_end - query_begin + 1,
+            targetWindowText(target_segments),
+            target_segments.frames,
+            shared,
+            gicp_dtrans,
+            gicp_drot);
+    }
+
+    /// Historical submap for this query. Frames inside the query travel
+    /// window are omitted; see targetCloudSegments.
+    PointCloudPtr buildTargetCloud(int target_id, size_t query_id) const {
+        size_t query_begin = query_id;
+        size_t query_end = query_id;
+        queryCloudWindow(query_id, query_begin, query_end);
+        auto merged = std::make_shared<PointCloud>();
+        const TargetSegments segments =
+            targetCloudSegments(target_id, query_begin, query_end);
+        for (int segment = 0; segment < segments.count; ++segment) {
+            const int begin = segments.ranges[segment].first;
+            const int end = segments.ranges[segment].second;
+            for (int i = begin; i <= end; ++i) {
+                const Isometry3d pose = fromGtsam(
+                    optimizedPose(static_cast<size_t>(i)));
+                *merged += *transformedCloud(frames_[i].cloud_lidar, pose);
+            }
         }
         return voxelized(merged, config_.target_voxel_size);
     }
@@ -923,6 +1072,7 @@ private:
 
         const small_gicp::RegistrationResult result = solver.align(
             *target_gicp, *source_gicp, tree, initial_pose);
+        alignment.registered = true;
         alignment.inliers = result.num_inliers;
         alignment.overlap = static_cast<double>(alignment.inliers)
             / static_cast<double>(alignment.source_points);
@@ -1044,9 +1194,11 @@ private:
             for (const size_t target_index : target_ids) {
                 const int target_id = static_cast<int>(target_index);
                 ++loop_candidate_count_;
-                const PointCloudPtr target = buildTargetCloud(target_id);
+                const PointCloudPtr target =
+                    buildTargetCloud(target_id, query_id);
                 const LoopAlignment alignment =
                     registerLoop(query_pose, source, target);
+                logLoopWindows(query_id, target_id, query_pose, alignment);
                 last_loop_source_points_ = alignment.source_points;
                 if (!alignment.accepted) {
                     ++loop_registration_failure_count_;

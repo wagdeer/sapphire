@@ -1074,6 +1074,206 @@ void testQueryCloudCapsStationaryWindow() {
            "a capped thin query must not close a loop");
 }
 
+sapphire::PointCloudPtr makeSinglePoint() {
+    auto cloud = std::make_shared<sapphire::PointCloud>();
+    addPoint(*cloud, 0.0f, 0.0f, 0.0f);
+    return cloud;
+}
+
+/// Wall far from the origin in the scan body. Spacing stays above the test
+/// voxel so the cloud still has a few hundred points after downsampling.
+sapphire::PointCloudPtr makeOffsetWall() {
+    auto cloud = std::make_shared<sapphire::PointCloud>();
+    for (int iy = 0; iy < 15; ++iy) {
+        for (int iz = 0; iz < 15; ++iz) {
+            addPoint(
+                *cloud,
+                0.0f,
+                5.0f + 0.2f * static_cast<float>(iy),
+                0.2f * static_cast<float>(iz));
+        }
+    }
+    return cloud;
+}
+
+/// The query scan sits inside the target's ±N frame window, so the same
+/// corner is in both clouds. At the odometry initial pose those copies
+/// coincide and win every nearest neighbor. The historical corner, 0.4 m
+/// away, must be what GICP aligns once the copy is removed.
+void testSharedQueryScanDoesNotPinShortLoop() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.2;
+    config.update_period_sec = 30.0;
+    config.loop_min_time_separation = 3.5;
+    config.loop_min_travel_distance = 5.0;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 4;
+    // 3 m reaches the query frame from inside the target window, and stops
+    // one frame short of pulling that scan into the previous keyframe.
+    config.source_travel_radius_m = 3.0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto corner = makeCornerCloud();
+    const auto filler = makeSinglePoint();
+    addKeyframe(backend, corner, 10.0, 0.0);
+    addKeyframe(backend, filler, 14.0, 10.0);
+    addKeyframe(backend, filler, 18.0, 20.0);
+    addKeyframe(backend, filler, 14.0, 30.0);
+    addKeyframe(backend, corner, 10.4, 40.0);
+
+    waitUntil(backend, [&]() {
+        return backend.stats().loop_edges >= 1
+            && backend.stats().optimized_poses >= 5;
+    });
+
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.optimized_poses == 5,
+           "shared-scan test must optimize every keyframe");
+    expect(stats.loop_edges >= 1,
+           "dropping the shared query scan must still leave the real loop");
+
+    backend.requestSnapshot();
+    waitUntil(backend, [&]() {
+        return backend.snapshot().optimized_poses.size() >= 5
+            && !backend.snapshot().loop_edges.empty();
+    });
+    const sapphire::PoseGraphSnapshot snapshot = backend.snapshot();
+    bool query_to_root = false;
+    for (const sapphire::PoseGraphEdge& edge : snapshot.loop_edges) {
+        if (edge.source == 4 && edge.target == 0) {
+            query_to_root = true;
+        }
+    }
+    expect(query_to_root,
+           "the short loop must join the query to the historical frame");
+    constexpr double odom_x = 10.4;
+    const double target_x = snapshot.optimized_poses.front().translation().x();
+    const double query_x = snapshot.optimized_poses.back().translation().x();
+    expect(std::abs(target_x - 10.0) < 1e-3,
+           "root prior must keep the historical keyframe in place");
+    expect(query_x < odom_x - 1e-4,
+           "without the shared copy, the loop must pull the query off odometry");
+    expect(query_x > target_x,
+           "translation floor must leave the query short of the target");
+}
+
+/// The only dense structure shared by the two windows is an approach scan
+/// that the historical place does not contain. Matching that scan to itself
+/// used to pass overlap and fitness. It is not a revisit.
+void testSharedApproachScanDoesNotInventLoop() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.2;
+    config.update_period_sec = 30.0;
+    config.loop_min_time_separation = 1.0;
+    config.loop_min_travel_distance = 5.0;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 6;
+    config.source_travel_radius_m = 4.0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto place = makeCornerCloud();
+    const auto filler = makeSinglePoint();
+    const auto wall = makeOffsetWall();
+    auto query = std::make_shared<sapphire::PointCloud>();
+    for (int i = 0; i < 20; ++i) {
+        addPoint(*query, 0.2f * static_cast<float>(i), 0.0f, 0.0f);
+    }
+
+    addKeyframe(backend, place, 0.0, 0.0);
+    addKeyframe(backend, filler, 3.0, 10.0);
+    addKeyframe(backend, filler, 6.0, 20.0);
+    addKeyframe(backend, filler, 9.0, 30.0);
+    addKeyframe(backend, filler, 6.0, 40.0);
+    addKeyframe(backend, wall, 3.0, 50.0);
+    addKeyframe(backend, query, 0.2, 60.0);
+
+    waitUntil(backend, [&]() {
+        return backend.stats().loop_candidates >= 1
+            && backend.stats().optimized_poses >= 7;
+    });
+
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.optimized_poses == 7,
+           "approach-scan test must optimize every keyframe");
+    expect(stats.loop_candidates >= 1,
+           "the return must still be searched");
+    expect(stats.last_loop_source_points >= 200,
+           "the shared wall must be in the query cloud");
+    expect(stats.loop_edges == 0,
+           "a shared approach scan must not become a loop edge");
+    expect(stats.loop_registration_failures >= 1,
+           "registration must run and reject the self-match");
+}
+
+/// The query window punches a hole in the target window. Frames past that
+/// hole are a different visit of the place and stay in the target cloud.
+void testTargetKeepsFramesPastQueryWindow() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.2;
+    config.update_period_sec = 30.0;
+    config.loop_min_time_separation = 3.5;
+    config.loop_min_travel_distance = 5.0;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 6;
+    config.source_travel_radius_m = 3.0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto corner = makeCornerCloud();
+    const auto filler = makeSinglePoint();
+    // Frame 5 observes the same corner, but its keyframe pose is 19 m away
+    // so the points sit near the body-frame range limit and the pose itself
+    // is outside the search radius. Its index still falls inside the target
+    // window, on the far side of the query window.
+    sapphire::Isometry3d shift = sapphire::Isometry3d::Identity();
+    shift.translation().x() = -19.0;
+    const auto corner_behind = transformCloud(corner, shift);
+    addKeyframe(backend, filler, 0.0, 0.0);
+    addKeyframe(backend, filler, 8.0, 10.0);
+    addKeyframe(backend, filler, 16.0, 20.0);
+    addKeyframe(backend, corner, 0.3, 40.0);
+    // Stamp stays inside the time gate so this filler cannot itself loop.
+    addKeyframe(backend, filler, 2.0, 1.0);
+    addKeyframe(backend, corner_behind, 19.0, 2.0);
+
+    waitUntil(backend, [&]() {
+        return backend.stats().loop_edges >= 1
+            && backend.stats().optimized_poses >= 6;
+    });
+
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.optimized_poses == 6,
+           "split-window test must optimize every keyframe");
+    expect(stats.loop_edges == 1,
+           "geometry past the query window must still close the loop");
+    expect(stats.loop_registration_failures == 0,
+           "the later corner must pass GICP");
+
+    backend.requestSnapshot();
+    waitUntil(backend, [&]() {
+        return backend.snapshot().optimized_poses.size() >= 6
+            && !backend.snapshot().loop_edges.empty();
+    });
+    const sapphire::PoseGraphSnapshot snapshot = backend.snapshot();
+    expect(snapshot.loop_edges.front().source == 3
+               && snapshot.loop_edges.front().target == 0,
+           "the loop edge must run from the query to the historical frame");
+    const double query_x = snapshot.optimized_poses[3].translation().x();
+    expect(query_x < 0.3 - 1e-4,
+           "the later corner must pull the query off its odometry pose");
+}
+
 }  // namespace
 
 int main() {
@@ -1091,6 +1291,9 @@ int main() {
     testQueryCloudIgnoresDistantTravel();
     testQueryCloudDropsFarBodyPoints();
     testQueryCloudCapsStationaryWindow();
+    testSharedQueryScanDoesNotPinShortLoop();
+    testSharedApproachScanDoesNotInventLoop();
+    testTargetKeepsFramesPastQueryWindow();
     std::cout << "All pose graph tests passed\n";
     return EXIT_SUCCESS;
 }
