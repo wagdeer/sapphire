@@ -21,6 +21,9 @@ struct PoseGraphStats {
     size_t revision = 0;
 };
 
+/// Loop endpoints for visualization. `source` is the query keyframe and
+/// `target` is the historical keyframe. The factor itself runs the other
+/// way, so its noise stays in the registration tangent.
 struct PoseGraphEdge {
     size_t source = 0;
     size_t target = 0;

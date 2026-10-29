@@ -4,8 +4,10 @@
 
 #include <SO3.hpp>
 
+#include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
 #include <gtsam/geometry/Pose3.h>
+#include <gtsam/linear/NoiseModel.h>
 #include <gtsam/nonlinear/ISAM2.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
@@ -80,6 +82,10 @@ constexpr double kLoopConvergenceEpsilon = 0.01;
 struct LoopAlignment {
     bool accepted = false;
     Isometry3d T_target_source = Isometry3d::Identity();
+    /// Covariance of `T_target_source` in its right tangent, GTSAM order
+    /// (rotation, then translation), after the diagonal floors.
+    Eigen::Matrix<double, 6, 6> covariance =
+        Eigen::Matrix<double, 6, 6>::Zero();
     double fitness = std::numeric_limits<double>::infinity();
     size_t source_points = 0;
     size_t target_points = 0;
@@ -88,6 +94,34 @@ struct LoopAlignment {
     double min_eigenvalue = std::numeric_limits<double>::quiet_NaN();
     const char* reason = "not attempted";
 };
+
+/// Invert a floored registration covariance into a Gaussian information
+/// model. Returns false when the covariance is not symmetric positive
+/// definite. `information_out` is the matrix passed to the noise model.
+bool loopInformationNoise(
+    const Eigen::Matrix<double, 6, 6>& covariance,
+    gtsam::SharedNoiseModel& noise,
+    Eigen::Matrix<double, 6, 6>& information_out)
+{
+    if (!covariance.allFinite()) {
+        return false;
+    }
+    const Eigen::Matrix<double, 6, 6> symmetric =
+        0.5 * (covariance + covariance.transpose());
+    const Eigen::LLT<Eigen::Matrix<double, 6, 6>> llt(symmetric);
+    if (llt.info() != Eigen::Success) {
+        return false;
+    }
+    Eigen::Matrix<double, 6, 6> information =
+        llt.solve(Eigen::Matrix<double, 6, 6>::Identity());
+    information = 0.5 * (information + information.transpose());
+    if (!information.allFinite()) {
+        return false;
+    }
+    information_out = information;
+    noise = gtsam::noiseModel::Gaussian::Information(information);
+    return static_cast<bool>(noise);
+}
 
 std::shared_ptr<small_gicp::PointCloud> toGicpCloud(const PointCloud& cloud) {
     auto output = std::make_shared<small_gicp::PointCloud>();
@@ -549,6 +583,27 @@ private:
             alignment.reason = "singular Hessian";
             return alignment;
         }
+
+        // H is already divided by the inlier count. Invert in GTSAM order
+        // and add the floors there: rotation on the first three diagonal
+        // entries, translation on the last three. Do not permute to
+        // translation-first; the factor below consumes this order directly.
+        Eigen::Matrix<double, 6, 6> covariance =
+            eigenvalues.eigenvectors()
+            * eigenvalues.eigenvalues().cwiseInverse().asDiagonal()
+            * eigenvalues.eigenvectors().transpose();
+        covariance = 0.5 * (covariance + covariance.transpose());
+        const double rotation_floor = config_.lidar_rotation_sigma_rad
+            * config_.lidar_rotation_sigma_rad;
+        const double translation_floor = config_.lidar_translation_sigma_m
+            * config_.lidar_translation_sigma_m;
+        covariance.diagonal().head<3>().array() += rotation_floor;
+        covariance.diagonal().tail<3>().array() += translation_floor;
+        if (!covariance.allFinite()) {
+            alignment.reason = "singular Hessian";
+            return alignment;
+        }
+        alignment.covariance = covariance;
         alignment.accepted = true;
         alignment.reason = "accepted";
         return alignment;
@@ -608,37 +663,61 @@ private:
             last_loop_fitness_ = alignment.fitness;
 
             const Isometry3d target_pose =
-                fromGtsam(optimized_.at<gtsam::Pose3>(target_id));
-            const Isometry3d relative =
-                alignment.T_target_source.inverse() * target_pose;
-            // Scalar Cauchy stays until the registration covariance is
-            // attached to this factor. fitness is mean inlier distance squared.
-            gtsam::Vector6 variances;
-            variances.setConstant(std::max(alignment.fitness, 1e-9));
-            const auto loop_noise = gtsam::noiseModel::Robust::Create(
-                gtsam::noiseModel::mEstimator::Cauchy::Create(1.0),
-                gtsam::noiseModel::Diagonal::Variances(variances));
+                fromGtsam(optimized_.at<gtsam::Pose3>(
+                    static_cast<size_t>(target_id)));
+            // The target cloud is already in the world frame, so
+            // T_target_source is T_world_query, not the relative pose.
+            // BetweenFactor(target, query) wants
+            // T_target_query = T_world_target^{-1} * T_world_query.
+            // A right perturbation of T_world_query is the same tangent
+            // vector on that relative pose, so the registration covariance
+            // attaches directly. The inverse measurement would need Ad(T^{-1}).
+            const Isometry3d measurement =
+                target_pose.inverse() * alignment.T_target_source;
+            gtsam::SharedNoiseModel loop_noise;
+            Eigen::Matrix<double, 6, 6> information;
+            if (!measurement.matrix().allFinite()
+                || !loopInformationNoise(
+                    alignment.covariance, loop_noise, information)) {
+                ++loop_registration_failure_count_;
+                spdlog::warn(
+                    "[pgo] loop covariance rejected: {} -> {} "
+                    "(non-finite measurement or indefinite covariance)",
+                    query_id,
+                    target_id);
+                continue;
+            }
             graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
-                query_id,
                 static_cast<size_t>(target_id),
-                toGtsam(relative),
+                query_id,
+                toGtsam(measurement),
                 loop_noise));
+            // Visualization stores query → historical frame. The factor
+            // above is historical frame → query.
             loop_edges_.push_back({
                 query_id,
                 static_cast<size_t>(target_id),
             });
             ++loop_edge_count_;
             spdlog::info(
-                "[pgo] loop detected: {} -> {}, points={}/{}, inliers={}, "
-                "overlap={:.3f}, fitness={:.4f}, min_eig={:.3e}",
-                query_id,
+                "[pgo] loop detected: factor {} -> {} gaussian information, "
+                "points={}/{}, inliers={}, overlap={:.3f}, fitness={:.4f}, "
+                "min_eig={:.3e}, info_diag=[{:.4e}, {:.4e}, {:.4e}, "
+                "{:.4e}, {:.4e}, {:.4e}]",
                 target_id,
+                query_id,
                 alignment.source_points,
                 alignment.target_points,
                 alignment.inliers,
                 alignment.overlap,
                 alignment.fitness,
-                alignment.min_eigenvalue);
+                alignment.min_eigenvalue,
+                information(0, 0),
+                information(1, 1),
+                information(2, 2),
+                information(3, 3),
+                information(4, 4),
+                information(5, 5));
         }
         searched_loop_id_ = frames_.size();
         syncLoopStats();

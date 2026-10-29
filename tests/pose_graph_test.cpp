@@ -3,6 +3,7 @@
 #include <pcl/common/transforms.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -133,10 +134,12 @@ void testLoopClosureAddsConstraint() {
 
     sapphire::PoseGraphBackend backend(config);
     const auto local = makeCornerCloud();
-    // The final scan observes the first location, but its odometry estimate is
-    // 1.5 m away. That offset is inside the 2 m GICP correspondence gate and
-    // inside the 2 m search radius used by this test.
-    const double positions[] = {0.0, 2.0, 4.0, 6.0, 1.5};
+    // The loop target is not at the origin. The final scan observes that
+    // location, but its odometry estimate is 1.5 m farther along x. The
+    // offset is inside the 2 m GICP correspondence gate and the 2 m search
+    // radius. Using the registration pose itself as the between measurement
+    // would push the query away from the target instead of toward it.
+    const double positions[] = {10.0, 12.0, 14.0, 16.0, 11.5};
     for (int i = 0; i < 5; ++i) {
         sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
         pose.translation().x() = positions[i];
@@ -177,8 +180,21 @@ void testLoopClosureAddsConstraint() {
     const sapphire::PoseGraphSnapshot snapshot = backend.snapshot();
     expect(snapshot.optimized_poses.size() == 5,
            "requested visualization snapshot must be built asynchronously");
-    expect(!snapshot.loop_edges.empty(),
-           "visualization snapshot must contain loop endpoints");
+    expect(snapshot.loop_edges.size() == 1,
+           "visualization snapshot must contain the loop endpoints");
+    const sapphire::PoseGraphEdge& edge = snapshot.loop_edges.front();
+    expect(edge.source == 4 && edge.target == 0,
+           "stored loop edge must run from the query to the historical frame");
+
+    const double target_x = snapshot.optimized_poses.front().translation().x();
+    const double query_x = snapshot.optimized_poses.back().translation().x();
+    constexpr double odom_x = 11.5;
+    expect(std::abs(target_x - 10.0) < 1e-3,
+           "root prior must keep the historical keyframe in place");
+    expect(query_x < odom_x - 1e-4,
+           "loop factor must pull the query toward the historical pose");
+    expect(query_x > target_x,
+           "translation floor must leave the query short of the target");
 
     backend.requestGlobalMap();
     for (int attempt = 0;

@@ -233,8 +233,9 @@ struct Config {
         double lidar_max_correspondence_m = 2.0;
         double lidar_min_overlap = 0.5;
         double lidar_max_fitness_m2 = 0.5;
-        /// Diagonal floors for the registration covariance. The loop factor
-        /// still uses a scalar Cauchy variance until that covariance is wired in.
+        /// Diagonal floors added to the GICP covariance before it is
+        /// inverted into the loop factor. Hessian order is GTSAM Pose3:
+        /// rotation first, translation second.
         double lidar_translation_sigma_m = 0.2;
         double lidar_rotation_sigma_rad = 0.1;
         double update_period_sec = 1.0;
