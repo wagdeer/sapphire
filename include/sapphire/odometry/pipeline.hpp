@@ -79,6 +79,10 @@ public:
     size_t submapTargetRevision() const {
         return submap_manager_.targetRevision();
     }
+    /// Lidar-rate trajectory in the map frame. Empty when pose-graph
+    /// optimization is disabled. History follows each sample's keyframe.
+    MapTrajectory mapTrajectory() const { return pgo_backend_.mapTrajectory(); }
+
     PoseGraphStats poseGraphStats() const { return pgo_backend_.stats(); }
     PoseGraphSnapshot poseGraphSnapshot() const {
         return pgo_backend_.snapshot();
@@ -114,6 +118,13 @@ private:
     void finalizeImuInitialization(
         ImuInitializer::Result&& result,
         const ImuData& trigger_sample);
+
+    /// Anchor an accepted odom-frame lidar pose to the latest keyframe.
+    /// addFrame() for this scan must already have run.
+    void rememberPoseGraphSample(
+        const Isometry3d& T_odom_lidar,
+        const Eigen::Vector3d& v_odom,
+        double stamp);
 
     /// Filter and normalize raw LiDAR points before deskew/registration.
     PreprocessResult preprocessPoints(

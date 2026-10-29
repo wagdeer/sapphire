@@ -372,6 +372,8 @@ bool OdometryPipeline::initializeFirstLidarTarget(
 
     rebasePropagation(corrected_state, accel_bias, gyro_bias);
     pgo_backend_.addFrame(downsampled, T_world_lidar, stamp);
+    rememberPoseGraphSample(
+        T_world_lidar, corrected_state.v_world, stamp);
 
     spdlog::info(
         "[pipeline] first LiDAR target initialized: stamp={:.6f}, "
@@ -603,7 +605,24 @@ void OdometryPipeline::processLidarScan(
             cloud_out,
             T_world_lidar_out,
             deskewed.reference_stamp);
+        rememberPoseGraphSample(
+            T_world_lidar_out,
+            fused_state.v_world,
+            deskewed.reference_stamp);
     }
+}
+
+void OdometryPipeline::rememberPoseGraphSample(
+    const Isometry3d& T_odom_lidar,
+    const Eigen::Vector3d& v_odom,
+    double stamp)
+{
+    OdometryResult sample;
+    sample.T_world_lidar = T_odom_lidar;
+    sample.v_world = v_odom;
+    sample.stamp = stamp;
+    sample.converged = true;
+    pgo_backend_.recordOdometrySample(sample);
 }
 
 void OdometryPipeline::pushLidar(

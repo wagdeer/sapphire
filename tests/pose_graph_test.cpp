@@ -423,6 +423,198 @@ void testInconsistentLoopLeavesCommittedGraph() {
     }
 }
 
+sapphire::OdometryResult makeOdomSample(
+    double x, double stamp, double velocity_x)
+{
+    sapphire::OdometryResult sample;
+    sample.T_world_lidar = sapphire::Isometry3d::Identity();
+    sample.T_world_lidar.translation().x() = x;
+    sample.v_world = Eigen::Vector3d(velocity_x, 0.0, 0.0);
+    sample.stamp = stamp;
+    sample.converged = true;
+    return sample;
+}
+
+const sapphire::MapTrajectorySample* findSample(
+    const sapphire::MapTrajectory& trajectory, double stamp)
+{
+    for (const sapphire::MapTrajectorySample& sample : trajectory.samples) {
+        if (std::abs(sample.stamp - stamp) < 1e-9) {
+            return &sample;
+        }
+    }
+    return nullptr;
+}
+
+/// History is replayed per owning keyframe. A pose between two keyframes
+/// keeps the earlier keyframe's odometry shape. The chain is long enough
+/// that the return keyframe moves by centimeters while the root prior does
+/// not, so an old sample must not ride the latest rigid T_map_odom. The
+/// return sample is the latest keyframe, so its replay matches T_map_odom.
+void testHistoricalTrajectoryFollowsOwningKeyframe() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.05;
+    config.update_period_sec = 0.02;
+    config.loop_min_time_separation = 1000.0;
+    config.loop_min_travel_distance = 1.0;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+    config.lidar_translation_sigma_m = 0.02;
+
+    constexpr int kOutbound = 40;
+    constexpr double kStep = 0.5;
+    constexpr double kReturnX = 0.6;
+    constexpr int kAnchor = 8;
+    constexpr double kRootMidX = 0.2;
+    constexpr double kRootMidStamp = 0.5;
+    constexpr double kAnchorMidStamp = 1000.5;
+    constexpr double kVelocityX = 0.8;
+    const double anchor_mid_x = static_cast<double>(kAnchor) * kStep + 0.15;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto local = makeCornerCloud();
+    std::vector<double> keyframe_x;
+    keyframe_x.reserve(static_cast<size_t>(kOutbound) + 2);
+    {
+        sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+        backend.addFrame(transformCloud(local, pose), pose, 0.0);
+        backend.recordOdometrySample(makeOdomSample(0.0, 0.0, kVelocityX));
+        backend.recordOdometrySample(
+            makeOdomSample(kRootMidX, kRootMidStamp, kVelocityX));
+        keyframe_x.push_back(0.0);
+    }
+    for (int i = 1; i <= kOutbound; ++i) {
+        sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+        pose.translation().x() = static_cast<double>(i) * kStep;
+        backend.addFrame(
+            transformCloud(local, pose),
+            pose,
+            config.loop_min_time_separation);
+        keyframe_x.push_back(pose.translation().x());
+        if (i == kAnchor) {
+            backend.recordOdometrySample(
+                makeOdomSample(anchor_mid_x, kAnchorMidStamp, kVelocityX));
+        }
+    }
+    {
+        sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+        pose.translation().x() = kReturnX;
+        const double return_stamp = config.loop_min_time_separation + 1.0;
+        backend.addFrame(
+            transformCloud(local, pose), pose, return_stamp);
+        backend.recordOdometrySample(
+            makeOdomSample(kReturnX, return_stamp, kVelocityX));
+        keyframe_x.push_back(kReturnX);
+    }
+
+    const int pose_count = kOutbound + 2;
+    for (int attempt = 0;
+         attempt < 400 && backend.stats().loop_edges == 0;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    expect(backend.stats().loop_edges >= 1,
+           "trajectory replay needs a committed loop");
+    expect(backend.stats().optimized_poses == static_cast<size_t>(pose_count),
+           "trajectory replay needs every keyframe optimized");
+
+    backend.requestSnapshot();
+    for (int attempt = 0;
+         attempt < 200
+             && static_cast<int>(backend.snapshot().optimized_poses.size())
+                 < pose_count;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const sapphire::PoseGraphSnapshot snapshot = backend.snapshot();
+    const sapphire::MapTrajectory trajectory = backend.mapTrajectory();
+    const sapphire::Isometry3d rigid = backend.T_map_odom();
+    expect(snapshot.optimized_poses.size() == keyframe_x.size(),
+           "snapshot must cover every keyframe used as an anchor");
+    expect(trajectory.samples.size() == 4,
+           "only the recorded lidar poses are replayed");
+    expect(trajectory.revision == backend.stats().revision,
+           "trajectory revision must match the published correction");
+
+    const sapphire::MapTrajectorySample* root = findSample(trajectory, 0.0);
+    const sapphire::MapTrajectorySample* root_mid =
+        findSample(trajectory, kRootMidStamp);
+    const sapphire::MapTrajectorySample* anchor_mid =
+        findSample(trajectory, kAnchorMidStamp);
+    const sapphire::MapTrajectorySample* query = findSample(
+        trajectory, config.loop_min_time_separation + 1.0);
+    expect(root && root_mid && anchor_mid && query,
+           "replay must keep every recorded stamp");
+    expect(root->keyframe == 0 && root_mid->keyframe == 0,
+           "a scan before the next keyframe stays on the previous keyframe");
+    expect(anchor_mid->keyframe == static_cast<size_t>(kAnchor),
+           "an interior scan must stay on the keyframe that owned it");
+    expect(query->keyframe == keyframe_x.size() - 1,
+           "the return scan is owned by the latest keyframe");
+
+    const sapphire::Isometry3d root_odom =
+        makeOdomSample(0.0, 0.0, 0.0).T_world_lidar;
+    const sapphire::Isometry3d root_mid_odom =
+        makeOdomSample(kRootMidX, kRootMidStamp, 0.0).T_world_lidar;
+    const sapphire::Isometry3d anchor_mid_odom =
+        makeOdomSample(anchor_mid_x, kAnchorMidStamp, 0.0).T_world_lidar;
+    const sapphire::Isometry3d query_odom =
+        makeOdomSample(kReturnX, 0.0, 0.0).T_world_lidar;
+
+    const auto expectReplay =
+        [&](const sapphire::MapTrajectorySample& sample,
+            const sapphire::Isometry3d& T_odom) {
+            const sapphire::Isometry3d T_odom_i =
+                makeOdomSample(keyframe_x[sample.keyframe], 0.0, 0.0)
+                    .T_world_lidar;
+            const sapphire::Isometry3d expected =
+                snapshot.optimized_poses[sample.keyframe]
+                * T_odom_i.inverse()
+                * T_odom;
+            expect(
+                sample.T_map_lidar.matrix().isApprox(expected.matrix(), 1e-6),
+                "map pose must be T_map_i * T_odom_i^{-1} * T_odom");
+            const Eigen::Vector3d expected_velocity =
+                (expected.linear() * Eigen::Vector3d(kVelocityX, 0.0, 0.0));
+            expect(
+                sample.v_map.isApprox(expected_velocity, 1e-6),
+                "map velocity must use the same keyframe rotation");
+        };
+    expectReplay(*root, root_odom);
+    expectReplay(*root_mid, root_mid_odom);
+    expectReplay(*anchor_mid, anchor_mid_odom);
+    expectReplay(*query, query_odom);
+
+    const sapphire::Isometry3d root_relative =
+        root->T_map_lidar.inverse() * root_mid->T_map_lidar;
+    const sapphire::Isometry3d root_odom_relative =
+        root_odom.inverse() * root_mid_odom;
+    expect(
+        root_relative.matrix().isApprox(root_odom_relative.matrix(), 1e-6),
+        "scans on one keyframe must keep their odometry shape");
+
+    const double replay_x = root_mid->T_map_lidar.translation().x();
+    const double rigid_x = (rigid * root_mid_odom).translation().x();
+    expect(
+        std::abs(replay_x - rigid_x) > 0.05,
+        "an old keyframe must not follow the latest rigid correction");
+    expect(
+        std::abs(query->T_map_lidar.translation().x()
+                 - (rigid * query_odom).translation().x())
+            < 1e-6,
+        "the latest keyframe replay must match T_map_odom");
+    expect(
+        query->T_map_lidar.translation().x() < kReturnX - 0.05,
+        "loop must pull the replayed return pose toward the historical frame");
+    expect(
+        std::abs(root->T_map_lidar.translation().x()) < 1e-3,
+        "root-anchored history must stay on the prior");
+}
+
 void testSparseCloudRejectsLoop() {
     sapphire::Config::Pgo config;
     config.enabled = true;
@@ -472,6 +664,7 @@ int main() {
     testLoopRelinearizationMovesDistantKeyframe();
     testSecondLoopCommitsAfterFirst();
     testInconsistentLoopLeavesCommittedGraph();
+    testHistoricalTrajectoryFollowsOwningKeyframe();
     testSparseCloudRejectsLoop();
     std::cout << "All pose graph tests passed\n";
     return EXIT_SUCCESS;

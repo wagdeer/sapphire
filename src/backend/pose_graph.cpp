@@ -384,6 +384,74 @@ public:
         });
     }
 
+    void recordOdometrySample(const OdometryResult& sample) {
+        if (!config_.enabled || !sample.converged
+            || !std::isfinite(sample.stamp)
+            || !sample.T_world_lidar.matrix().allFinite()
+            || !sample.v_world.allFinite()) {
+            return;
+        }
+
+        size_t keyframe = 0;
+        {
+            std::lock_guard<std::mutex> lock(input_mutex_);
+            if (input_frames_.empty()) {
+                return;
+            }
+            keyframe = input_frames_.size() - 1;
+        }
+
+        std::lock_guard<std::mutex> lock(samples_mutex_);
+        samples_.push_back({
+            sample.stamp,
+            keyframe,
+            sample.T_world_lidar,
+            sample.v_world,
+        });
+    }
+
+    MapTrajectory mapTrajectory() const {
+        std::vector<OdometrySample> samples;
+        {
+            std::lock_guard<std::mutex> lock(samples_mutex_);
+            samples = samples_;
+        }
+
+        std::vector<Isometry3d> map_poses;
+        std::vector<Isometry3d> odom_poses;
+        Isometry3d latest_correction = Isometry3d::Identity();
+        size_t revision = 0;
+        {
+            std::lock_guard<std::mutex> lock(output_mutex_);
+            map_poses = keyframe_map_poses_;
+            odom_poses = keyframe_odom_poses_;
+            latest_correction = T_map_odom_;
+            revision = stats_.revision;
+        }
+
+        MapTrajectory trajectory;
+        trajectory.revision = revision;
+        trajectory.samples.reserve(samples.size());
+        for (const OdometrySample& sample : samples) {
+            const Isometry3d correction = sampleCorrection(
+                sample.keyframe,
+                map_poses,
+                odom_poses,
+                latest_correction);
+            MapTrajectorySample mapped;
+            mapped.stamp = sample.stamp;
+            mapped.keyframe = sample.keyframe;
+            mapped.T_map_lidar = correction * sample.T_odom_lidar;
+            mapped.v_map = correction.rotation() * sample.v_odom;
+            if (!mapped.T_map_lidar.matrix().allFinite()
+                || !mapped.v_map.allFinite()) {
+                continue;
+            }
+            trajectory.samples.push_back(std::move(mapped));
+        }
+        return trajectory;
+    }
+
     Isometry3d correction() const {
         std::lock_guard<std::mutex> lock(output_mutex_);
         return T_map_odom_;
@@ -455,6 +523,14 @@ private:
         Isometry3d T_odom_lidar = Isometry3d::Identity();
         double stamp = 0.0;
         double travel_distance = 0.0;
+    };
+
+    /// Odom-frame lidar pose. `keyframe` indexes input_frames_ / frames_.
+    struct OdometrySample {
+        double stamp = 0.0;
+        size_t keyframe = 0;
+        Isometry3d T_odom_lidar = Isometry3d::Identity();
+        Eigen::Vector3d v_odom = Eigen::Vector3d::Zero();
     };
 
     /// A GICP-accepted loop that is not yet in the committed ISAM2.
@@ -1202,6 +1278,18 @@ private:
             sparse->size());
     }
 
+    static Isometry3d sampleCorrection(
+        size_t keyframe,
+        const std::vector<Isometry3d>& map_poses,
+        const std::vector<Isometry3d>& odom_poses,
+        const Isometry3d& latest_correction)
+    {
+        if (keyframe >= map_poses.size() || keyframe >= odom_poses.size()) {
+            return latest_correction;
+        }
+        return map_poses[keyframe] * odom_poses[keyframe].inverse();
+    }
+
     void updateCorrection() {
         if (optimized_.empty()) {
             return;
@@ -1212,8 +1300,21 @@ private:
         const Isometry3d correction =
             optimized_pose * frames_[last_id].T_odom_lidar.inverse();
 
+        // Same poses the trajectory replay reads. A sample owned by keyframe
+        // i uses T_map_i * T_odom_i^{-1}; i == last_id is T_map_odom_.
+        std::vector<Isometry3d> map_poses;
+        std::vector<Isometry3d> odom_poses;
+        map_poses.reserve(optimized_.size());
+        odom_poses.reserve(optimized_.size());
+        for (size_t i = 0; i < optimized_.size(); ++i) {
+            map_poses.push_back(fromGtsam(optimizedPose(i)));
+            odom_poses.push_back(frames_[i].T_odom_lidar);
+        }
+
         std::lock_guard<std::mutex> lock(output_mutex_);
         T_map_odom_ = correction;
+        keyframe_map_poses_ = std::move(map_poses);
+        keyframe_odom_poses_ = std::move(odom_poses);
         stats_.optimized_poses = optimized_.size();
         stats_.loop_edges = loop_edge_count_;
         stats_.correction_translation = correction.translation().norm();
@@ -1268,6 +1369,9 @@ private:
     std::vector<InputFrame> input_frames_;
     std::vector<GraphFrame> frames_;
 
+    mutable std::mutex samples_mutex_;
+    std::vector<OdometrySample> samples_;
+
     std::unique_ptr<gtsam::ISAM2> isam2_;
     gtsam::SharedNoiseModel prior_noise_;
     gtsam::SharedNoiseModel odom_noise_;
@@ -1283,6 +1387,10 @@ private:
 
     mutable std::mutex output_mutex_;
     Isometry3d T_map_odom_ = Isometry3d::Identity();
+    /// Optimized map pose and the odom pose that produced it, one entry per
+    /// optimized keyframe. Updated together with T_map_odom_.
+    std::vector<Isometry3d> keyframe_map_poses_;
+    std::vector<Isometry3d> keyframe_odom_poses_;
     PoseGraphStats stats_;
     std::vector<Isometry3d> optimized_poses_snapshot_;
     std::vector<PoseGraphEdge> loop_edges_snapshot_;
@@ -1320,6 +1428,16 @@ void PoseGraphBackend::addFrame(
     double stamp)
 {
     impl_->addFrame(cloud_odom, T_odom_lidar, stamp);
+}
+
+void PoseGraphBackend::recordOdometrySample(
+    const OdometryResult& odom_frame_sample)
+{
+    impl_->recordOdometrySample(odom_frame_sample);
+}
+
+MapTrajectory PoseGraphBackend::mapTrajectory() const {
+    return impl_->mapTrajectory();
 }
 
 Isometry3d PoseGraphBackend::T_map_odom() const {

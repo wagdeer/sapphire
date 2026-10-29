@@ -38,11 +38,30 @@ struct PoseGraphSnapshot {
     std::vector<PoseGraphEdge> loop_edges;
 };
 
+/// One odom-frame lidar pose anchored to the keyframe that owned it.
+/// After a graph update the map pose is
+/// `T_map_i * T_odom_i^{-1} * T_odom`, not the latest rigid correction.
+struct MapTrajectorySample {
+    double stamp = 0.0;
+    /// Index into the keyframe sequence. Samples between keyframes keep
+    /// the previous keyframe, so their relative odometry shape is unchanged.
+    size_t keyframe = 0;
+    Isometry3d T_map_lidar = Isometry3d::Identity();
+    Eigen::Vector3d v_map = Eigen::Vector3d::Zero();
+};
+
+/// Full replay of recorded lidar poses. `revision` matches PoseGraphStats
+/// and advances only when optimized keyframe poses are published.
+struct MapTrajectory {
+    size_t revision = 0;
+    std::vector<MapTrajectorySample> samples;
+};
+
 /// Asynchronous ROS-free pose-graph and loop-closure backend.
 ///
-/// The frontend remains entirely in the odom frame. This backend consumes
-/// immutable frontend frame snapshots and publishes only the latest
-/// map-from-odom correction.
+/// The frontend remains entirely in the odom frame. The live pose uses the
+/// latest keyframe's rigid map-from-odom correction. Historical lidar poses
+/// are replayed from the keyframe that owned each stamp.
 class PoseGraphBackend {
 public:
     explicit PoseGraphBackend(const Config::Pgo& config);
@@ -59,6 +78,17 @@ public:
         const PointCloudConstPtr& cloud_odom,
         const Isometry3d& T_odom_lidar,
         double stamp);
+
+    /// Remember an accepted lidar pose in the odom frame. Call after
+    /// addFrame() so the sample anchors to the keyframe that owns it,
+    /// including a keyframe this pose just created. Non-keyframes stay on
+    /// the previous keyframe. IMU propagation is not recorded.
+    void recordOdometrySample(const OdometryResult& odom_frame_sample);
+
+    /// Replay recorded samples with each owning keyframe's optimized pose.
+    /// A sample whose keyframe is not optimized yet uses T_map_odom(), which
+    /// is the same formula with the latest optimized keyframe.
+    MapTrajectory mapTrajectory() const;
 
     /// Thread-safe snapshot of the latest optimized map-from-odom transform.
     Isometry3d T_map_odom() const;
