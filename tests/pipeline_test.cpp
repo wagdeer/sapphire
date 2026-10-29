@@ -41,7 +41,9 @@ sapphire::Point makePoint(
     return point;
 }
 
-sapphire::PointCloud::Ptr makeStructuredScan(float x_offset = 0.0f) {
+sapphire::PointCloud::Ptr makeStructuredScan(
+    float x_offset, double time_origin)
+{
     auto scan = std::make_shared<sapphire::PointCloud>();
     for (int x = 0; x < 5; ++x) {
         for (int y = 0; y < 5; ++y) {
@@ -51,7 +53,8 @@ sapphire::PointCloud::Ptr makeStructuredScan(float x_offset = 0.0f) {
                     2.0f + x_offset + 0.25f * static_cast<float>(x),
                     -2.0f + 0.3f * static_cast<float>(y),
                     -1.5f + 0.4f * static_cast<float>(z),
-                    0.01 + 0.01 * static_cast<double>(index % 5)));
+                    time_origin + 0.01
+                        + 0.01 * static_cast<double>(index % 5)));
             }
         }
     }
@@ -134,7 +137,7 @@ void testFirstLidarScanInitializesDeskewedTarget() {
     }
     expect(pipeline.initialized(), "stationary IMU must initialize pipeline");
 
-    auto scan = makeStructuredScan();
+    auto scan = makeStructuredScan(0.0f, 0.10);
 
     pipeline.pushLidar(0.10, scan);
 
@@ -178,7 +181,7 @@ void testFirstLidarScanInitializesDeskewedTarget() {
 
     // A sensor translated +0.2 m along world X observes static geometry
     // shifted -0.2 m in its local frame. GICP should recover +0.2 m.
-    auto second_scan = makeStructuredScan(-0.2f);
+    auto second_scan = makeStructuredScan(-0.2f, 0.20);
 
     std::thread lidar_thread([&pipeline, &second_scan]() {
         pipeline.pushLidar(0.20, second_scan);
@@ -239,7 +242,7 @@ void testFirstLidarScanInitializesDeskewedTarget() {
             Eigen::Vector3d::Zero(),
         });
     }
-    pipeline.pushLidar(0.30, makeStructuredScan(5.0f));
+    pipeline.pushLidar(0.30, makeStructuredScan(5.0f, 0.30));
     expect(!pipeline.latestResult().converged,
            "a scan outside the correspondence gate must be rejected");
     expect(pipeline.keyframeCount() == 1,
@@ -257,7 +260,7 @@ void testFirstLidarScanInitializesDeskewedTarget() {
             Eigen::Vector3d::Zero(),
         });
     }
-    pipeline.pushLidar(0.40, makeStructuredScan(-0.2f));
+    pipeline.pushLidar(0.40, makeStructuredScan(-0.2f, 0.40));
 
     const auto& recovered_result = pipeline.latestResult();
     expect(recovered_result.converged,
@@ -330,7 +333,7 @@ void testEskfFusionRecoversTranslation() {
     }
     expect(pipeline.initialized(),
            "ESKF pipeline must initialize from stationary IMU");
-    pipeline.pushLidar(0.10, makeStructuredScan());
+    pipeline.pushLidar(0.10, makeStructuredScan(0.0f, 0.10));
     expect(pipeline.latestResult().converged,
            "ESKF first scan must initialize the target");
 
@@ -341,7 +344,7 @@ void testEskfFusionRecoversTranslation() {
             Eigen::Vector3d::Zero(),
         });
     }
-    pipeline.pushLidar(0.20, makeStructuredScan(-0.2f));
+    pipeline.pushLidar(0.20, makeStructuredScan(-0.2f, 0.20));
 
     const auto& result = pipeline.latestResult();
     expect(result.converged,
@@ -381,7 +384,7 @@ void testDirectionalEskfPipelineUsesHessian() {
             Eigen::Vector3d::Zero(),
         });
     }
-    pipeline.pushLidar(0.10, makeStructuredScan());
+    pipeline.pushLidar(0.10, makeStructuredScan(0.0f, 0.10));
     for (int i = 17; i <= 26; ++i) {
         pipeline.pushImu({
             static_cast<double>(i) * 0.01,
@@ -389,7 +392,7 @@ void testDirectionalEskfPipelineUsesHessian() {
             Eigen::Vector3d::Zero(),
         });
     }
-    pipeline.pushLidar(0.20, makeStructuredScan(-0.2f));
+    pipeline.pushLidar(0.20, makeStructuredScan(-0.2f, 0.20));
 
     const auto result = pipeline.latestResult();
     expect(result.converged,
@@ -423,7 +426,7 @@ void testImuStatePropagatesBetweenLidarScans() {
             Eigen::Vector3d::Zero(),
         });
     }
-    pipeline.pushLidar(0.10, makeStructuredScan());
+    pipeline.pushLidar(0.10, makeStructuredScan(0.0f, 0.10));
 
     pipeline.pushImu({
         0.20,

@@ -66,7 +66,7 @@ sapphire_ros2/      (ament_cmake wrapper)
 struct EIGEN_ALIGN16 Point {
     PCL_ADD_POINT4D;       // float x, y, z
     float intensity;
-    double timestamp;       // seconds from scan start (for deskew)
+    double timestamp;       // absolute seconds, same clock as ImuData.stamp
 };
 POINT_CLOUD_REGISTER_POINT_STRUCT(sapphire::Point, ...)
 ```
@@ -770,21 +770,21 @@ t₀                              t₁  扫描到达 → GICP → Geo Observer �
 3. Gal3 预积分：`partial = pim; partial.integrateMeasurement(accel, gyro, partial_dt)` per unique timestamp
 4. Gal3 恢复：`Gamma_ij() * initial_state * Upsilon()` → 世界系 IMU 位姿 + 速度
 5. 逐 group 变换到世界系：`T_world_imu(t) * T_imu_lidar * p_lidar`
-6. 支持 `time_offset` 补偿 header→首点延迟
+6. 点时间是绝对秒，时间轴就是点时间本身。不再用 `time_offset` 把 header 对齐到首点。
 
 输出：World frame，`T_world_lidar_ref` + `v_world_ref` 给 registration 和 propagate。
 与 DLIO 差异：无 Boost（手写 adjacent_filtered）、无线程池（v0.1）。
 
-接口：
+接口（2026-10-29 起，点时间为绝对秒）：
 ```cpp
 DeskewResult deskew(
-    const PointCloudConstPtr& scan, double scan_stamp,
-    const RingBuffer<ImuData, 500>& imu_buf,
+    const PointCloudConstPtr& scan,
+    const ImuBuffer& imu_buf,
     double prev_stamp, const Isometry3d& T_world_imu_prev,
     const Eigen::Vector3d& v_world_prev,
     const Isometry3d& T_imu_lidar,
     const Eigen::Vector3d& gravity_world,
-    const ImuNoiseConfig& noise, bool time_offset = false
+    const ImuNoiseConfig& noise
 );
 ```
 

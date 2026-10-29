@@ -5,6 +5,7 @@
 #include <Eigen/Geometry>
 
 #include <cmath>
+#include <initializer_list>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -78,6 +79,24 @@ void requireFinitePositive(double value, const char* name) {
         throw std::invalid_argument(
             std::string(name) + " must be finite and positive");
     }
+}
+
+void requireChoice(
+    const std::string& value,
+    const char* name,
+    std::initializer_list<const char*> allowed)
+{
+    for (const char* item : allowed) {
+        if (value == item) {
+            return;
+        }
+    }
+    std::ostringstream message;
+    message << name << " must be one of:";
+    for (const char* item : allowed) {
+        message << ' ' << item;
+    }
+    throw std::invalid_argument(message.str());
 }
 
 }  // namespace
@@ -456,12 +475,30 @@ Config loadConfig(const std::filesystem::path& path) {
         config.pgo.occupancy.margin = *value;
     }
 
-    const auto time_offset = root["deskew"]["time_offset"].value<bool>();
-    if (!time_offset.has_value()) {
-        throw std::runtime_error(
-            "missing or non-boolean TOML field: deskew.time_offset");
+    if (const auto value =
+            root["sensor"]["lidar"]["time_field"].value<std::string>()) {
+        config.sensor.lidar.time_field = *value;
     }
-    config.deskew.time_offset = *time_offset;
+    if (const auto value =
+            root["sensor"]["lidar"]["time_unit"].value<std::string>()) {
+        config.sensor.lidar.time_unit = *value;
+    }
+    if (const auto value =
+            root["sensor"]["lidar"]["time_ref"].value<std::string>()) {
+        config.sensor.lidar.time_ref = *value;
+    }
+    if (const auto value =
+            root["sensor"]["lidar"]["max_scan_duration"].value<double>()) {
+        config.sensor.lidar.max_scan_duration = *value;
+    }
+    if (const auto value =
+            root["sensor"]["lidar"]["header_tolerance"].value<double>()) {
+        config.sensor.lidar.header_tolerance = *value;
+    }
+    if (const auto value =
+            root["sensor"]["lidar"]["require_point_time"].value<bool>()) {
+        config.sensor.lidar.require_point_time = *value;
+    }
 
     const auto extrinsics = root["extrinsics"]["T_imu_lidar"];
     const Eigen::Vector3d translation = requiredVector3(
@@ -775,6 +812,25 @@ void validateConfig(const Config& config) {
             config.pgo.occupancy.margin,
             "pgo.occupancy.margin");
     }
+
+    requireChoice(
+        config.sensor.lidar.time_field,
+        "sensor.lidar.time_field",
+        {"auto", "none", "offset_time", "t", "timestamp", "time", "time_stamp"});
+    requireChoice(
+        config.sensor.lidar.time_unit,
+        "sensor.lidar.time_unit",
+        {"auto", "s", "ms", "us", "ns"});
+    requireChoice(
+        config.sensor.lidar.time_ref,
+        "sensor.lidar.time_ref",
+        {"auto", "relative", "absolute"});
+    requireFinitePositive(
+        config.sensor.lidar.max_scan_duration,
+        "sensor.lidar.max_scan_duration");
+    requireFiniteNonnegative(
+        config.sensor.lidar.header_tolerance,
+        "sensor.lidar.header_tolerance");
 
     const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;
     if (!extrinsic.matrix().allFinite()) {

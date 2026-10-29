@@ -22,7 +22,7 @@ namespace sapphire {
 struct EIGEN_ALIGN16 Point {
     PCL_ADD_POINT4D;       // x, y, z as floats, data[3]=1
     float intensity;
-    double timestamp;       // seconds from scan start (for deskew)
+    double timestamp;       // absolute seconds, same clock as ImuData.stamp
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
@@ -97,15 +97,6 @@ struct ImuNoiseConfig {
     double gyro_bias_sigma      = 1e-5;
     double accel_bias_rw_sigma  = 0.0;       // bias random walk (zero: assume stationary init gives good bias)
     double gyro_bias_rw_sigma   = 0.0;
-};
-
-/// Desired number of deskew time slices.
-/// Higher = more precise motion compensation but more compute.
-/// Mid-360 with ~20K unique timestamps benefits from group-by (adaptive slicing).
-struct DeskewConfig {
-    // Mid-360 offset_time is already relative to the message reference stamp.
-    // Enable only for drivers whose header must be aligned to the first retained point.
-    bool time_offset = false;
 };
 
 /// GICP registration parameters.
@@ -298,7 +289,18 @@ struct Config {
     } pgo;
 
     ImuConfig imu;
-    DeskewConfig deskew;
+
+    /// Optional LiDAR time classification. Omitted TOML keys stay automatic.
+    struct Sensor {
+        struct Lidar {
+            std::string time_field = "auto";
+            std::string time_unit = "auto";
+            std::string time_ref = "auto";
+            double max_scan_duration = 0.5;
+            double header_tolerance = 0.5;
+            bool require_point_time = false;
+        } lidar;
+    } sensor;
 };
 
 }  // namespace sapphire

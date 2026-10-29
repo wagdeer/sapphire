@@ -110,7 +110,7 @@ private:
 
     bool initializeFirstLidarTarget(
         double stamp, const PreprocessResult& preprocessed);
-    void processLidarScan(double stamp, const PreprocessResult& preprocessed);
+    void processLidarScan(const PreprocessResult& preprocessed);
     void maybeUpdateSubmapTarget(
         const DeskewResult& deskewed,
         const Isometry3d& T_world_lidar,
@@ -126,16 +126,16 @@ private:
         const Eigen::Vector3d& v_odom,
         double stamp);
 
-    /// Filter and normalize raw LiDAR points before deskew/registration.
-    PreprocessResult preprocessPoints(
-        double stamp, const PointCloudConstPtr& points) const;
+    /// Drop non-finite xyz and timestamps, then apply the crop box.
+    /// scan_end_stamp is the maximum remaining absolute timestamp.
+    PreprocessResult preprocessPoints(const PointCloudConstPtr& points) const;
 
     /// Uniformly downsample a world-frame deskewed scan for registration.
     PointCloudConstPtr downsamplePoints(
         const PointCloudConstPtr& points) const;
 
     /// Motion-compensate a preprocessed scan using buffered IMU data.
-    DeskewResult deskewPointcloud(double stamp, const PointCloudConstPtr& points);
+    DeskewResult deskewPointcloud(const PointCloudConstPtr& points);
 
     /// Wait until buffered IMU measurements cover the requested scan end.
     bool waitForImuCoverage(double end_stamp);
@@ -196,6 +196,7 @@ private:
     Registration registration_;
     std::size_t registration_attempt_count_ = 0;
     std::size_t registration_reject_count_ = 0;
+    bool warned_rigid_deskew_ = false;
 
     // TODO v0.1:
     //   std::unique_ptr<VoxelMap> voxel_map_;

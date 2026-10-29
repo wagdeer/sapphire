@@ -92,6 +92,15 @@ sapphire_enable_release_ipo(sapphire)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(sapphire_cloud_ingest_test
+        tests/cloud_ingest_test.cpp
+    )
+    target_include_directories(sapphire_cloud_ingest_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    sapphire_enable_release_ipo(sapphire_cloud_ingest_test)
+    add_test(NAME sapphire_cloud_ingest_test COMMAND sapphire_cloud_ingest_test)
+
     add_executable(sapphire_config_test
         tests/config_test.cpp
     )

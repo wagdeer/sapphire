@@ -84,24 +84,20 @@ ImuBuffer makeImuBuffer(
 DeskewResult runDeskew(
     const PointCloud::ConstPtr& cloud,
     const ImuBuffer& imu,
-    double scan_stamp,
     double prev_stamp,
     const Isometry3d& T_world_imu = Isometry3d::Identity(),
     const Eigen::Vector3d& v_world = Eigen::Vector3d::Zero(),
-    const Isometry3d& T_imu_lidar = Isometry3d::Identity(),
-    bool time_offset = false)
+    const Isometry3d& T_imu_lidar = Isometry3d::Identity())
 {
     return sapphire::deskew(
         cloud,
-        scan_stamp,
         imu,
         prev_stamp,
         T_world_imu,
         v_world,
         T_imu_lidar,
         Eigen::Vector3d(0.0, 0.0, -kGravity),
-        ImuNoiseConfig{},
-        time_offset);
+        ImuNoiseConfig{});
 }
 
 void testStaticGravityCancellation() {
@@ -112,7 +108,7 @@ void testStaticGravityCancellation() {
     });
     auto imu = makeImuBuffer(0.0, 0.11, 0.01);
 
-    const DeskewResult result = runDeskew(cloud, imu, 0.0, 0.0);
+    const DeskewResult result = runDeskew(cloud, imu, 0.0);
     expect(result.status == DeskewStatus::Success, "static scan must succeed");
     for (size_t i = 0; i < cloud->size(); ++i) {
         expectNear(result.cloud->points[i].x, cloud->points[i].x, "static x");
@@ -131,7 +127,7 @@ void testConstantVelocity() {
     auto imu = makeImuBuffer(0.0, 0.11, 0.01);
 
     const DeskewResult result = runDeskew(
-        cloud, imu, 0.0, 0.0, Isometry3d::Identity(),
+        cloud, imu, 0.0, Isometry3d::Identity(),
         Eigen::Vector3d(2.0, 0.0, 0.0));
     expect(result.status == DeskewStatus::Success, "constant velocity scan must succeed");
     for (size_t i = 0; i < cloud->size(); ++i) {
@@ -157,7 +153,7 @@ void testConstantAccelerationInterpolation() {
         Eigen::Vector3d::Zero(),
         Eigen::Vector3d(acceleration, 0.0, kGravity));
 
-    const DeskewResult result = runDeskew(cloud, imu, 0.0, 0.0);
+    const DeskewResult result = runDeskew(cloud, imu, 0.0);
     expect(result.status == DeskewStatus::Success,
            "constant acceleration scan must succeed");
     for (size_t i = 0; i < cloud->size(); ++i) {
@@ -181,7 +177,7 @@ void testConstantYawRate() {
     auto imu = makeImuBuffer(
         0.0, 0.11, 0.01, Eigen::Vector3d(0.0, 0.0, yaw_rate));
 
-    const DeskewResult result = runDeskew(cloud, imu, 0.0, 0.0);
+    const DeskewResult result = runDeskew(cloud, imu, 0.0);
     expect(result.status == DeskewStatus::Success, "constant yaw scan must succeed");
     for (size_t i = 0; i < cloud->size(); ++i) {
         const double angle = yaw_rate * cloud->points[i].timestamp;
@@ -203,7 +199,7 @@ void testRotatingLeverArmExtrinsic() {
     T_imu_lidar.translation() = Eigen::Vector3d(0.4, -0.2, 0.1);
 
     const DeskewResult result = runDeskew(
-        cloud, imu, 0.0, 0.0, Isometry3d::Identity(),
+        cloud, imu, 0.0, Isometry3d::Identity(),
         Eigen::Vector3d::Zero(), T_imu_lidar);
     expect(result.status == DeskewStatus::Success, "lever-arm scan must succeed");
     for (size_t i = 0; i < cloud->size(); ++i) {
@@ -217,19 +213,36 @@ void testRotatingLeverArmExtrinsic() {
     }
 }
 
-void testTimeOffsetAlignment() {
+void testAbsolutePointTime() {
     auto cloud = makeCloud({
-        makePoint(0.0f, 0.0f, 0.0f, 10.00),
-        makePoint(0.0f, 0.0f, 0.0f, 10.05),
+        makePoint(0.0f, 0.0f, 0.0f, 1.00),
+        makePoint(0.0f, 0.0f, 0.0f, 1.05),
     });
     auto imu = makeImuBuffer(1.0, 1.06, 0.01);
 
     const DeskewResult result = runDeskew(
-        cloud, imu, 1.0, 1.0, Isometry3d::Identity(),
-        Eigen::Vector3d(1.0, 0.0, 0.0), Isometry3d::Identity(), true);
-    expect(result.status == DeskewStatus::Success, "time-offset scan must succeed");
-    expectNear(result.cloud->points[0].x, 0.0, "first point aligned to scan stamp");
-    expectNear(result.cloud->points[1].x, 0.05, "relative point time retained");
+        cloud, imu, 1.0, Isometry3d::Identity(),
+        Eigen::Vector3d(1.0, 0.0, 0.0));
+    expect(result.status == DeskewStatus::Success, "absolute-time scan must succeed");
+    expectNear(result.cloud->points[0].x, 0.0, "point at the IMU epoch stays put");
+    expectNear(result.cloud->points[1].x, 0.05, "50 ms of 1 m/s motion");
+}
+
+void testLargeAbsoluteTimeConstantVelocity() {
+    constexpr double t0 = 1.7e9;
+    auto cloud = makeCloud({
+        makePoint(0.0f, 0.0f, 0.0f, t0),
+        makePoint(0.0f, 0.0f, 0.0f, t0 + 0.05),
+    });
+    auto imu = makeImuBuffer(t0, t0 + 0.06, 0.01);
+
+    const DeskewResult result = runDeskew(
+        cloud, imu, t0, Isometry3d::Identity(),
+        Eigen::Vector3d(1.0, 0.0, 0.0));
+    expect(result.status == DeskewStatus::Success,
+           "unix-time constant velocity scan must succeed");
+    expectNear(result.cloud->points[0].x, 0.0, "displacement is v * (t - t0)");
+    expectNear(result.cloud->points[1].x, 0.05, "50 ms remains inside 2e-5 m");
 }
 
 void testNoTimestampFallbackUsesWorldTransform() {
@@ -244,7 +257,7 @@ void testNoTimestampFallbackUsesWorldTransform() {
     T_imu_lidar.translation() = Eigen::Vector3d(0.5, 0.0, 0.0);
 
     const DeskewResult result = runDeskew(
-        cloud, imu, 0.0, 0.0, T_world_imu,
+        cloud, imu, 0.0, T_world_imu,
         Eigen::Vector3d::Zero(), T_imu_lidar);
     expect(result.status == DeskewStatus::NoPointTimestamps,
            "identical timestamps must report fallback");
@@ -258,7 +271,7 @@ void testInsufficientImuCoverage() {
     });
     auto imu = makeImuBuffer(0.0, 0.05, 0.01);
 
-    const DeskewResult result = runDeskew(cloud, imu, 0.0, 0.0);
+    const DeskewResult result = runDeskew(cloud, imu, 0.0);
     expect(result.status == DeskewStatus::InsufficientImuCoverage,
            "missing scan-end IMU must fail");
 }
@@ -279,7 +292,7 @@ void testDenseTimestampsDeskewCorrectness() {
         0.0, 0.11, 0.01, Eigen::Vector3d(0.0, 0.0, yaw_rate));
 
     const DeskewResult result = runDeskew(
-        cloud, imu, 0.0, 0.0, Isometry3d::Identity(),
+        cloud, imu, 0.0, Isometry3d::Identity(),
         Eigen::Vector3d(velocity, 0.0, 0.0));
     expect(result.status == DeskewStatus::Success,
            "dense timestamp scan must deskew successfully");
@@ -306,7 +319,8 @@ int main() {
     testConstantAccelerationInterpolation();
     testConstantYawRate();
     testRotatingLeverArmExtrinsic();
-    testTimeOffsetAlignment();
+    testAbsolutePointTime();
+    testLargeAbsoluteTimeConstantVelocity();
     testNoTimestampFallbackUsesWorldTransform();
     testInsufficientImuCoverage();
     testDenseTimestampsDeskewCorrectness();

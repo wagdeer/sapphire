@@ -55,9 +55,9 @@ the recovered `Xi(t)`. The vendored implementation under
 - Distance/rotation-gated frontend submaps
 - Asynchronous GTSAM ISAM2 pose graph with ICP loop verification
 - Validated TOML configuration
-- Ten CTest targets covering configuration, deskew, preintegration,
-  pipeline, observer, registration, submaps, pose graph, voxel filtering,
-  and the IMU ring buffer
+- Eleven CTest targets covering configuration, sensor ingest, deskew,
+  preintegration, pipeline, observer, registration, submaps, pose graph,
+  voxel filtering, and the IMU ring buffer
 
 The frontend operates in a local odometry frame. The pose-graph backend
 maintains a separate `T_map_odom` correction and composes it onto published
@@ -195,7 +195,9 @@ Check these before using a new sensor or dataset:
    clock domain.
 3. Convert acceleration to m/s². Set `acc_scale:=1.0` if the ROS message
    already uses SI units.
-4. Convert each point's relative timestamp to seconds in the ROS adapter.
+4. Point timestamps enter the pipeline as absolute seconds on the IMU
+   clock. The ROS adapter classifies the cloud; set `[sensor.lidar]` only
+   when that classification fails.
 5. Set `T_imu_lidar` correctly. It maps LiDAR-frame points into the IMU
    frame:
 
@@ -218,7 +220,6 @@ The default profile is `cfg/sapphire_mid360.toml`:
 [imu]
 [imu.init]
 [imu.noise]
-[deskew]
 [odometry]
 [odometry.crop_box]
 [odometry.observer]
@@ -251,6 +252,7 @@ sapphire/
 │   │   └── voxel_filter.hpp
 │   ├── imu_init.hpp
 │   ├── ring_buffer.hpp
+│   ├── sensor/cloud_ingest.hpp
 │   └── types.hpp
 ├── src/                         Core implementation
 └── tests/                       Unit and integration-style tests

@@ -142,8 +142,13 @@ min_range = 0.5
 cloud_voxel_size = 0.4
 margin = 5.0
 
-[deskew]
-time_offset = false
+# [sensor.lidar]
+# time_field = "auto"    # auto | offset_time | timestamp | time | t | none
+# time_unit  = "auto"    # auto | s | ms | us | ns
+# time_ref   = "auto"    # auto | relative | absolute
+# max_scan_duration = 0.5
+# header_tolerance = 0.5
+# require_point_time = false
 
 [extrinsics.T_imu_lidar]
 translation = [0.0, 0.0, 0.0]

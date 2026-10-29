@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <omp.h>
 
 namespace sapphire {
@@ -79,11 +80,9 @@ OdometryPipeline::OdometryPipeline(const Config& config)
         Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag);
 
     spdlog::info(
-        "[pipeline] ready: fusion={}, registration={}, deskew={}, "
-        "submap_kf={}",
+        "[pipeline] ready: fusion={}, registration={}, submap_kf={}",
         config.odometry.fusion,
         config.registration.type,
-        config.deskew.time_offset ? "offset" : "zero-ref",
         config.odometry.submap.max_keyframes);
 }
 
@@ -149,19 +148,19 @@ Eigen::Vector3d OdometryPipeline::gyroBias() const {
 // ── LiDAR preprocessing ─────────────────────────────────────────────
 
 OdometryPipeline::PreprocessResult OdometryPipeline::preprocessPoints(
-    double stamp, const PointCloudConstPtr& points) const
+    const PointCloudConstPtr& points) const
 {
     auto output = std::make_shared<PointCloud>();
     output->points.reserve(points->points.size());
 
     const auto& box = config_.odometry.crop_box;
-    double min_time = 0.0;
-    double max_time = 0.0;
+    double scan_end = 0.0;
     bool have_time = false;
     for (const Point& point : points->points) {
         if (!std::isfinite(point.x)
             || !std::isfinite(point.y)
-            || !std::isfinite(point.z)) {
+            || !std::isfinite(point.z)
+            || !std::isfinite(point.timestamp)) {
             continue;
         }
 
@@ -176,12 +175,10 @@ OdometryPipeline::PreprocessResult OdometryPipeline::preprocessPoints(
 
         output->points.push_back(point);
         if (!have_time) {
-            min_time = point.timestamp;
-            max_time = point.timestamp;
+            scan_end = point.timestamp;
             have_time = true;
         } else {
-            min_time = std::min(min_time, point.timestamp);
-            max_time = std::max(max_time, point.timestamp);
+            scan_end = std::max(scan_end, point.timestamp);
         }
     }
 
@@ -191,10 +188,9 @@ OdometryPipeline::PreprocessResult OdometryPipeline::preprocessPoints(
 
     PreprocessResult result;
     result.cloud = output;
-    result.scan_end_stamp = have_time
-        ? stamp + max_time
-            - (config_.deskew.time_offset ? min_time : 0.0)
-        : stamp;
+    if (have_time) {
+        result.scan_end_stamp = scan_end;
+    }
     return result;
 }
 
@@ -206,7 +202,7 @@ PointCloudConstPtr OdometryPipeline::downsamplePoints(
 }
 
 DeskewResult OdometryPipeline::deskewPointcloud(
-    double stamp, const PointCloudConstPtr& points)
+    const PointCloudConstPtr& points)
 {
     NavigationState baseline;
     ImuBuffer imu_snapshot;
@@ -220,18 +216,15 @@ DeskewResult OdometryPipeline::deskewPointcloud(
         imu_snapshot = imu_buffer_;
     }
 
-    DeskewResult result = deskew(
+    return deskew(
         points,
-        stamp,
         imu_snapshot,
         baseline.stamp,
         baseline.T_world_imu,
         baseline.v_world,
         config_.extrinsics.T_imu_lidar,
         gravity_world_,
-        config_.imu.noise,
-        config_.deskew.time_offset);
-    return result;
+        config_.imu.noise);
 }
 
 void OdometryPipeline::recoverPropagatedStateLocked(double stamp) {
@@ -320,10 +313,21 @@ void OdometryPipeline::rebasePropagation(
 bool OdometryPipeline::waitForImuCoverage(double end_stamp) {
     constexpr auto kImuWaitTimeout = std::chrono::milliseconds(500);
     std::unique_lock<std::mutex> lock(imu_mutex_);
-    return imu_cv_.wait_for(lock, kImuWaitTimeout, [this, end_stamp]() {
+    const bool covered = imu_cv_.wait_for(lock, kImuWaitTimeout, [this, end_stamp]() {
         return !imu_buffer_.empty()
             && imu_buffer_.back().stamp >= end_stamp;
     });
+    if (!covered) {
+        const double imu_back = imu_buffer_.empty()
+            ? std::numeric_limits<double>::quiet_NaN()
+            : imu_buffer_.back().stamp;
+        spdlog::warn(
+            "[pipeline] skipping LiDAR scan: timed out waiting for IMU "
+            "coverage through scan_end={:.6f}, imu_back={:.6f}",
+            end_stamp,
+            imu_back);
+    }
+    return covered;
 }
 
 // ── LiDAR callback ──────────────────────────────────────────────────
@@ -403,38 +407,40 @@ void OdometryPipeline::maybeUpdateSubmapTarget(
     registration_.setTarget(submap_manager_.target());
 }
 
-void OdometryPipeline::processLidarScan(
-    double stamp, const PreprocessResult& preprocessed)
+void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
 {
     const double scan_end = preprocessed.scan_end_stamp;
     if (!waitForImuCoverage(scan_end)) {
-        spdlog::warn(
-            "[pipeline] skipping LiDAR scan: timed out waiting for IMU "
-            "coverage through {:.6f}",
-            scan_end);
         return;
     }
 
     // ── Phase 1: deskew ──
     DeskewResult deskewed;
     try {
-        deskewed = deskewPointcloud(stamp, preprocessed.cloud);
+        deskewed = deskewPointcloud(preprocessed.cloud);
     } catch (const std::exception& e) {
         spdlog::error("[pipeline] deskewPointcloud threw: {}", e.what());
     }
 
-    // ── Phase 2: voxel downsampling ──
-    PointCloudConstPtr registration_source;
-    if (deskewed.status == DeskewStatus::Success) {
-        registration_source = downsamplePoints(deskewed.cloud);
-    }
-
-    if (deskewed.status != DeskewStatus::Success) {
+    const bool rigid_fallback =
+        deskewed.status == DeskewStatus::NoPointTimestamps;
+    if (deskewed.status != DeskewStatus::Success && !rigid_fallback) {
         spdlog::warn(
             "[pipeline] skipping LiDAR scan: deskew failed with status {}",
             static_cast<int>(deskewed.status));
         return;
     }
+    if (rigid_fallback && !warned_rigid_deskew_) {
+        warned_rigid_deskew_ = true;
+        spdlog::warn(
+            "[pipeline] LiDAR scan has no usable point timestamps; "
+            "using a rigid transform from the previous IMU state");
+    }
+
+    // ── Phase 2: voxel downsampling ──
+    // NoPointTimestamps still carries the world-frame fallback cloud.
+    const PointCloudConstPtr registration_source =
+        downsamplePoints(deskewed.cloud);
 
     if (registration_source->size()
         < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
@@ -633,7 +639,7 @@ void OdometryPipeline::pushLidar(
         return;
     }
 
-    const PreprocessResult preprocessed = preprocessPoints(stamp, points);
+    const PreprocessResult preprocessed = preprocessPoints(points);
     if (preprocessed.cloud->size()
         < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
         spdlog::warn(
@@ -648,7 +654,7 @@ void OdometryPipeline::pushLidar(
         initializeFirstLidarTarget(stamp, preprocessed);
         return;
     }
-    processLidarScan(stamp, preprocessed);
+    processLidarScan(preprocessed);
 }
 
 // ── IMU callback ────────────────────────────────────────────────────

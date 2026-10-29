@@ -49,8 +49,6 @@ std::string validConfig(double gravity, const std::string& quaternion) {
         "gyro_noise_density = 0.000152\n"
         "accel_random_walk = 0.000165\n"
         "gyro_random_walk = 0.0000655\n"
-        "[deskew]\n"
-        "time_offset = false\n"
         "[extrinsics.T_imu_lidar]\n"
         "translation = [0.1, -0.2, 0.3]\n"
         "rotation_xyzw = " + quaternion + "\n";
@@ -154,6 +152,16 @@ void testProjectConfig() {
         "PGO query body-frame range gate");
     expect(config.pgo.source_max_frames == 256,
            "PGO query window frame cap");
+    expect(config.sensor.lidar.time_field == "auto",
+           "Mid-360 profile leaves time_field automatic");
+    expect(config.sensor.lidar.time_unit == "auto",
+           "Mid-360 profile leaves time_unit automatic");
+    expect(config.sensor.lidar.time_ref == "auto",
+           "Mid-360 profile leaves time_ref automatic");
+    expectNear(config.sensor.lidar.max_scan_duration, 0.5,
+               "Mid-360 profile uses the 0.5 s scan window");
+    expect(!config.sensor.lidar.require_point_time,
+           "Mid-360 profile keeps frames when time classification fails");
     expect(!config.pgo.occupancy.enabled,
            "default Mid-360 profile keeps occupancy off");
     expectNear(
@@ -168,7 +176,6 @@ void testProjectConfig() {
     expectNear(
         config.pgo.occupancy.d_max, 3.0,
         "occupancy d_max");
-    expect(!config.deskew.time_offset, "Mid-360 time offset must be disabled");
     expect(config.extrinsics.T_imu_lidar.matrix().isApprox(
                Eigen::Matrix4d::Identity(), 1e-12),
            "referenced DLIO extrinsic must be identity");
@@ -231,6 +238,29 @@ void testInvalidGravityRejected() {
     expect(threw, "negative gravity must be rejected");
 }
 
+void testSensorLidarDefaultsWithoutSection() {
+    const auto path = writeConfig(
+        "sapphire_config_no_sensor_lidar.toml",
+        validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]"));
+    const auto config = sapphire::loadConfig(path);
+    std::filesystem::remove(path);
+
+    expect(config.sensor.lidar.time_field == "auto",
+           "missing sensor.lidar keeps time_field auto");
+    expect(config.sensor.lidar.time_unit == "auto",
+           "missing sensor.lidar keeps time_unit auto");
+    expect(config.sensor.lidar.time_ref == "auto",
+           "missing sensor.lidar keeps time_ref auto");
+    expectNear(
+        config.sensor.lidar.max_scan_duration, 0.5,
+        "missing sensor.lidar keeps max_scan_duration at 0.5");
+    expectNear(
+        config.sensor.lidar.header_tolerance, 0.5,
+        "missing sensor.lidar keeps header_tolerance at 0.5");
+    expect(!config.sensor.lidar.require_point_time,
+           "missing sensor.lidar does not require point time");
+}
+
 void testMissingFieldRejected() {
     const auto path = writeConfig(
         "sapphire_config_missing_field.toml",
@@ -248,6 +278,7 @@ void testMissingFieldRejected() {
 }  // namespace
 
 int main() {
+    testSensorLidarDefaultsWithoutSection();
     testProjectConfig();
     testDirectionalEskfProfile();
     testQuaternionNormalization();

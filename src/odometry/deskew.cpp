@@ -71,11 +71,7 @@ Isometry3d poseFromState(const Gal3& state) {
     return pose;
 }
 
-DeskewStatus buildScanTimeline(
-    const PointCloud& scan,
-    double scan_stamp,
-    bool time_offset,
-    ScanTimeline& timeline)
+DeskewStatus buildScanTimeline(const PointCloud& scan, ScanTimeline& timeline)
 {
     timeline.sorted_scan.points = scan.points;
     std::sort(
@@ -94,14 +90,12 @@ DeskewStatus buildScanTimeline(
         return DeskewStatus::NoPointTimestamps;
     }
 
-    const double offset =
-        scan_stamp - (time_offset ? min_point_time : 0.0);
     for (size_t i = 0; i < timeline.sorted_scan.points.size(); ++i) {
         if (i == 0
             || timeline.sorted_scan.points[i].timestamp
                 != timeline.sorted_scan.points[i - 1].timestamp) {
             timeline.stamps.push_back(
-                timeline.sorted_scan.points[i].timestamp + offset);
+                timeline.sorted_scan.points[i].timestamp);
             timeline.group_offsets.push_back(i);
         }
     }
@@ -305,15 +299,13 @@ PointCloudPtr transformScan(
 
 DeskewResult deskew(
     const PointCloudConstPtr& scan,
-    double scan_stamp,
     const ImuBuffer& imu_buf,
     double prev_stamp,
     const Isometry3d& T_world_imu_prev,
     const Eigen::Vector3d& v_world_prev,
     const Isometry3d& T_imu_lidar,
     const Eigen::Vector3d& gravity_world,
-    const ImuNoiseConfig& noise,
-    bool time_offset)
+    const ImuNoiseConfig& noise)
 {
     (void)noise;
 
@@ -325,8 +317,7 @@ DeskewResult deskew(
     }
 
     ScanTimeline timeline;
-    DeskewStatus status =
-        buildScanTimeline(*scan, scan_stamp, time_offset, timeline);
+    DeskewStatus status = buildScanTimeline(*scan, timeline);
     if (status != DeskewStatus::Success) {
         return makeFallback(
             scan, T_world_imu_prev, T_imu_lidar, prev_stamp,

@@ -51,8 +51,8 @@ Xi(t) = Gamma_ij(t) * Xi_ref * Upsilon_ij(t)
 - 异步 GTSAM ISAM2 位姿图，带 ICP 回环验证
 - 带校验的 TOML 配置
 - 逐帧耗时、配准、去畸变和关键帧诊断
-- 10 个 CTest 目标，覆盖配置、去畸变、预积分、管线、观测器、配准、子图、
-  位姿图、体素滤波和 IMU 环形缓冲
+- 11 个 CTest 目标，覆盖配置、传感器摄取、去畸变、预积分、管线、观测器、
+  配准、子图、位姿图、体素滤波和 IMU 环形缓冲
 
 前端在局部 odometry 坐标系中运行。位姿图后端维护独立的 `T_map_odom` 修正量，
 组合到发布位姿上，不往回改写前端的 deskew 或 observer 状态。
@@ -182,7 +182,8 @@ Launch 默认值：
 2. LiDAR 和 IMU 时间戳来自同一时钟域且单调递增。
 3. 将加速度转换为 m/s²。如果 ROS 消息已使用 SI 单位，设置
    `acc_scale:=1.0`。
-4. 在 ROS 适配器中，将每个点的相对时间戳转换为秒。
+4. 进入 pipeline 的点时间是绝对秒，和 IMU 同一个钟。ROS 适配器负责分类；
+   只有分类失败时才需要写 `[sensor.lidar]`。
 5. 正确设置 `T_imu_lidar`。它将 LiDAR 系点映射到 IMU 系：
 
    ```text
@@ -202,7 +203,6 @@ Sapphire 会拒绝该帧而非用不完整的 IMU 覆盖去做去畸变。
 [imu]
 [imu.init]
 [imu.noise]
-[deskew]
 [odometry]
 [odometry.crop_box]
 [odometry.observer]
@@ -234,6 +234,7 @@ sapphire/
 │   │   └── voxel_filter.hpp
 │   ├── imu_init.hpp
 │   ├── ring_buffer.hpp
+│   ├── sensor/cloud_ingest.hpp
 │   └── types.hpp
 ├── src/                         核心实现
 └── tests/                       单元与集成式测试

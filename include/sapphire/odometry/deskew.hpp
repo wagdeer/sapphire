@@ -42,8 +42,10 @@ struct DeskewResult {
 ///
 /// T_A_B maps coordinates in frame B into frame A.
 ///
-/// @param scan              input scan; point timestamps are relative seconds
-/// @param scan_stamp        absolute timestamp corresponding to timestamp zero
+/// Point timestamps are absolute seconds on the same clock as the IMU.
+/// The scan timeline is those timestamps; deskew does not add the header.
+///
+/// @param scan              input scan; per-point timestamps are absolute seconds
 /// @param imu_buf           bias-corrected IMU samples, oldest to newest
 /// @param prev_stamp        absolute time of the supplied initial state
 /// @param T_world_imu_prev  IMU pose in world at prev_stamp
@@ -51,18 +53,15 @@ struct DeskewResult {
 /// @param T_imu_lidar       calibrated LiDAR-to-IMU extrinsic
 /// @param gravity_world     world gravity acceleration, normally (0,0,-g)
 /// @param noise             IMU noise parameters
-/// @param time_offset       if true, align the earliest retained point to scan_stamp
 DeskewResult deskew(
     const PointCloudConstPtr& scan,
-    double scan_stamp,
     const ImuBuffer& imu_buf,
     double prev_stamp,
     const Isometry3d& T_world_imu_prev,
     const Eigen::Vector3d& v_world_prev,
     const Isometry3d& T_imu_lidar,
     const Eigen::Vector3d& gravity_world,
-    const ImuNoiseConfig& noise,
-    bool time_offset = false
+    const ImuNoiseConfig& noise
 );
 
 }  // namespace sapphire
