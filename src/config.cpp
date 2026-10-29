@@ -389,6 +389,10 @@ Config loadConfig(const std::filesystem::path& path) {
             root["pgo"]["lidar_rotation_sigma_rad"].value<double>()) {
         config.pgo.lidar_rotation_sigma_rad = *value;
     }
+    if (const auto value =
+            root["pgo"]["max_constraint_error_sigma"].value<double>()) {
+        config.pgo.max_constraint_error_sigma = *value;
+    }
     if (const auto value = root["pgo"]["update_period_sec"].value<double>()) {
         config.pgo.update_period_sec = *value;
     }
@@ -691,6 +695,9 @@ void validateConfig(const Config& config) {
     requireFinitePositive(
         config.pgo.lidar_rotation_sigma_rad,
         "pgo.lidar_rotation_sigma_rad");
+    requireFinitePositive(
+        config.pgo.max_constraint_error_sigma,
+        "pgo.max_constraint_error_sigma");
     requireFinitePositive(
         config.pgo.update_period_sec,
         "pgo.update_period_sec");

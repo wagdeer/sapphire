@@ -95,6 +95,136 @@ constexpr double kGaussNewtonWildfire = 0.001;
 /// override it. The installed GTSAM has no predictUpdateInfo; the stop
 /// check below is the full-graph threshold test that call uses.
 constexpr int kIsamRelinearizeIterations = 20;
+/// Nonlinear error above this is divergence. The intern batch optimizer
+/// aborts a trial at the same 1e12 cutoff.
+constexpr double kMaxGraphError = 1.0e12;
+
+struct ResidualSummary {
+    bool finite = false;
+    const char* reason = "not evaluated";
+    size_t constraints = 0;
+    double linear = 0.0;
+    double linear_ratio = 0.0;
+    double linear_sigma = 0.0;
+    std::uint64_t linear_from = 0;
+    std::uint64_t linear_to = 0;
+    double angular = 0.0;
+    double angular_ratio = 0.0;
+    double angular_sigma = 0.0;
+    std::uint64_t angular_from = 0;
+    std::uint64_t angular_to = 0;
+};
+
+bool estimateFinite(const gtsam::Values& values) {
+    for (const auto& key_value : values) {
+        const gtsam::Pose3 pose = key_value.value.cast<gtsam::Pose3>();
+        if (!pose.matrix().allFinite()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Largest per-edge residual / sigma on the optimized graph. Translation is
+/// the max absolute component of (measurement - relative pose), and rotation
+/// is the geodesic angle. Standard deviations are the square roots of the
+/// largest covariance diagonal in each block. GTSAM order is rotation then
+/// translation; the intern offset of 0 is translation-first and does not apply.
+ResidualSummary summarizeConstraintResiduals(
+    const gtsam::NonlinearFactorGraph& factors,
+    const gtsam::Values& estimate)
+{
+    ResidualSummary summary;
+    summary.finite = true;
+    summary.reason = "ok";
+    for (const auto& factor : factors) {
+        if (!factor) {
+            continue;
+        }
+        const auto* between =
+            dynamic_cast<const gtsam::BetweenFactor<gtsam::Pose3>*>(
+                factor.get());
+        if (between == nullptr) {
+            continue;
+        }
+        ++summary.constraints;
+
+        const gtsam::Key from_key = between->key1();
+        const gtsam::Key to_key = between->key2();
+        if (!estimate.exists(from_key) || !estimate.exists(to_key)) {
+            summary.finite = false;
+            summary.reason = "missing pose";
+            return summary;
+        }
+        const gtsam::Pose3 from = estimate.at<gtsam::Pose3>(from_key);
+        const gtsam::Pose3 to = estimate.at<gtsam::Pose3>(to_key);
+        const gtsam::Pose3 relative = from.inverse() * to;
+        const gtsam::Pose3& measured = between->measured();
+        if (!relative.matrix().allFinite() || !measured.matrix().allFinite()) {
+            summary.finite = false;
+            summary.reason = "non-finite residual";
+            return summary;
+        }
+
+        const Eigen::Vector3d translation_error =
+            measured.translation() - relative.translation();
+        const double linear = translation_error.cwiseAbs().maxCoeff();
+        const gtsam::Rot3 rotation_error =
+            relative.rotation().inverse() * measured.rotation();
+        const double angular = gtsam::Rot3::Logmap(rotation_error).norm();
+        if (!std::isfinite(linear) || !std::isfinite(angular)) {
+            summary.finite = false;
+            summary.reason = "non-finite residual";
+            return summary;
+        }
+
+        const auto gaussian =
+            std::dynamic_pointer_cast<gtsam::noiseModel::Gaussian>(
+                between->noiseModel());
+        if (!gaussian) {
+            summary.finite = false;
+            summary.reason = "non-gaussian constraint";
+            return summary;
+        }
+        const gtsam::Matrix covariance = gaussian->covariance();
+        if (covariance.rows() != 6 || covariance.cols() != 6
+            || !covariance.allFinite()) {
+            summary.finite = false;
+            summary.reason = "non-finite covariance";
+            return summary;
+        }
+        const double rotation_variance =
+            covariance.diagonal().head<3>().maxCoeff();
+        const double translation_variance =
+            covariance.diagonal().tail<3>().maxCoeff();
+        if (!(rotation_variance > 0.0) || !(translation_variance > 0.0)) {
+            summary.finite = false;
+            summary.reason = "non-positive variance";
+            return summary;
+        }
+        const double linear_sigma = std::sqrt(translation_variance);
+        const double angular_sigma = std::sqrt(rotation_variance);
+        const double linear_ratio = linear / linear_sigma;
+        const double angular_ratio = angular / angular_sigma;
+        const std::uint64_t from_id = gtsam::Symbol(from_key).index();
+        const std::uint64_t to_id = gtsam::Symbol(to_key).index();
+        if (linear_ratio > summary.linear_ratio) {
+            summary.linear = linear;
+            summary.linear_ratio = linear_ratio;
+            summary.linear_sigma = linear_sigma;
+            summary.linear_from = from_id;
+            summary.linear_to = to_id;
+        }
+        if (angular_ratio > summary.angular_ratio) {
+            summary.angular = angular;
+            summary.angular_ratio = angular_ratio;
+            summary.angular_sigma = angular_sigma;
+            summary.angular_from = from_id;
+            summary.angular_to = to_id;
+        }
+    }
+    return summary;
+}
 
 gtsam::Key poseKey(std::uint64_t id) {
     return gtsam::Symbol(kPoseSymbol, id);
@@ -327,6 +457,30 @@ private:
         double travel_distance = 0.0;
     };
 
+    /// A GICP-accepted loop that is not yet in the committed ISAM2.
+    /// `edge.source` is the query and `edge.target` is the historical frame.
+    struct PendingLoop {
+        PoseGraphEdge edge;
+        size_t source_points = 0;
+        size_t target_points = 0;
+        size_t inliers = 0;
+        double overlap = 0.0;
+        double fitness = 0.0;
+        double min_eigenvalue = 0.0;
+        Eigen::Matrix<double, 6, 1> info_diag =
+            Eigen::Matrix<double, 6, 1>::Zero();
+    };
+
+    struct LoopLinearization {
+        int passes = 0;
+        size_t still_moving = 0;
+        size_t moved_over_1cm = 0;
+        double max_shift = 0.0;
+        size_t max_id = 0;
+        double mid_shift = 0.0;
+        size_t mid_id = 0;
+    };
+
     void workerLoop() {
         const auto period =
             std::chrono::duration<double>(config_.update_period_sec);
@@ -381,18 +535,24 @@ private:
         gtsam::Values initial;
         bool odom_updated = false;
         if (buildOdometryGraph(odom_graph, initial)) {
-            updateIsam(odom_graph, initial, false);
+            optimized_ = updateIsam(
+                *isam2_, odom_graph, initial, false, nullptr);
             updateCorrection();
             odom_updated = true;
         }
 
-        const size_t loops_before = loop_edge_count_;
         gtsam::NonlinearFactorGraph loop_graph;
-        if (buildLoopEdges(loop_graph)) {
-            updateIsam(loop_graph, {}, true);
-            updateCorrection();
+        std::vector<PendingLoop> pending_loops;
+        bool loop_updated = false;
+        if (buildLoopEdges(loop_graph, pending_loops)) {
+            // Odometry is already in the committed ISAM2. The copy sees that
+            // update, then the loop factors only. A rejection deletes the copy.
+            if (tryCommitLoops(loop_graph, pending_loops)) {
+                updateCorrection();
+                loop_updated = true;
+            }
+            syncLoopStats();
         }
-        const bool loop_updated = loop_edge_count_ > loops_before;
 
         // Occupancy must never block correction/loop work above. Policy:
         //   odom  → cheap incremental append of new keyframes only
@@ -641,7 +801,9 @@ private:
         return alignment;
     }
 
-    bool buildLoopEdges(gtsam::NonlinearFactorGraph& graph) {
+    bool buildLoopEdges(
+        gtsam::NonlinearFactorGraph& graph,
+        std::vector<PendingLoop>& pending) {
         if (searched_loop_id_ >= frames_.size() || optimized_.empty()) {
             return false;
         }
@@ -723,32 +885,19 @@ private:
                 poseKey(query_id),
                 toGtsam(measurement),
                 loop_noise));
+            // Count and publish only after the residual trial accepts.
             // Visualization stores query → historical frame. The factor
             // above is historical frame → query.
-            loop_edges_.push_back({
-                query_id,
-                static_cast<size_t>(target_id),
-            });
-            ++loop_edge_count_;
-            spdlog::info(
-                "[pgo] loop detected: factor {} -> {} gaussian information, "
-                "points={}/{}, inliers={}, overlap={:.3f}, fitness={:.4f}, "
-                "min_eig={:.3e}, info_diag=[{:.4e}, {:.4e}, {:.4e}, "
-                "{:.4e}, {:.4e}, {:.4e}]",
-                target_id,
-                query_id,
-                alignment.source_points,
-                alignment.target_points,
-                alignment.inliers,
-                alignment.overlap,
-                alignment.fitness,
-                alignment.min_eigenvalue,
-                information(0, 0),
-                information(1, 1),
-                information(2, 2),
-                information(3, 3),
-                information(4, 4),
-                information(5, 5));
+            PendingLoop loop;
+            loop.edge = {query_id, static_cast<size_t>(target_id)};
+            loop.source_points = alignment.source_points;
+            loop.target_points = alignment.target_points;
+            loop.inliers = alignment.inliers;
+            loop.overlap = alignment.overlap;
+            loop.fitness = alignment.fitness;
+            loop.min_eigenvalue = alignment.min_eigenvalue;
+            loop.info_diag = information.diagonal();
+            pending.push_back(loop);
         }
         searched_loop_id_ = frames_.size();
         syncLoopStats();
@@ -760,14 +909,182 @@ private:
         stats_.loop_candidates = loop_candidate_count_;
         stats_.loop_registration_failures =
             loop_registration_failure_count_;
+        stats_.loop_residual_rejections = loop_residual_rejection_count_;
         stats_.last_loop_fitness = last_loop_fitness_;
+    }
+
+    void logCommittedLoop(const PendingLoop& loop) const {
+        spdlog::info(
+            "[pgo] loop detected: factor {} -> {} gaussian information, "
+            "points={}/{}, inliers={}, overlap={:.3f}, fitness={:.4f}, "
+            "min_eig={:.3e}, info_diag=[{:.4e}, {:.4e}, {:.4e}, "
+            "{:.4e}, {:.4e}, {:.4e}]",
+            loop.edge.target,
+            loop.edge.source,
+            loop.source_points,
+            loop.target_points,
+            loop.inliers,
+            loop.overlap,
+            loop.fitness,
+            loop.min_eigenvalue,
+            loop.info_diag(0),
+            loop.info_diag(1),
+            loop.info_diag(2),
+            loop.info_diag(3),
+            loop.info_diag(4),
+            loop.info_diag(5));
+    }
+
+    void logLinearization(
+        const LoopLinearization& linearization,
+        const ResidualSummary& residual) const
+    {
+        if (linearization.still_moving > 0) {
+            spdlog::warn(
+                "[pgo] loop relinearization stopped at {} passes "
+                "with {} variables still above threshold, "
+                "keyframes_moved>1cm={}, max_shift={:.3f}m at {}, "
+                "mid_shift={:.3f}m at {}, "
+                "max_linear_ratio={:.3f} ({}->{}), "
+                "max_angular_ratio={:.3f} ({}->{})",
+                linearization.passes,
+                linearization.still_moving,
+                linearization.moved_over_1cm,
+                linearization.max_shift,
+                linearization.max_id,
+                linearization.mid_shift,
+                linearization.mid_id,
+                residual.linear_ratio,
+                residual.linear_from,
+                residual.linear_to,
+                residual.angular_ratio,
+                residual.angular_from,
+                residual.angular_to);
+            return;
+        }
+        spdlog::info(
+            "[pgo] loop relinearization passes={}, "
+            "keyframes_moved>1cm={}, max_shift={:.3f}m at {}, "
+            "mid_shift={:.3f}m at {}, "
+            "max_linear_ratio={:.3f} ({}->{}), "
+            "max_angular_ratio={:.3f} ({}->{})",
+            linearization.passes,
+            linearization.moved_over_1cm,
+            linearization.max_shift,
+            linearization.max_id,
+            linearization.mid_shift,
+            linearization.mid_id,
+            residual.linear_ratio,
+            residual.linear_from,
+            residual.linear_to,
+            residual.angular_ratio,
+            residual.angular_from,
+            residual.angular_to);
+    }
+
+    /// Returns true only when the trial replaces the committed ISAM2.
+    /// The official graph, T_map_odom, and occupancy stay put on failure.
+    bool tryCommitLoops(
+        const gtsam::NonlinearFactorGraph& loop_graph,
+        const std::vector<PendingLoop>& pending)
+    {
+        std::unique_ptr<gtsam::ISAM2> trial;
+        gtsam::Values estimate;
+        LoopLinearization linearization;
+        ResidualSummary residual;
+        const char* reject_reason = nullptr;
+        try {
+            trial = std::make_unique<gtsam::ISAM2>(*isam2_);
+            estimate = updateIsam(
+                *trial, loop_graph, {}, true, &linearization);
+            if (!estimateFinite(estimate)) {
+                reject_reason = "non-finite pose";
+            } else {
+                const double error =
+                    trial->getFactorsUnsafe().error(estimate);
+                if (!std::isfinite(error) || std::abs(error) > kMaxGraphError) {
+                    reject_reason = "diverged graph error";
+                } else {
+                    residual = summarizeConstraintResiduals(
+                        trial->getFactorsUnsafe(), estimate);
+                    // Chain edges, loops already committed, and this trial.
+                    const size_t expected = estimate.empty()
+                        ? 0
+                        : (estimate.size() - 1)
+                            + loop_edge_count_
+                            + pending.size();
+                    if (residual.constraints != expected) {
+                        residual.finite = false;
+                        residual.reason = "incomplete constraint set";
+                    }
+                    if (!residual.finite) {
+                        reject_reason = residual.reason;
+                    } else if (
+                        residual.linear_ratio
+                            > config_.max_constraint_error_sigma
+                        || residual.angular_ratio
+                            > config_.max_constraint_error_sigma) {
+                        reject_reason =
+                            "constraint error above sigma limit";
+                    }
+                }
+            }
+        } catch (const std::exception& error) {
+            spdlog::warn(
+                "[pgo] loop trial failed: {} (discarded)",
+                error.what());
+            loop_residual_rejection_count_ += pending.size();
+            return false;
+        }
+
+        if (reject_reason != nullptr) {
+            spdlog::warn(
+                "[pgo] loop residual rejected: {} factor(s), reason={}, "
+                "linear {}->{} error={:.4f}m sigma={:.4f} ratio={:.3f}, "
+                "angular {}->{} error={:.4f}rad sigma={:.4f} ratio={:.3f}, "
+                "threshold={:.3f}, relinearization passes={}, "
+                "still_moving={}, keyframes_moved>1cm={}, "
+                "max_shift={:.3f}m at {}, mid_shift={:.3f}m at {}",
+                pending.size(),
+                reject_reason,
+                residual.linear_from,
+                residual.linear_to,
+                residual.linear,
+                residual.linear_sigma,
+                residual.linear_ratio,
+                residual.angular_from,
+                residual.angular_to,
+                residual.angular,
+                residual.angular_sigma,
+                residual.angular_ratio,
+                config_.max_constraint_error_sigma,
+                linearization.passes,
+                linearization.still_moving,
+                linearization.moved_over_1cm,
+                linearization.max_shift,
+                linearization.max_id,
+                linearization.mid_shift,
+                linearization.mid_id);
+            loop_residual_rejection_count_ += pending.size();
+            return false;
+        }
+
+        isam2_.swap(trial);
+        optimized_ = std::move(estimate);
+        for (const PendingLoop& loop : pending) {
+            loop_edges_.push_back(loop.edge);
+            ++loop_edge_count_;
+            logCommittedLoop(loop);
+        }
+        logLinearization(linearization, residual);
+        return true;
     }
 
     /// Keys whose linear delta still exceeds the per-axis threshold.
     /// Matches ISAM2's full relinearization check for a Symbol map:
     /// a component must be strictly larger than its threshold.
-    size_t keysNeedingRelinearization() const {
-        const gtsam::VectorValues& delta = isam2_->getDelta();
+    size_t keysNeedingRelinearization(const gtsam::ISAM2& isam) const {
+        const gtsam::VectorValues& delta = isam.getDelta();
         size_t count = 0;
         for (const auto& entry : delta) {
             const gtsam::Vector& value = entry.second;
@@ -787,13 +1104,15 @@ private:
         return count;
     }
 
-    void updateIsam(
+    gtsam::Values updateIsam(
+        gtsam::ISAM2& isam,
         const gtsam::NonlinearFactorGraph& graph,
         const gtsam::Values& initial,
-        bool force_relinearize)
+        bool force_relinearize,
+        LoopLinearization* linearization)
     {
         std::vector<Eigen::Vector3d> translation_before;
-        if (force_relinearize) {
+        if (linearization != nullptr) {
             translation_before.reserve(optimized_.size());
             for (size_t i = 0; i < optimized_.size(); ++i) {
                 translation_before.push_back(
@@ -803,71 +1122,48 @@ private:
 
         gtsam::ISAM2UpdateParams update_params;
         update_params.force_relinearize = force_relinearize;
-        isam2_->update(graph, initial, update_params);
+        isam.update(graph, initial, update_params);
 
         int passes = 1;
         while (passes < kIsamRelinearizeIterations
-               && keysNeedingRelinearization() > 0) {
-            isam2_->update(
+               && keysNeedingRelinearization(isam) > 0) {
+            isam.update(
                 gtsam::NonlinearFactorGraph(),
                 gtsam::Values(),
                 gtsam::ISAM2UpdateParams{});
             ++passes;
         }
-        optimized_ = isam2_->calculateEstimate();
-
-        if (!force_relinearize) {
-            return;
+        gtsam::Values estimate = isam.calculateEstimate();
+        if (linearization == nullptr) {
+            return estimate;
         }
-        const size_t still_moving = keysNeedingRelinearization();
-        size_t moved = 0;
-        double max_shift = 0.0;
-        size_t max_id = 0;
+
+        linearization->passes = passes;
+        linearization->still_moving = keysNeedingRelinearization(isam);
+        linearization->moved_over_1cm = 0;
+        linearization->max_shift = 0.0;
+        linearization->max_id = 0;
         const size_t comparable = std::min(
-            translation_before.size(), optimized_.size());
-        double mid_shift = 0.0;
-        const size_t mid_id = comparable / 2;
+            translation_before.size(), estimate.size());
+        linearization->mid_id = comparable / 2;
+        linearization->mid_shift = 0.0;
         for (size_t i = 0; i < comparable; ++i) {
             const double shift =
-                (fromGtsam(optimizedPose(i)).translation()
+                (fromGtsam(estimate.at<gtsam::Pose3>(poseKey(i))).translation()
                  - translation_before[i])
                     .norm();
             if (shift > 0.01) {
-                ++moved;
+                ++linearization->moved_over_1cm;
             }
-            if (shift > max_shift) {
-                max_shift = shift;
-                max_id = i;
+            if (shift > linearization->max_shift) {
+                linearization->max_shift = shift;
+                linearization->max_id = i;
             }
-            if (i == mid_id) {
-                mid_shift = shift;
+            if (i == linearization->mid_id) {
+                linearization->mid_shift = shift;
             }
         }
-        if (still_moving > 0) {
-            spdlog::warn(
-                "[pgo] loop relinearization stopped at {} passes "
-                "with {} variables still above threshold, "
-                "keyframes_moved>1cm={}, max_shift={:.3f}m at {}, "
-                "mid_shift={:.3f}m at {}",
-                passes,
-                still_moving,
-                moved,
-                max_shift,
-                max_id,
-                mid_shift,
-                mid_id);
-            return;
-        }
-        spdlog::info(
-            "[pgo] loop relinearization passes={}, "
-            "keyframes_moved>1cm={}, max_shift={:.3f}m at {}, "
-            "mid_shift={:.3f}m at {}",
-            passes,
-            moved,
-            max_shift,
-            max_id,
-            mid_shift,
-            mid_id);
+        return estimate;
     }
 
     gtsam::Pose3 optimizedPose(size_t id) const {
@@ -980,6 +1276,7 @@ private:
     size_t searched_loop_id_ = 0;
     size_t loop_candidate_count_ = 0;
     size_t loop_registration_failure_count_ = 0;
+    size_t loop_residual_rejection_count_ = 0;
     size_t loop_edge_count_ = 0;
     double last_loop_fitness_ = -1.0;
     std::vector<PoseGraphEdge> loop_edges_;

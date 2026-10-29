@@ -14,6 +14,9 @@ struct PoseGraphStats {
     size_t optimized_poses = 0;
     size_t loop_candidates = 0;
     size_t loop_registration_failures = 0;
+    /// Loop factors dropped because a trial optimization tore a binary edge
+    /// past max_constraint_error_sigma, or the trial itself diverged.
+    size_t loop_residual_rejections = 0;
     size_t loop_edges = 0;
     double last_loop_fitness = -1.0;
     double correction_translation = 0.0;

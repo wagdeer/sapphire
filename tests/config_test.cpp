@@ -135,6 +135,9 @@ void testProjectConfig() {
     expectNear(
         config.pgo.lidar_rotation_sigma_rad, 0.1,
         "PGO loop rotation sigma floor");
+    expectNear(
+        config.pgo.max_constraint_error_sigma, 3.0,
+        "PGO loop residual rejection threshold");
     expect(config.pgo.map_frame_stride == 3,
            "PGO sparse-map frame stride");
     expectNear(

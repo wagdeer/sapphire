@@ -238,6 +238,12 @@ struct Config {
         /// rotation first, translation second.
         double lidar_translation_sigma_m = 0.2;
         double lidar_rotation_sigma_rad = 0.1;
+        /// Drop a loop trial when any binary edge, after optimization on an
+        /// ISAM2 copy, exceeds this multiple of that edge's standard
+        /// deviation. Translation uses the largest absolute component;
+        /// rotation uses the geodesic angle. Intern name:
+        /// pose_graph.max_constraint_error_sigma.
+        double max_constraint_error_sigma = 3.0;
         double update_period_sec = 1.0;
         int map_frame_stride = 3;
         double map_voxel_size = 0.8;

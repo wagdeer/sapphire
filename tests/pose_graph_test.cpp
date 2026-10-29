@@ -135,11 +135,12 @@ void testLoopClosureAddsConstraint() {
     sapphire::PoseGraphBackend backend(config);
     const auto local = makeCornerCloud();
     // The loop target is not at the origin. The final scan observes that
-    // location, but its odometry estimate is 1.5 m farther along x. The
+    // location, but its odometry estimate is 0.5 m farther along x. The
     // offset is inside the 2 m GICP correspondence gate and the 2 m search
-    // radius. Using the registration pose itself as the between measurement
+    // radius, and after optimization it stays inside the 3-sigma residual
+    // gate. Using the registration pose itself as the between measurement
     // would push the query away from the target instead of toward it.
-    const double positions[] = {10.0, 12.0, 14.0, 16.0, 11.5};
+    const double positions[] = {10.0, 12.0, 14.0, 16.0, 10.5};
     for (int i = 0; i < 5; ++i) {
         sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
         pose.translation().x() = positions[i];
@@ -188,7 +189,7 @@ void testLoopClosureAddsConstraint() {
 
     const double target_x = snapshot.optimized_poses.front().translation().x();
     const double query_x = snapshot.optimized_poses.back().translation().x();
-    constexpr double odom_x = 11.5;
+    constexpr double odom_x = 10.5;
     expect(std::abs(target_x - 10.0) < 1e-3,
            "root prior must keep the historical keyframe in place");
     expect(query_x < odom_x - 1e-4,
@@ -209,10 +210,10 @@ void testLoopClosureAddsConstraint() {
 
 /// A long odometry chain whose only accepted loop is back to the root.
 /// Intermediate stamps sit inside the time gate, so the search cannot
-/// latch onto a neighbor of the return pose. The translation floor is
-/// tighter than the production 0.2 m so the loop information is comparable
-/// to a few dozen odometry edges; otherwise the chain hides the correction.
-/// Production defaults are unchanged.
+/// latch onto a neighbor of the return pose. The return offset and the
+/// translation floor are chosen so the optimized residual stays inside the
+/// 3-sigma gate, while the loop is still stiff enough to move a keyframe
+/// that is not an endpoint. Production defaults are unchanged.
 void testLoopRelinearizationMovesDistantKeyframe() {
     sapphire::Config::Pgo config;
     config.enabled = true;
@@ -225,11 +226,11 @@ void testLoopRelinearizationMovesDistantKeyframe() {
     config.target_frame_count = 0;
     config.source_voxel_size = 0.05;
     config.target_voxel_size = 0.05;
-    config.lidar_translation_sigma_m = 0.05;
+    config.lidar_translation_sigma_m = 0.02;
 
     constexpr int kOutbound = 40;
     constexpr double kStep = 0.5;
-    constexpr double kReturnX = 1.2;
+    constexpr double kReturnX = 0.6;
     constexpr int kDistant = 8;
 
     sapphire::PoseGraphBackend backend(config);
@@ -296,6 +297,132 @@ void testLoopRelinearizationMovesDistantKeyframe() {
            "relinearization must move a keyframe that is not a loop endpoint");
 }
 
+/// Registration succeeds, but the loop disagrees with a short odometry
+/// chain by many standard deviations. The trial must be discarded: no loop
+/// edge, and the committed poses stay on the frontend trajectory.
+/// A second return is added only after the first loop has been committed.
+/// The residual count must include that existing edge, or the next good
+/// loop is dropped as an incomplete constraint set.
+void testSecondLoopCommitsAfterFirst() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.05;
+    config.update_period_sec = 0.02;
+    config.loop_min_time_separation = 3.5;
+    config.loop_min_travel_distance = 1.0;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto local = makeCornerCloud();
+    const double first_positions[] = {10.0, 12.0, 14.0, 16.0, 10.5};
+    for (int i = 0; i < 5; ++i) {
+        sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+        pose.translation().x() = first_positions[i];
+        backend.addFrame(
+            transformCloud(local, pose),
+            pose,
+            static_cast<double>(i));
+    }
+
+    for (int attempt = 0;
+         attempt < 200 && backend.stats().loop_edges == 0;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    expect(backend.stats().loop_edges == 1,
+           "first return must commit one loop before the next query");
+
+    {
+        sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+        pose.translation().x() = 10.4;
+        backend.addFrame(transformCloud(local, pose), pose, 5.0);
+    }
+    for (int attempt = 0;
+         attempt < 200 && backend.stats().loop_edges < 2;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.loop_edges == 2,
+           "a later in-gate loop must commit on top of the existing edge");
+    expect(stats.loop_residual_rejections == 0,
+           "the second loop must not be dropped as an incomplete graph");
+}
+
+void testInconsistentLoopLeavesCommittedGraph() {
+    sapphire::Config::Pgo config;
+    config.enabled = true;
+    config.keyframe_distance = 0.05;
+    config.update_period_sec = 0.02;
+    config.loop_min_time_separation = 1.5;
+    config.loop_min_travel_distance = 1.0;
+    config.loop_search_radius = 2.0;
+    config.loop_search_stride = 1;
+    config.target_frame_count = 0;
+    config.source_voxel_size = 0.05;
+    config.target_voxel_size = 0.05;
+    config.lidar_translation_sigma_m = 0.05;
+
+    sapphire::PoseGraphBackend backend(config);
+    const auto local = makeCornerCloud();
+    const double positions[] = {0.0, 3.0, 1.5};
+    for (int i = 0; i < 3; ++i) {
+        sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+        pose.translation().x() = positions[i];
+        backend.addFrame(
+            transformCloud(local, pose),
+            pose,
+            static_cast<double>(i));
+    }
+
+    for (int attempt = 0;
+         attempt < 400
+             && backend.stats().loop_residual_rejections == 0
+             && backend.stats().loop_edges == 0;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    const sapphire::PoseGraphStats stats = backend.stats();
+    expect(stats.optimized_poses == 3, "odometry must still enter ISAM2");
+    expect(stats.loop_candidates >= 1,
+           "inconsistent return must produce a loop candidate");
+    expect(stats.loop_registration_failures == 0,
+           "GICP itself must accept the drifted corner cloud");
+    expect(stats.loop_residual_rejections >= 1,
+           "a loop past 3 sigma must be discarded");
+    expect(stats.loop_edges == 0,
+           "a rejected trial must not add a loop edge");
+    expect(
+        backend.T_map_odom().matrix().isApprox(
+            Eigen::Matrix4d::Identity(), 1e-3),
+        "rejected loop must leave the published correction unchanged");
+
+    backend.requestSnapshot();
+    for (int attempt = 0;
+         attempt < 200 && backend.snapshot().optimized_poses.size() < 3;
+         ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const sapphire::PoseGraphSnapshot snapshot = backend.snapshot();
+    expect(snapshot.optimized_poses.size() == 3,
+           "snapshot must still contain the odometry poses");
+    expect(snapshot.loop_edges.empty(),
+           "snapshot must not draw a rejected loop");
+    for (int i = 0; i < 3; ++i) {
+        expect(
+            std::abs(snapshot.optimized_poses[i].translation().x()
+                     - positions[i])
+                < 1e-3,
+            "rejected loop must not move a committed keyframe");
+    }
+}
+
 void testSparseCloudRejectsLoop() {
     sapphire::Config::Pgo config;
     config.enabled = true;
@@ -343,6 +470,8 @@ int main() {
     testOdometryOnlyGraphPreservesFrontendFrame();
     testLoopClosureAddsConstraint();
     testLoopRelinearizationMovesDistantKeyframe();
+    testSecondLoopCommitsAfterFirst();
+    testInconsistentLoopLeavesCommittedGraph();
     testSparseCloudRejectsLoop();
     std::cout << "All pose graph tests passed\n";
     return EXIT_SUCCESS;
