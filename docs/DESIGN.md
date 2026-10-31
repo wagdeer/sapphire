@@ -687,7 +687,7 @@ struct RegistrationResult {
 | max_correspondence_dist | 1.0 | 最大对应距离 (m) |
 | k_correspondences | 20 | 最近邻对应数 |
 | min_num_points | 100 | 最小点数 |
-| max_correction_trans | 1.0 | 拒绝阈值 (m) |
+| max_correction_trans | 1.0 | 传感器位移拒绝阈值 (m)，不是 C 的平移模长 |
 | max_correction_rot_deg | 20.0 | 拒绝阈值 (deg) |
 
 ### 拒绝逻辑

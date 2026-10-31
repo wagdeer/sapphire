@@ -1,0 +1,184 @@
+# S3E Laboratory_1, robot Carol (DCL-SLAM dcl_lio_sam_vlp16_params_c.yaml).
+# Algorithm knobs match sapphire_graco.toml. Sensor values come from that
+# LIO-SAM profile and /data/s3e/S3E_Dataset/S3Ev1/S3E_Laboratory_1.
+#
+#   ros2 launch sapphire_ros2 sapphire.launch.py \
+#     config_file:=/workspace/src/sapphire/cfg/sapphire_s3e_carol.toml \
+#     lidar_topic:=/Carol/velodyne_points \
+#     imu_topic:=/Carol/imu/data
+#
+# Carol is still for at least 12 s. IMU is 100 Hz.
+# Combined gyro_σ while still is ≈ 0.017 rad/s (per-axis ≈ 0.010), so the
+# Graco 0.005 gate never converges on this IMU. Timeout is 2.5 s so a miss
+# still uses the stationary prefix. |a| ≈ 9.767 m/s².
+
+[imu]
+gravity = 9.79172227
+
+[imu.init]
+convergence_gyro_std = 0.025
+convergence_accel_std = 0.05
+timeout_sec = 2.5
+check_interval_sec = 0.4
+min_samples = 100
+
+[imu.noise]
+# lio_sam imuAccNoise / imuGyrNoise / imuAccBiasN / imuGyrBiasN.
+# LIO-SAM stores these as the continuous-time sigmas passed to GTSAM.
+# Sapphire uses the same numbers as noise density and bias random walk.
+accel_noise_density = 1.1692699862662088e-02
+gyro_noise_density = 1.0216647894856925e-02
+accel_random_walk = 2.0413058951725431e-04
+gyro_random_walk = 8.4514305618965801e-05
+accel_bias_rw_sigma = 2.0413058951725431e-04
+gyro_bias_rw_sigma = 8.4514305618965801e-05
+
+[odometry]
+voxel_size = 0.25
+fusion = "eskf"
+
+# LiDAR-frame body filter, same cube as the Graco VLP-16 profile.
+[odometry.crop_box]
+min_x = -1.0
+min_y = -1.0
+min_z = -1.0
+max_x = 1.0
+max_y = 1.0
+max_z = 1.0
+
+[odometry.observer]
+position_gain = 4.5
+velocity_gain = 11.25
+orientation_gain = 4.0
+accel_bias_gain = 2.25
+gyro_bias_gain = 1.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
+
+[odometry.eskf]
+sigma_rotation = 0.02
+sigma_translation = 0.05
+icp_covariance_scale = 25.0
+use_hessian = true
+hessian_min_information = 1e-6
+hessian_max_condition = 10000.0
+hessian_degenerate_sigma = 1.0
+hessian_max_sigma = 10.0
+# Retain registration hard gates; collect NIS before enabling a statistical gate.
+mahalanobis_threshold = -1.0
+# Pose uses the bounded Hessian observability gain. Velocity keeps the
+# validated observer gain during stage 1, projected through the same
+# observability so weak geometry cannot inject a full correction.
+inject_full_pose = false
+inject_directional_pose = true
+velocity_correction_gain = 8.0
+# Bias remains frozen during pose/velocity bring-up. Its covariance RW is active.
+bias_update_scale = 0.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
+# Bring-up starts uncertain enough for the first accepted scan to establish
+# the posterior instead of locking the filter to the stationary initializer.
+init_sigma_theta = 0.1
+init_sigma_velocity = 0.5
+init_sigma_position = 0.5
+
+[odometry.submap]
+splitting_distance = 1.5
+splitting_rotation = 0.7853981633974483
+max_keyframes = 10
+voxel_size = 0.25
+
+[registration]
+type = "VGICP"
+
+[registration.gicp]
+max_iterations = 32
+transformation_epsilon = 0.01
+rotation_epsilon = 0.01
+# VLP-16 ring spacing is ~0.35 m at 10 m and ~0.7 m at 20 m.
+max_correspondence_dist = 1.0
+k_correspondences = 16
+min_num_points = 64
+max_correction_trans = 1.0
+max_correction_rot_deg = 20.0
+
+[registration.vgicp]
+voxel_resolution = 1.0
+
+[pgo]
+enabled = true
+keyframe_distance = 0.5
+keyframe_rotation = 0.3
+loop_min_time_separation = 30.0
+loop_min_travel_distance = 30.0
+loop_max_rotation = 3.14
+loop_search_radius = 30.0
+loop_search_stride = 1
+target_frame_count = 50
+source_voxel_size = 0.4
+target_voxel_size = 0.4
+# Query cloud only. Graph nodes stay at keyframe_distance.
+# Keyframes within this odometry travel are transformed into the query frame.
+source_travel_radius_m = 10.0
+# Drop points beyond this range in the scan that observed them, not after
+# they have been moved into the query frame.
+# Same VLP-16 cap as sapphire_graco.toml.
+source_max_range_m = 40.0
+# Stationary cap. Travel does not grow while spinning in place.
+source_max_frames = 256
+lidar_min_inliers = 64
+lidar_max_iterations = 32
+lidar_max_correspondence_m = 2.0
+lidar_min_overlap = 0.5
+lidar_max_fitness_m2 = 0.5
+lidar_translation_sigma_m = 0.2
+lidar_rotation_sigma_rad = 0.1
+# Drop the trial if any binary edge exceeds this many standard deviations.
+max_constraint_error_sigma = 3.0
+update_period_sec = 1.0
+map_frame_stride = 3
+map_voxel_size = 0.8
+
+[pgo.occupancy]
+enabled = false
+resolution = 0.1
+h_clearance = 0.9
+ground_margin = 0.3
+clear_height_eps = 0.1
+d_max = 6.0
+occ_threshold = 0.3
+usable_range = 40.0
+min_range = 0.5
+cloud_voxel_size = 0.4
+margin = 5.0
+
+# Velodyne driver: float32 field "time", seconds relative to the cloud header.
+# Measured span on Carol is 0.100 s (10 Hz), from about -0.098 to +0.001.
+[sensor.lidar]
+time_field = "time"
+time_unit = "s"
+time_ref = "relative"
+max_scan_duration = 0.2
+header_tolerance = 0.5
+require_point_time = true
+
+# Bag linear_acceleration is already m/s² (|mean| ≈ 9.767). Gyro is rad/s.
+[sensor.imu]
+accel_unit = "m_s2"
+
+# lio_sam extrinsicRot / extrinsicTrans, T_lb (lidar -> imu), row-major.
+# Maps a LiDAR point into the IMU frame:
+#   p_imu = R * p_lidar + t
+# Rotation is 1.95 deg; quaternion is xyzw.
+[extrinsics.T_imu_lidar]
+translation = [0.007784371906518, -0.204024496061082, -0.029045411719168]
+rotation_xyzw = [-0.00824618, 0.01007824, 0.01099053, 0.99985481]
+
+# TUM RGB-D file written once when sapphire_ros exits:
+#   timestamp tx ty tz qx qy qz qw
+# qx qy qz qw is the estimated orientation as stored. It is not reordered
+# to wxyz and not replaced. Leave trajectory_dir empty to skip the dump.
+#   trajectory_dir = "/workspace/eval/estimates"
+[output]
+trajectory_dir = "/workspace/eval/estimates"
+trajectory_file = "sapphire/S3E_Library_1/carol.tum"

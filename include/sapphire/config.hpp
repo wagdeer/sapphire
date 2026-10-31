@@ -14,4 +14,8 @@ Config loadConfig(const std::filesystem::path& path);
 /// Throws std::invalid_argument when a value is invalid.
 void validateConfig(const Config& config);
 
+/// Join output.trajectory_dir and output.trajectory_file.
+/// Empty when the dump is disabled.
+std::filesystem::path trajectoryOutputPath(const Config& config);
+
 }  // namespace sapphire

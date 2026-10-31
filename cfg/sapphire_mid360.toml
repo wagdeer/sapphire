@@ -129,7 +129,7 @@ map_voxel_size = 0.8
 #   d >= -h_clearance + ground_margin
 # so the near-ground slice is skipped (not occupied / does not lock d_min).
 # Too small h_clearance (e.g. 0.15) only keeps a thin slice at the lidar.
-enabled = true
+enabled = false
 resolution = 0.1
 h_clearance = 2.0
 ground_margin = 0.5
@@ -156,3 +156,9 @@ margin = 5.0
 [extrinsics.T_imu_lidar]
 translation = [0.0, 0.0, 0.0]
 rotation_xyzw = [0.0, 0.0, 0.0, 1.0]
+
+# TUM RGB-D dump on exit: timestamp tx ty tz qx qy qz qw.
+# Leave trajectory_dir empty to skip.
+[output]
+trajectory_dir = ""
+trajectory_file = "trajectory.tum"

@@ -1,5 +1,7 @@
 #include <sapphire/odometry/registration.hpp>
 
+#include <Eigen/Geometry>
+
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -62,6 +64,34 @@ sapphire::PointCloud::Ptr makeAsymmetricCloud(float x_offset = 0.0f) {
     cloud->height = 1;
     cloud->is_dense = true;
     return cloud;
+}
+
+sapphire::PointCloud::Ptr transformCloud(
+    const sapphire::PointCloud& cloud,
+    const sapphire::Isometry3d& pose)
+{
+    auto out = std::make_shared<sapphire::PointCloud>();
+    out->points.reserve(cloud.size());
+    const sapphire::Isometry3f pose_f = pose.cast<float>();
+    for (const sapphire::Point& source : cloud.points) {
+        sapphire::Point point = source;
+        point.getVector3fMap() = pose_f * source.getVector3fMap();
+        point.data[3] = 1.0f;
+        out->points.push_back(point);
+    }
+    out->width = out->points.size();
+    out->height = 1;
+    out->is_dense = true;
+    return out;
+}
+
+sapphire::Isometry3d poseAt(double x, double yaw_rad) {
+    sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
+    pose.translation() = sapphire::Vector3d(x, 0.0, 0.0);
+    pose.linear() =
+        Eigen::AngleAxisd(yaw_rad, sapphire::Vector3d::UnitZ())
+            .toRotationMatrix();
+    return pose;
 }
 
 sapphire::RegistrationConfig makeConfig() {
@@ -127,6 +157,66 @@ void testExcessiveCorrectionIsRejected() {
            "rejected registration must expose identity correction");
 }
 
+void testSensorYawFarFromOriginIsAccepted() {
+    auto config = makeConfig();
+    config.min_num_points = 30;
+    config.max_correspondence_dist = 1.0;
+    config.max_correction_trans = 1.0;
+    config.max_correction_rot_deg = 20.0;
+
+    const sapphire::Isometry3d T_true = poseAt(100.0, 0.0);
+    const double yaw = 1.0 * M_PI / 180.0;
+    const sapphire::Isometry3d T_prior = poseAt(100.0, yaw);
+    const auto local = makeAsymmetricCloud();
+
+    sapphire::Registration registration(config, "VGICP", 0.5);
+    registration.setTarget(transformCloud(*local, T_true));
+    registration.setSource(transformCloud(*local, T_prior));
+    const auto result = registration.align(T_prior);
+
+    expect(result.converged,
+           "VGICP should converge on a 1 degree sensor yaw");
+    expect(result.attempted_trans_m > 1.0,
+           "lever arm at 100 m must exceed 1 m, actual "
+               + std::to_string(result.attempted_trans_m));
+    expect(result.attempted_sensor_trans_m < 0.2,
+           "sensor displacement of a pure yaw must stay under the gate, actual "
+               + std::to_string(result.attempted_sensor_trans_m));
+    expect(result.accepted,
+           "a 1 degree yaw about the sensor at 100 m must be accepted");
+    expect(
+        (result.T_world_lidar.translation() - T_true.translation()).norm()
+            < 0.05,
+        "accepted yaw correction must recover the sensor position");
+}
+
+void testSensorTranslationFarFromOriginIsRejected() {
+    auto config = makeConfig();
+    config.max_correspondence_dist = 2.0;
+    config.max_correction_trans = 0.1;
+
+    const sapphire::Isometry3d T_true = poseAt(100.0, 0.0);
+    sapphire::Isometry3d T_prior = poseAt(100.0, 0.0);
+    T_prior.translation().x() += 0.2;
+    const auto local = makeCloud();
+
+    sapphire::Registration registration(config);
+    registration.setTarget(transformCloud(*local, T_true));
+    registration.setSource(transformCloud(*local, T_prior));
+    const auto result = registration.align(T_prior);
+
+    expect(result.converged,
+           "GICP should converge before the sensor translation gate");
+    expect(result.attempted_sensor_trans_m > 0.1,
+           "sensor displacement must exceed the gate, actual "
+               + std::to_string(result.attempted_sensor_trans_m));
+    expect(!result.accepted,
+           "a sensor translation beyond the gate far from the origin must be rejected");
+    expect(result.T_correction.matrix().isApprox(
+               Eigen::Matrix4d::Identity(), 1e-12),
+           "rejected registration must expose identity correction");
+}
+
 }  // namespace
 
 int main() {
@@ -134,6 +224,8 @@ int main() {
     testTranslationIsRecovered();
     testVgicpTranslationIsRecovered();
     testExcessiveCorrectionIsRejected();
+    testSensorYawFarFromOriginIsAccepted();
+    testSensorTranslationFarFromOriginIsRejected();
     std::cout << "All registration tests passed\n";
     return EXIT_SUCCESS;
 }

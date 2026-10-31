@@ -263,6 +263,12 @@ void testSensorLidarDefaultsWithoutSection() {
            "missing sensor.lidar does not require point time");
     expect(config.sensor.imu.accel_unit == "auto",
            "missing sensor.imu keeps accel_unit auto");
+    expect(config.output.trajectory_dir.empty(),
+           "missing output keeps the TUM dump disabled");
+    expect(config.output.trajectory_file == "trajectory.tum",
+           "missing output keeps the default TUM file name");
+    expect(sapphire::trajectoryOutputPath(config).empty(),
+           "disabled dump has no output path");
 }
 
 void testExplicitAccelUnit() {
@@ -291,6 +297,44 @@ void testInvalidAccelUnitRejected() {
     expect(threw, "unknown accel_unit must be rejected");
 }
 
+void testTrajectoryOutputPath() {
+    const auto path = writeConfig(
+        "sapphire_config_trajectory_output.toml",
+        validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]")
+            + "[output]\n"
+              "trajectory_dir = \"/tmp/estimates\"\n"
+              "trajectory_file = \"sapphire/S3E_Dormitory_1/alpha.tum\"\n");
+    const auto config = sapphire::loadConfig(path);
+    std::filesystem::remove(path);
+    expect(config.output.trajectory_dir == "/tmp/estimates",
+           "output.trajectory_dir must be parsed");
+    expect(
+        config.output.trajectory_file == "sapphire/S3E_Dormitory_1/alpha.tum",
+        "output.trajectory_file must be parsed");
+    expect(
+        sapphire::trajectoryOutputPath(config)
+            == std::filesystem::path(
+                "/tmp/estimates/sapphire/S3E_Dormitory_1/alpha.tum"),
+        "TUM path joins the configured directory and file");
+}
+
+void testTrajectoryFileMustStayRelative() {
+    const auto path = writeConfig(
+        "sapphire_config_bad_trajectory_file.toml",
+        validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]")
+            + "[output]\n"
+              "trajectory_dir = \"/tmp/estimates\"\n"
+              "trajectory_file = \"../alpha.tum\"\n");
+    bool threw = false;
+    try {
+        (void)sapphire::loadConfig(path);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    std::filesystem::remove(path);
+    expect(threw, "trajectory_file must not escape trajectory_dir");
+}
+
 void testMissingFieldRejected() {
     const auto path = writeConfig(
         "sapphire_config_missing_field.toml",
@@ -311,6 +355,8 @@ int main() {
     testSensorLidarDefaultsWithoutSection();
     testExplicitAccelUnit();
     testInvalidAccelUnitRejected();
+    testTrajectoryOutputPath();
+    testTrajectoryFileMustStayRelative();
     testProjectConfig();
     testDirectionalEskfProfile();
     testQuaternionNormalization();

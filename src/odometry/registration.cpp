@@ -68,22 +68,33 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
     const Eigen::Isometry3d T_correction(
         T_corr_f.cast<double>());
 
-    // Rejection check (DLIO-compatible)
+    // C is a world-frame rigid motion. ||C.translation()|| includes the lever
+    // arm of a rotation about the sensor once the pose leaves the origin.
+    // Gate the motion of the sensor pose, T_measured = C * T_prior.
     const bool finite = T_correction.matrix().allFinite()
         && std::isfinite(reg_result.error);
-    double corr_trans_m = std::numeric_limits<double>::infinity();
+    double lever_trans_m = std::numeric_limits<double>::infinity();
+    double sensor_trans_m = std::numeric_limits<double>::infinity();
     double corr_rot_deg = std::numeric_limits<double>::infinity();
     if (finite) {
-        corr_trans_m = T_correction.translation().norm();
+        lever_trans_m = T_correction.translation().norm();
+        const Eigen::Vector3d p_prior = T_prior.translation();
+        const Eigen::Vector3d p_measured =
+            T_correction.rotation() * p_prior + T_correction.translation();
+        sensor_trans_m = (p_measured - p_prior).norm();
         corr_rot_deg =
             lie::SO3d::log(lie::SO3d(T_correction.rotation())).norm()
             * (180.0 / M_PI);
     }
 
+    result.attempted_trans_m = lever_trans_m;
+    result.attempted_sensor_trans_m = sensor_trans_m;
+    result.attempted_rot_deg = corr_rot_deg;
+
     bool accepted = converged && finite
         && reg_result.num_inliers
             >= static_cast<size_t>(cfg_.min_num_points);
-    if (corr_trans_m > cfg_.max_correction_trans) {
+    if (sensor_trans_m > cfg_.max_correction_trans) {
         accepted = false;
     }
     if (corr_rot_deg > cfg_.max_correction_rot_deg) {
@@ -92,13 +103,14 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
     if (!accepted) {
         spdlog::warn(
             "[registration] {} rejected: converged={} finite={} "
-            "inliers={}/{} trans={:.3f}m rot={:.1f}deg",
+            "inliers={}/{} lever={:.3f}m sensor={:.3f}m rot={:.1f}deg",
             type_,
             converged,
             finite,
             reg_result.num_inliers,
             cfg_.min_num_points,
-            corr_trans_m,
+            lever_trans_m,
+            sensor_trans_m,
             corr_rot_deg);
     }
 

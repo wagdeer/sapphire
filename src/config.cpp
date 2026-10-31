@@ -81,6 +81,25 @@ void requireFinitePositive(double value, const char* name) {
     }
 }
 
+void requireRelativeTrajectoryFile(const std::string& file) {
+    const std::filesystem::path path(file);
+    const bool has_parent_escape = [&path]() {
+        for (const std::filesystem::path& part : path) {
+            if (part == "..") {
+                return true;
+            }
+        }
+        return false;
+    }();
+    if (file.empty() || path.is_absolute() || !path.has_filename()
+        || path.filename() == "." || path.filename() == ".."
+        || has_parent_escape) {
+        throw std::invalid_argument(
+            "output.trajectory_file must be a relative path inside "
+            "output.trajectory_dir");
+    }
+}
+
 void requireChoice(
     const std::string& value,
     const char* name,
@@ -503,6 +522,14 @@ Config loadConfig(const std::filesystem::path& path) {
             root["sensor"]["imu"]["accel_unit"].value<std::string>()) {
         config.sensor.imu.accel_unit = *value;
     }
+    if (const auto value =
+            root["output"]["trajectory_dir"].value<std::string>()) {
+        config.output.trajectory_dir = *value;
+    }
+    if (const auto value =
+            root["output"]["trajectory_file"].value<std::string>()) {
+        config.output.trajectory_file = *value;
+    }
 
     const auto extrinsics = root["extrinsics"]["T_imu_lidar"];
     const Eigen::Vector3d translation = requiredVector3(
@@ -839,6 +866,7 @@ void validateConfig(const Config& config) {
         config.sensor.imu.accel_unit,
         "sensor.imu.accel_unit",
         {"auto", "g", "m_s2"});
+    requireRelativeTrajectoryFile(config.output.trajectory_file);
 
     const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;
     if (!extrinsic.matrix().allFinite()) {
@@ -852,6 +880,14 @@ void validateConfig(const Config& config) {
         throw std::invalid_argument(
             "extrinsics.T_imu_lidar rotation must be a proper rotation");
     }
+}
+
+std::filesystem::path trajectoryOutputPath(const Config& config) {
+    if (config.output.trajectory_dir.empty()) {
+        return {};
+    }
+    return std::filesystem::path(config.output.trajectory_dir)
+        / config.output.trajectory_file;
 }
 
 }  // namespace sapphire

@@ -61,6 +61,7 @@ endif()
 # Library
 add_library(sapphire STATIC
     src/config.cpp
+    src/io/tum.cpp
     src/backend/pose_graph.cpp
     src/mapping/occupancy_grid.cpp
     src/odometry/pipeline.cpp
@@ -100,6 +101,13 @@ if(BUILD_TESTING)
     )
     sapphire_enable_release_ipo(sapphire_cloud_ingest_test)
     add_test(NAME sapphire_cloud_ingest_test COMMAND sapphire_cloud_ingest_test)
+
+    add_executable(sapphire_tum_test
+        tests/tum_test.cpp
+    )
+    target_link_libraries(sapphire_tum_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_tum_test)
+    add_test(NAME sapphire_tum_test COMMAND sapphire_tum_test)
 
     add_executable(sapphire_config_test
         tests/config_test.cpp

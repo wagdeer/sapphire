@@ -108,7 +108,9 @@ struct RegistrationConfig {
     double max_correspondence_dist   = 0.5;       // m
     int    k_correspondences         = 16;
     int    min_num_points            = 64;
-    double max_correction_trans      = 1.0;       // m — reject if larger
+    /// Sensor displacement of C * T_prior, in meters. Not ||C.translation()||:
+    /// a yaw about the sensor far from the origin puts the lever arm there.
+    double max_correction_trans      = 1.0;
     double max_correction_rot_deg    = 20.0;      // deg — reject if larger
 };
 
@@ -119,6 +121,14 @@ struct RegistrationResult {
     bool    converged      = false;
     size_t  num_inliers    = 0;
     bool    accepted       = false;   // false if correction was rejected
+    /// Solver correction before the accept/reject gate. Identity is stored in
+    /// T_correction when the gate rejects, so these keep the attempt visible.
+    /// attempted_trans_m is ||C.translation()|| (lever arm about the world
+    /// origin). attempted_sensor_trans_m is the displacement of the sensor
+    /// pose and is what max_correction_trans compares.
+    double  attempted_trans_m = 0.0;
+    double  attempted_sensor_trans_m = 0.0;
+    double  attempted_rot_deg = 0.0;
     /// Final GICP information matrix from small_gicp, order [rx,ry,rz,tx,ty,tz].
     Eigen::Matrix<double, 6, 6> hessian = Eigen::Matrix<double, 6, 6>::Zero();
     bool    hessian_valid  = false;
@@ -308,6 +318,15 @@ struct Config {
             std::string accel_unit = "auto";
         } imu;
     } sensor;
+
+    /// Optional TUM dump written once when the ROS node exits.
+    /// An empty trajectory_dir disables it. trajectory_file is relative to
+    /// that directory and may include dataset folders, for example
+    /// "sapphire/S3E_Dormitory_1/alpha.tum".
+    struct Output {
+        std::string trajectory_dir;
+        std::string trajectory_file = "trajectory.tum";
+    } output;
 };
 
 }  // namespace sapphire

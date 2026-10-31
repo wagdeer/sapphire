@@ -595,6 +595,46 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
         }
     }
 
+    {
+        const Eigen::Vector3d p = T_world_lidar_out.translation();
+        const Eigen::Matrix3d R = T_world_lidar_out.rotation();
+        const double yaw_deg =
+            std::atan2(R(1, 0), R(0, 0)) * (180.0 / M_PI);
+        const double injected_m =
+            (p - deskewed.T_world_lidar_ref.translation()).norm();
+        spdlog::info(
+            "[trace] n={} deskew={} pts={} inl={} acc={} fus={} "
+            "try={:.3f}m sens={:.3f}m rot={:.1f}deg inj={:.3f}m "
+            "v={:.2f} ({:.2f},{:.2f},{:.2f}) "
+            "p={:.2f},{:.2f},{:.2f} yaw={:.1f} "
+            "ba={:.3f},{:.3f},{:.3f} bg={:.4f},{:.4f},{:.4f} kf={}",
+            registration_attempt_count_,
+            static_cast<int>(deskewed.status),
+            registration_source->size(),
+            artifacts.result.num_inliers,
+            artifacts.result.accepted ? 1 : 0,
+            fusion_accepted ? 1 : 0,
+            artifacts.result.attempted_trans_m,
+            artifacts.result.attempted_sensor_trans_m,
+            artifacts.result.attempted_rot_deg,
+            injected_m,
+            fused_state.v_world.norm(),
+            fused_state.v_world.x(),
+            fused_state.v_world.y(),
+            fused_state.v_world.z(),
+            p.x(),
+            p.y(),
+            p.z(),
+            yaw_deg,
+            fused_accel_bias.x(),
+            fused_accel_bias.y(),
+            fused_accel_bias.z(),
+            fused_gyro_bias.x(),
+            fused_gyro_bias.y(),
+            fused_gyro_bias.z(),
+            keyframeCount());
+    }
+
     if (fusion_accepted) {
         maybeUpdateSubmapTarget(deskewed, T_world_lidar_out, cloud_out);
     }
