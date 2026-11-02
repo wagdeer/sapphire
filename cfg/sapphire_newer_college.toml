@@ -1,0 +1,150 @@
+# Newer College 2020: Ouster OS1-64 + built-in Ouster IMU.
+# Calibration:
+#   kalibr_output/ouster_imu_lidar_transforms.yaml
+# Topic/time layout:
+#   /os1_cloud_node/points: xyz + uint32 "t" nanoseconds relative to header
+#   /os1_cloud_node/imu: 100 Hz, m/s^2 and rad/s
+
+[imu]
+gravity = 9.80665
+
+[imu.init]
+convergence_gyro_std = 0.008
+convergence_accel_std = 0.10
+timeout_sec = 5.0
+check_interval_sec = 0.5
+min_samples = 100
+
+[imu.noise]
+accel_noise_density = 0.001249
+gyro_noise_density = 0.000208
+accel_random_walk = 0.000106
+gyro_random_walk = 0.000004
+accel_bias_rw_sigma = 0.000106
+gyro_bias_rw_sigma = 0.000004
+
+[odometry]
+voxel_size = 0.10
+fusion = "eskf"
+
+[odometry.crop_box]
+min_x = -1.0
+min_y = -1.0
+min_z = -1.0
+max_x = 1.0
+max_y = 1.0
+max_z = 1.0
+
+[odometry.observer]
+position_gain = 4.5
+velocity_gain = 11.25
+orientation_gain = 4.0
+accel_bias_gain = 2.25
+gyro_bias_gain = 1.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
+
+[odometry.eskf]
+sigma_rotation = 0.02
+sigma_translation = 0.05
+icp_covariance_scale = 25.0
+use_hessian = true
+hessian_min_information = 1e-6
+hessian_max_condition = 10000.0
+hessian_degenerate_sigma = 1.0
+hessian_max_sigma = 10.0
+mahalanobis_threshold = -1.0
+inject_full_pose = false
+inject_directional_pose = true
+velocity_correction_gain = 8.0
+bias_update_scale = 0.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
+init_sigma_theta = 0.1
+init_sigma_velocity = 0.5
+init_sigma_position = 0.5
+
+[odometry.submap]
+splitting_distance = 1.0
+splitting_rotation = 0.3
+max_keyframes = 10
+voxel_size = 0.10
+
+[registration]
+type = "VGICP"
+
+[registration.gicp]
+max_iterations = 32
+transformation_epsilon = 0.01
+rotation_epsilon = 0.01
+max_correspondence_dist = 1.0
+k_correspondences = 16
+min_num_points = 64
+max_correction_trans = 1.0
+max_correction_rot_deg = 20.0
+
+[registration.vgicp]
+voxel_resolution = 0.50
+
+[pgo]
+enabled = true
+keyframe_distance = 1.0
+keyframe_rotation = 0.3
+loop_min_time_separation = 30.0
+loop_min_travel_distance = 30.0
+loop_max_rotation = 3.14
+loop_search_radius = 30.0
+loop_search_stride = 1
+target_frame_count = 50
+source_voxel_size = 0.5
+target_voxel_size = 0.5
+source_travel_radius_m = 15.0
+source_max_range_m = 40.0
+source_max_frames = 256
+lidar_min_inliers = 64
+lidar_max_iterations = 64
+lidar_max_correspondence_m = 2.0
+lidar_min_overlap = 0.5
+lidar_max_fitness_m2 = 0.5
+lidar_translation_sigma_m = 0.2
+lidar_rotation_sigma_rad = 0.1
+max_constraint_error_sigma = 3.0
+update_period_sec = 1.0
+map_frame_stride = 1
+map_voxel_size = 0.3
+
+[pgo.occupancy]
+enabled = false
+resolution = 0.1
+h_clearance = 1.0
+ground_margin = 0.2
+clear_height_eps = 0.1
+d_max = 6.0
+occ_threshold = 0.3
+usable_range = 40.0
+min_range = 0.5
+cloud_voxel_size = 0.5
+margin = 5.0
+
+[sensor.lidar]
+time_field = "t"
+time_unit = "ns"
+time_ref = "relative"
+max_scan_duration = 0.2
+header_tolerance = 0.5
+require_point_time = true
+
+[sensor.imu]
+accel_unit = "m_s2"
+
+# T_imu_lidar maps LiDAR points into the Ouster IMU frame.
+# Derived from the calibrated sensor tree:
+#   T_sensor_imu = ([0.006253, -0.011775, 0.007645], identity)
+#   T_sensor_lidar = ([0, 0, 0.036180], yaw 180 deg)
+[extrinsics.T_imu_lidar]
+translation = [-0.006253, 0.011775, 0.028535]
+rotation_xyzw = [0.0, 0.0, 1.0, 0.0]
+
+[output]
+trajectory_dir = "/workspace/results/newer_college"
+trajectory_file = "01_short_experiment/trajectory.tum"

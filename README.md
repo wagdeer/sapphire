@@ -23,6 +23,8 @@ ground-truth path with **1.17 m mean ATE** and **1.05 m median ATE**
 (unweighted).
 HILTI retains five primary sparse-ATE runs over **346.4 m** of
 control-point reference, with **0.058 m mean ATE** and **0.052 m median ATE**.
+Newer College completes all five experiments over **5.94 km** of continuous
+ground truth, with **0.285 m mean ATE** and **0.182 m median ATE**.
 
 ATE is SE(3)-Umeyama-aligned translation APE without scale correction. Each
 S3E robot is reported separately. GT length is the reference path, while
@@ -53,6 +55,11 @@ table because its GT supports only endpoint error.
 | S3E | Square 3 | Alpha | 487.4 | 463.7 | ATE | 1.835
 | S3E | Square 3 | Bob | 569.6 | 559.8 | ATE | 1.932
 | S3E | Square 3 | Carol | 563.8 | 541.0 | ATE | 0.912
+| Newer College | Short Experiment | reference | 1609.4 | 1422.7 | ATE | 0.502
+| Newer College | Long Experiment | reference | 3063.4 | 2603.4 | ATE | 0.494
+| Newer College | Quad with Dynamics | reference | 479.0 | 476.0 | ATE | 0.148
+| Newer College | Dynamic Spinning | reference | 97.20 | 71.48 | ATE | 0.100
+| Newer College | Parkland Mound | reference | 695.7 | 654.8 | ATE | 0.182
 
 Excluded from the headline comparison: HILTI Site 2 scenes with high error,
 invalid degeneracy, or too few control points; S3E Campus Road 3 Bob as the
@@ -78,6 +85,9 @@ crosses mark HILTI control points.
 | ![S3E Square 1 Alpha](docs/benchmarks/trajectories/s3e_square_1_alpha.png) | ![S3E Square 1 Bob](docs/benchmarks/trajectories/s3e_square_1_bob.png) |
 | ![S3E Square 1 Carol](docs/benchmarks/trajectories/s3e_square_1_carol.png) | ![S3E Square 3 Alpha](docs/benchmarks/trajectories/s3e_square_3_alpha.png) |
 | ![S3E Square 3 Bob](docs/benchmarks/trajectories/s3e_square_3_bob.png) | ![S3E Square 3 Carol](docs/benchmarks/trajectories/s3e_square_3_carol.png) |
+| ![Newer College Short Experiment](docs/benchmarks/trajectories/newer_college_01_short_experiment.png) | ![Newer College Long Experiment](docs/benchmarks/trajectories/newer_college_02_long_experiment.png) |
+| ![Newer College Quad with Dynamics](docs/benchmarks/trajectories/newer_college_05_quad_with_dynamics.png) | ![Newer College Dynamic Spinning](docs/benchmarks/trajectories/newer_college_06_dynamic_spinning.png) |
+| ![Newer College Parkland Mound](docs/benchmarks/trajectories/newer_college_07_parkland_mound.png) |  |
 
 ## Pipeline
 

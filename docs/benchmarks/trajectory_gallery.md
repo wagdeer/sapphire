@@ -11,3 +11,6 @@
 | ![S3E · Square 1 · Alpha](docs/benchmarks/trajectories/s3e_square_1_alpha.png) | ![S3E · Square 1 · Bob](docs/benchmarks/trajectories/s3e_square_1_bob.png) |
 | ![S3E · Square 1 · Carol](docs/benchmarks/trajectories/s3e_square_1_carol.png) | ![S3E · Square 3 · Alpha](docs/benchmarks/trajectories/s3e_square_3_alpha.png) |
 | ![S3E · Square 3 · Bob](docs/benchmarks/trajectories/s3e_square_3_bob.png) | ![S3E · Square 3 · Carol](docs/benchmarks/trajectories/s3e_square_3_carol.png) |
+| ![Newer College · Short Experiment](docs/benchmarks/trajectories/newer_college_01_short_experiment.png) | ![Newer College · Long Experiment](docs/benchmarks/trajectories/newer_college_02_long_experiment.png) |
+| ![Newer College · Quad with Dynamics](docs/benchmarks/trajectories/newer_college_05_quad_with_dynamics.png) | ![Newer College · Dynamic Spinning](docs/benchmarks/trajectories/newer_college_06_dynamic_spinning.png) |
+| ![Newer College · Parkland Mound](docs/benchmarks/trajectories/newer_college_07_parkland_mound.png) |  |

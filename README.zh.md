@@ -17,6 +17,8 @@ Gal(3) 状态恢复模型同时做逐点去畸变和 IMU 频率状态传播—�
 为 **1.17 m**，中位数为 **1.05 m**（按轨迹等权统计）。HILTI 保留 5 条主要
 稀疏 ATE 结果，覆盖 **346.4 m** 控制点参考路径，平均 ATE 为 **0.058 m**，
 中位数为 **0.052 m**。
+Newer College 的 5 个实验全部完成，覆盖 **5.94 km** 连续真值路径，平均 ATE
+为 **0.285 m**，中位数为 **0.182 m**。
 
 ATE 为 SE(3) Umeyama 对齐后的平移 APE，不做尺度修正。S3E 三个机器人分别
 列出，不合并计算。GT 长度是参考路径长度，估计轨迹长度是完整 TUM 轨迹长度；
@@ -46,6 +48,11 @@ Laboratory 的 GT 只有首尾位置，只能计算端点误差，因此不列�
 | S3E | Square 3 | Alpha | 487.4 | 463.7 | ATE | 1.835
 | S3E | Square 3 | Bob | 569.6 | 559.8 | ATE | 1.932
 | S3E | Square 3 | Carol | 563.8 | 541.0 | ATE | 0.912
+| Newer College | Short Experiment | reference | 1609.4 | 1422.7 | ATE | 0.502
+| Newer College | Long Experiment | reference | 3063.4 | 2603.4 | ATE | 0.494
+| Newer College | Quad with Dynamics | reference | 479.0 | 476.0 | ATE | 0.148
+| Newer College | Dynamic Spinning | reference | 97.20 | 71.48 | ATE | 0.100
+| Newer College | Parkland Mound | reference | 695.7 | 654.8 | ATE | 0.182
 
 以下异常结果未进入主比较：HILTI Site 2 中误差异常、GT 退化或控制点不足的
 序列；S3E Campus Road 3 的 Bob 离群结果；S3E Teaching Building 1 和 Tunnel 1
@@ -69,6 +76,9 @@ Laboratory 的 GT 只有首尾位置，只能计算端点误差，因此不列�
 | ![S3E Square 1 Alpha](docs/benchmarks/trajectories/s3e_square_1_alpha.png) | ![S3E Square 1 Bob](docs/benchmarks/trajectories/s3e_square_1_bob.png) |
 | ![S3E Square 1 Carol](docs/benchmarks/trajectories/s3e_square_1_carol.png) | ![S3E Square 3 Alpha](docs/benchmarks/trajectories/s3e_square_3_alpha.png) |
 | ![S3E Square 3 Bob](docs/benchmarks/trajectories/s3e_square_3_bob.png) | ![S3E Square 3 Carol](docs/benchmarks/trajectories/s3e_square_3_carol.png) |
+| ![Newer College Short Experiment](docs/benchmarks/trajectories/newer_college_01_short_experiment.png) | ![Newer College Long Experiment](docs/benchmarks/trajectories/newer_college_02_long_experiment.png) |
+| ![Newer College Quad with Dynamics](docs/benchmarks/trajectories/newer_college_05_quad_with_dynamics.png) | ![Newer College Dynamic Spinning](docs/benchmarks/trajectories/newer_college_06_dynamic_spinning.png) |
+| ![Newer College Parkland Mound](docs/benchmarks/trajectories/newer_college_07_parkland_mound.png) |  |
 
 ## 管线
 

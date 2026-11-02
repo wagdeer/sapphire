@@ -22,3 +22,8 @@
 | S3E | Square 3 | Alpha | 487.4 | 463.7 | ATE | 1.835
 | S3E | Square 3 | Bob | 569.6 | 559.8 | ATE | 1.932
 | S3E | Square 3 | Carol | 563.8 | 541.0 | ATE | 0.912
+| Newer College | Short Experiment | reference | 1609.4 | 1422.7 | ATE | 0.502
+| Newer College | Long Experiment | reference | 3063.4 | 2603.4 | ATE | 0.494
+| Newer College | Quad with Dynamics | reference | 479.0 | 476.0 | ATE | 0.148
+| Newer College | Dynamic Spinning | reference | 97.20 | 71.48 | ATE | 0.100
+| Newer College | Parkland Mound | reference | 695.7 | 654.8 | ATE | 0.182
