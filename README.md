@@ -4,6 +4,9 @@ LiDAR-inertial odometry using Gal(3) equivariant IMU preintegration.
 
 [中文说明](README.zh.md)
 
+For repeatable HILTI and S3E visualization runs in the ROS 1 and ROS 2 Docker
+environments, see [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md).
+
 Sapphire is a feature-free, scan-to-submap LIO pipeline. Its main design
 choice is to use the same Gal(3) state-recovery model for per-point deskew
 and IMU-rate propagation. Pose and velocity therefore come from one
@@ -12,6 +15,69 @@ preintegrated state instead of two independent motion models.
 The core is a C++17 static library with no ROS dependency. ROS 2 support
 lives in the separate
 [`sapphire_ros2`](https://github.com/wagdeer/sapphire_ros2) wrapper.
+
+## Benchmark snapshot
+
+Across the six robust S3E scenes, 17 trajectories cover **10.42 km** of
+ground-truth path with **1.17 m mean ATE** and **1.05 m median ATE**
+(unweighted).
+HILTI retains five primary sparse-ATE runs over **346.4 m** of
+control-point reference, with **0.058 m mean ATE** and **0.052 m median ATE**.
+
+ATE is SE(3)-Umeyama-aligned translation APE without scale correction. Each
+S3E robot is reported separately. GT length is the reference path, while
+estimated travel is the full TUM path. Laboratory is omitted from this ATE
+table because its GT supports only endpoint error.
+
+| Dataset | Sequence | Agent | GT length (m) | Estimated travel (m) | Metric | Result (m)
+|---|---|---|---:|---:|---|---:
+| HILTI | Site 1 · Handheld 1 | reference | 81.32 | 205.5 | sparse ATE | 0.030
+| HILTI | Site 1 · Handheld 2 | reference | 84.39 | 163.9 | sparse ATE | 0.052
+| HILTI | Site 1 · Handheld 3 | reference | 81.89 | 165.2 | sparse ATE | 0.108
+| HILTI | Site 1 · Handheld 4 | reference | 52.88 | 300.0 | sparse ATE | 0.053
+| HILTI | Site 1 · Handheld 5 | reference | 45.94 | 150.1 | sparse ATE | 0.045
+| S3E | Campus Road 3 | Alpha | 983.3 | 940.0 | ATE | 0.876
+| S3E | Campus Road 3 | Carol | 986.9 | 948.9 | ATE | 1.050
+| S3E | Dormitory 1 | Alpha | 727.0 | 724.0 | ATE | 0.478
+| S3E | Dormitory 1 | Bob | 719.3 | 722.6 | ATE | 1.378
+| S3E | Dormitory 1 | Carol | 721.9 | 738.0 | ATE | 0.804
+| S3E | Library 1 | Alpha | 507.6 | 520.4 | ATE | 0.988
+| S3E | Library 1 | Bob | 517.2 | 530.6 | ATE | 1.671
+| S3E | Library 1 | Carol | 498.9 | 508.1 | ATE | 1.339
+| S3E | Library 2 | Alpha | 521.6 | 505.0 | ATE | 1.238
+| S3E | Library 2 | Bob | 523.9 | 505.5 | ATE | 1.683
+| S3E | Library 2 | Carol | 520.3 | 505.8 | ATE | 0.923
+| S3E | Square 1 | Alpha | 546.0 | 542.7 | ATE | 1.166
+| S3E | Square 1 | Bob | 496.5 | 495.9 | ATE | 0.748
+| S3E | Square 1 | Carol | 529.2 | 531.7 | ATE | 0.866
+| S3E | Square 3 | Alpha | 487.4 | 463.7 | ATE | 1.835
+| S3E | Square 3 | Bob | 569.6 | 559.8 | ATE | 1.932
+| S3E | Square 3 | Carol | 563.8 | 541.0 | ATE | 0.912
+
+Excluded from the headline comparison: HILTI Site 2 scenes with high error,
+invalid degeneracy, or too few control points; S3E Campus Road 3 Bob as the
+remaining ATE outlier; S3E Teaching Building 1 and Tunnel 1 due to GT/path
+anomalies. Laboratory 1-4 are omitted because their GT supports only endpoint
+error, not continuous ATE.
+
+### Trajectories vs ground truth
+
+Each image is one benchmark result. Solid is Sapphire, dashed is GT, and
+crosses mark HILTI control points.
+
+| Trajectory result | Trajectory result |
+|---|---|
+| ![HILTI Site 1 Handheld 1](docs/benchmarks/trajectories/hilti_site1_handheld_1.png) | ![HILTI Site 1 Handheld 2](docs/benchmarks/trajectories/hilti_site1_handheld_2.png) |
+| ![HILTI Site 1 Handheld 3](docs/benchmarks/trajectories/hilti_site1_handheld_3.png) | ![HILTI Site 1 Handheld 4](docs/benchmarks/trajectories/hilti_site1_handheld_4.png) |
+| ![HILTI Site 1 Handheld 5](docs/benchmarks/trajectories/hilti_site1_handheld_5.png) | ![S3E Campus Road 3 Alpha](docs/benchmarks/trajectories/s3e_campus_road_3_alpha.png) |
+| ![S3E Campus Road 3 Carol](docs/benchmarks/trajectories/s3e_campus_road_3_carol.png) | ![S3E Dormitory 1 Alpha](docs/benchmarks/trajectories/s3e_dormitory_1_alpha.png) |
+| ![S3E Dormitory 1 Bob](docs/benchmarks/trajectories/s3e_dormitory_1_bob.png) | ![S3E Dormitory 1 Carol](docs/benchmarks/trajectories/s3e_dormitory_1_carol.png) |
+| ![S3E Library 1 Alpha](docs/benchmarks/trajectories/s3e_library_1_alpha.png) | ![S3E Library 1 Bob](docs/benchmarks/trajectories/s3e_library_1_bob.png) |
+| ![S3E Library 1 Carol](docs/benchmarks/trajectories/s3e_library_1_carol.png) | ![S3E Library 2 Alpha](docs/benchmarks/trajectories/s3e_library_2_alpha.png) |
+| ![S3E Library 2 Bob](docs/benchmarks/trajectories/s3e_library_2_bob.png) | ![S3E Library 2 Carol](docs/benchmarks/trajectories/s3e_library_2_carol.png) |
+| ![S3E Square 1 Alpha](docs/benchmarks/trajectories/s3e_square_1_alpha.png) | ![S3E Square 1 Bob](docs/benchmarks/trajectories/s3e_square_1_bob.png) |
+| ![S3E Square 1 Carol](docs/benchmarks/trajectories/s3e_square_1_carol.png) | ![S3E Square 3 Alpha](docs/benchmarks/trajectories/s3e_square_3_alpha.png) |
+| ![S3E Square 3 Bob](docs/benchmarks/trajectories/s3e_square_3_bob.png) | ![S3E Square 3 Carol](docs/benchmarks/trajectories/s3e_square_3_carol.png) |
 
 ## Pipeline
 
@@ -237,7 +303,7 @@ no recompilation is required.
 ```text
 sapphire/
 ├── cfg/                         Default sensor configuration
-├── docs/                        Design and review documents
+├── docs/                        Design, replay, and benchmark evidence
 ├── external/                    Vendored preintegration and Lie groups
 ├── include/sapphire/
 │   ├── backend/pose_graph.hpp
