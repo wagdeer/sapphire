@@ -4,6 +4,8 @@ LiDAR-inertial odometry using Gal(3) equivariant IMU preintegration.
 
 [中文说明](README.zh.md)
 
+![Sapphire online LiDAR-inertial mapping](docs/sapphire.gif)
+
 For repeatable HILTI and S3E visualization runs in the ROS 1 and ROS 2 Docker
 environments, see [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md).
 
