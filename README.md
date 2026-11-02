@@ -69,6 +69,12 @@ remaining ATE outlier; S3E Teaching Building 1 and Tunnel 1 due to GT/path
 anomalies. Laboratory 1-4 are omitted because their GT supports only endpoint
 error, not continuous ATE.
 
+### Dataset visualizations
+
+| HILTI 2023 · handheld mapping | Newer College 2020 · outdoor mapping |
+|---|---|
+| ![HILTI 2023 RViz mapping](docs/hilti-2023.gif) | ![Newer College RViz mapping](docs/newer_college.gif) |
+
 ### Trajectories vs ground truth
 
 Each image is one benchmark result. Solid is Sapphire, dashed is GT, and

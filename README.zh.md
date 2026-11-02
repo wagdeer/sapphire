@@ -59,6 +59,12 @@ Laboratory 的 GT 只有首尾位置，只能计算端点误差，因此不列�
 的 GT/路径异常。Laboratory 1~4 的 GT 只能计算端点误差，不能与连续 ATE 混算，
 因此不列入主表。
 
+### 数据集可视化
+
+| HILTI 2023 · 手持设备建图 | Newer College 2020 · 户外建图 |
+|---|---|
+| ![HILTI 2023 RViz 建图](docs/hilti-2023.gif) | ![Newer College RViz 建图](docs/newer_college.gif) |
+
 ### 轨迹与真值对比
 
 每张图片对应一条结果。实线为 Sapphire，虚线为 GT，叉号表示 HILTI 控制点。
