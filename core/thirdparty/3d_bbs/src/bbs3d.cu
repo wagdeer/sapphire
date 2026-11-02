@@ -54,6 +54,9 @@ void check_cuda(cudaError_t error, const char* operation) {
   }
 }
 
+// Exact allocation accounting for this calling thread's BBS buffers. CUDA
+// context/driver allocations are intentionally excluded and sampled externally.
+thread_local std::size_t device_live_bytes = 0, device_high_water_bytes = 0;
 template <typename T>
 class DeviceBuffer {
  public:
@@ -64,6 +67,7 @@ class DeviceBuffer {
   ~DeviceBuffer() {
     if (data_ != nullptr) {
       cudaFree(data_);
+      device_live_bytes -= size_ * sizeof(T);
     }
   }
 
@@ -78,6 +82,7 @@ class DeviceBuffer {
     if (this != &other) {
       if (data_ != nullptr) {
         cudaFree(data_);
+        device_live_bytes -= size_ * sizeof(T);
       }
       data_ = std::exchange(other.data_, nullptr);
       size_ = other.size_;
@@ -92,11 +97,14 @@ class DeviceBuffer {
     }
     if (data_ != nullptr) {
       check_cuda(cudaFree(data_), "cudaFree");
+      device_live_bytes -= size_ * sizeof(T);
       data_ = nullptr;
       size_ = 0;
     }
-    size_ = size;
     check_cuda(cudaMalloc(reinterpret_cast<void**>(&data_), size * sizeof(T)), "cudaMalloc");
+    size_ = size;
+    device_live_bytes += size * sizeof(T);
+    device_high_water_bytes = std::max(device_high_water_bytes, device_live_bytes);
   }
 
   void copy_from_host(const T* source, std::size_t size) {
@@ -509,6 +517,8 @@ LocalSearchResult BBS3D::search_local(const Eigen::Vector3f* source_points,
 
   const auto start_time = std::chrono::steady_clock::now();
   LocalSearchResult result;
+  const auto initial_device_bytes = device_live_bytes;
+  device_high_water_bytes = initial_device_bytes;
   if (target.voxelmaps != nullptr && target.voxelmaps->max_level > 3) {
     throw std::invalid_argument("GPU BBS supports voxel levels 0 through 3");
   }
@@ -567,7 +577,9 @@ LocalSearchResult BBS3D::search_local(const Eigen::Vector3f* source_points,
     }
   }
   result.root_nodes = roots.size();
+  result.queue_peak_nodes = roots.size();
   if (roots.empty()) {
+    result.device_peak_bytes = device_high_water_bytes - initial_device_bytes;
     result.elapsed_ms =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
                                                  start_time)
@@ -608,6 +620,7 @@ LocalSearchResult BBS3D::search_local(const Eigen::Vector3f* source_points,
       branch_stock[index].score = scores[index];
       if (branch_stock[index].score >= best_score) {
         queue.push(branch_stock[index]);
+        result.queue_peak_nodes = std::max(result.queue_peak_nodes, queue.size());
       } else {
         ++result.pruned_nodes[static_cast<std::size_t>(branch_stock[index].level)];
       }
@@ -684,6 +697,7 @@ LocalSearchResult BBS3D::search_local(const Eigen::Vector3f* source_points,
     result.score.overlap = static_cast<double>(best_observed_leaf_score) /
                            static_cast<double>(points.size());
   }
+  result.device_peak_bytes = device_high_water_bytes - initial_device_bytes;
   result.elapsed_ms =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time)
           .count();

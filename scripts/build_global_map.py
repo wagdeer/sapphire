@@ -105,7 +105,8 @@ def decode_matrix(blob: bytes, dtype: str, cv_type: int, max_elements: int) -> n
     return np.frombuffer(raw, dtype=dtype)
 
 
-def load_optimized_poses(connection: sqlite3.Connection) -> dict[int, np.ndarray]:
+def load_optimized_poses(connection: sqlite3.Connection, segment: int | None = None,
+                         component_node: int | None = None) -> dict[int, np.ndarray]:
     if connection.execute("PRAGMA user_version").fetchone()[0] != 14:
         raise RuntimeError("导出只支持当前 schema 14")
     node_ids = {row[0] for row in connection.execute("SELECT id FROM Node")}
@@ -126,15 +127,25 @@ def load_optimized_poses(connection: sqlite3.Connection) -> dict[int, np.ndarray
         if first not in neighbors or second not in neighbors:
             raise RuntimeError("图约束引用了缺失的节点")
         neighbors[first].add(second); neighbors[second].add(first)
+    if segment is not None and component_node is not None:
+        raise ValueError("片段与连通地图选择不能同时指定")
+    selected = ({row[0] for row in connection.execute("SELECT id FROM Node WHERE map_id=?", (segment,))}
+                if segment is not None else node_ids)
+    if not selected or (component_node is not None and component_node not in node_ids):
+        raise RuntimeError("选择的片段或节点不存在")
     reached = set()
-    pending = [next(iter(node_ids))]
+    pending = [component_node if component_node is not None else next(iter(selected))]
     while pending:
         node = pending.pop()
         if node in reached: continue
         reached.add(node); pending.extend(neighbors[node] - reached)
-    if reached != node_ids:
-        raise RuntimeError("数据库包含未对齐的独立分量，不能合成单一全局地图或轨迹")
-    return poses
+    if component_node is not None:
+        selected = reached
+    if not selected <= reached:
+        raise RuntimeError("包含未对齐的独立分量，请用 --segment 或 --component-node 选择后导出")
+    if not selected <= poses.keys():
+        raise RuntimeError("所选节点缺少优化位姿")
+    return {node: pose for node, pose in poses.items() if node in selected}
 
 
 def decode_gaussians(node_id: int, archive: bytes) -> np.ndarray:
@@ -395,6 +406,8 @@ def assemble(
     ascii_output: bool,
     mode_name: str = "trivial",
     config: SamplingConfig = SamplingConfig(),
+    segment: int | None = None,
+    component_node: int | None = None,
 ) -> tuple[int, int]:
     if mode_name not in ("trivial", "sparse", "dense"):
         raise ValueError(f"无效采样模式：{mode_name}")
@@ -407,8 +420,8 @@ def assemble(
     connection = sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True)
     try:
         connection.execute("BEGIN")  # geometry and optimized poses share one read snapshot
-        poses = load_optimized_poses(connection)
-        expected_nodes = connection.execute("SELECT COUNT(*) FROM Node WHERE weight >= 0").fetchone()[0]
+        poses = load_optimized_poses(connection, segment, component_node)
+        expected_nodes = sum(node in poses for node, in connection.execute("SELECT id FROM Node WHERE weight >= 0"))
         rows = connection.execute("SELECT id,lidar_geometry FROM Node WHERE weight >= 0 ORDER BY id")
 
         try:
@@ -421,7 +434,7 @@ def assemble(
                 for raw_node_id, payload in rows:
                     node_id = int(raw_node_id)
                     if node_id not in poses:
-                        raise RuntimeError(f"数据库节点 {node_id} 缺少优化位姿")
+                        continue
                     pose = poses[node_id]
                     records = decode_gaussians(node_id, payload)
                     if mode_name == "trivial":
@@ -550,6 +563,9 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--dense-nonplane-spacing", type=finite_positive, default=0.20)
     parser.add_argument("--max-plane-samples", type=positive_integer, default=256)
     parser.add_argument("--max-nonplane-samples", type=positive_integer, default=16)
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--segment", type=positive_integer, help="只导出指定采集片段（Node.map_id）")
+    selection.add_argument("--component-node", type=positive_integer, help="导出包含该节点的已对齐连通地图")
     return parser.parse_args()
 
 
@@ -571,7 +587,7 @@ def main() -> int:
             max_nonplane_samples=arguments.max_nonplane_samples,
         )
         point_count, node_count = assemble(
-            database_path, output_path, arguments.ascii, arguments.mode, config
+            database_path, output_path, arguments.ascii, arguments.mode, config, arguments.segment, arguments.component_node
         )
         print(
             f"完成：mode={arguments.mode}，{output_path}，{node_count} 个节点，"

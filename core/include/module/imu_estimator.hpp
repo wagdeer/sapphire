@@ -54,10 +54,10 @@ class ImuEstimator {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   bool init_flag;
-  double pcl_beg_time, pcl_end_time, last_pcl_end_time;
+  double pcl_beg_time = 0, pcl_end_time = 0, last_pcl_end_time = 0;
   int init_num;
   Eigen::Vector3d mean_acc, mean_gyr;
-  ImuMeas last_imu;
+  ImuMeas last_imu{};
   bool has_last_imu = false;
   int min_init_num = 30;
   Eigen::Vector3d angvel_last, acc_s_last;

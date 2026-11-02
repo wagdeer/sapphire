@@ -159,6 +159,12 @@ class LidarSync {
   }
 
  public:
+  // Called by the same adapter owner as push/pop. Retain lifetime counters.
+  void reset() {
+    front_.clear(); rear_.clear(); front_frame_id_.clear(); rear_frame_id_.clear();
+    last_front_ = last_rear_ = last_front_end_ = last_rear_end_ = emitted_until_ = -std::numeric_limits<double>::infinity();
+    window_begin_ns_.reset();
+  }
   const Statistics &statistics() const { return stats_; }
   size_t buffered_front() const { return front_.size(); }
   size_t buffered_rear() const { return rear_.size(); }

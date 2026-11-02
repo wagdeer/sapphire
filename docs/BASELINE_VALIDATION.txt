@@ -1,0 +1,83 @@
+Sapphire baseline validation — 2026-11-02
+
+Scope
+This baseline collects the rolling frontend LiDAR/IMU BA, recovery, immutable
+batch archive and asynchronous geometric backend into one reviewed revision.
+It removes dormant backend BA/fusion/working-window experiments, their flags,
+experiment-only probes, unused handoff variance and obsolete recovery counters.
+It does not change the default registration gates, batch limits or BA model.
+Architecture: STABLE_BASELINE.txt. Matching limits: AUTOMATIC_RELOCALIZATION.txt.
+
+Build / regression
+Release, GCC, CUDA architecture 89 on the local x86 host; LTO disabled for this
+validation. Existing dependencies resolved through /home/user/.local.
+Core library, segment utility, replay tools and ROS executable compile.
+28/28 core CTest cases pass; 2/2 ROS adapter/publication cases pass.
+First-party test sources are now part of the Git baseline, not ignored files.
+Coverage includes rolling BA ownership/retirement, rejection and IMU bridges,
+reset/input-loss/EOF, bounded handoff, cross-process archive continuation,
+registration ambiguity and asynchronous publication, and legacy SAPLID02 data.
+The removed optional fusion tests are replaced by a focused legacy-codec test.
+
+Reproduction (from the repository root, with dependencies installed)
+  cmake -S core -B build/core -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH=/home/user/.local -DCMAKE_CUDA_ARCHITECTURES=89 \
+    -DSAPPHIRE_ENABLE_LTO=OFF -DBUILD_TESTING=ON
+  cmake --build build/core -j2
+  ctest --test-dir build/core --output-on-failure
+
+  source /opt/ros/humble/setup.bash
+  cmake -S ros2_warpper -B build/ros -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH=/home/user/.local -DCMAKE_CUDA_ARCHITECTURES=89 \
+    -DSAPPHIRE_ENABLE_LTO=OFF -DBUILD_TESTING=ON
+  cmake --build build/ros -j2
+  cmake --install build/ros --prefix "$PWD/install/baseline"
+  export AMENT_PREFIX_PATH="$PWD/install/baseline:$AMENT_PREFIX_PATH"
+  ctest --test-dir build/ros -R '^sapphire_ros_(lidar|publication)_test$' --output-on-failure
+
+Select the CUDA architecture and dependency prefix for the actual host.
+ROS publication tests need local network permission and the installed package
+index; the initial restricted-environment attempt could not bind a listener.
+The successful run used rmw_zenoh_cpp and the current baseline install prefix.
+This is local publisher/lifecycle verification, not network delivery acceptance.
+
+Production-path input checks
+Same inputs and defaults as the immediately preceding stable_batch_baseline
+snapshot; backend enabled, no changes to downsampling, gates or frame windows.
+- S3E Library_2 bob, first 30 sensor seconds: 300/300 scans, 288 live odometry
+  outputs, no reset, 2 batch nodes in one session.
+- sapphire_l1_20260519_06 complete recording: 2010/2010 scans, 1999 live outputs,
+  no reset, 14 batch nodes. Async geometric edge 14 -> 1 and PGO persisted.
+- Existing observation-fault fixture: 220/220 scans, 10 rejected observations,
+  one reset, then continued tracking; 186 live outputs, 2 batch nodes in two
+  independent sessions and no cross-session edges. This fixture derives from
+  S3E Dormitory alpha with scans 71--80 moved outside the map; it is a controlled
+  recovery check, not an unmodified natural-anomaly benchmark.
+
+Compared with the preceding baseline, all three checks have exactly equal
+serialized frontend odometry values and observation values (excluding timing).
+Frozen Gaussian blobs and persisted trajectories are byte-identical; graph
+edge identities are unchanged. SQLite integrity checks pass after reopen.
+Every published timestamp is archived; stored trajectory counts are 297, 2008,
+204, including accepted initialization-window observations. No duplicate stored
+timestamps occur in these inputs. The fault run's backend_nodes summary is per
+current generation; inspect the complete database to count both saved nodes.
+
+Evidence in the local workspace
+../../experiments/baseline_cleanup_20261102/
+  build.log, ctest.log, ros_build.log, ros_ctest_host.log
+  run_checks.py, replays.json: input paths, exact commands and completion
+  compare_baseline.py, comparison.json: trajectory/geometry/archive comparison
+  library_bob30/, l1_full/, observation_fault/: outputs and databases
+Historical experiments remain outside release sources. No production replay
+layer was introduced; tests feed the existing native pipeline API.
+
+Limits
+This is an architecture and lifecycle baseline, not a claim that all inputs
+localize correctly. Existing full-input false joins and difficult BA accuracy
+cases remain documented in AUTOMATIC_RELOCALIZATION.txt. Reset cannot identify
+every finite but wrong estimate. Single-query ambiguity checking is a bounded
+search, not proof of a globally unique location. Independent fragments remain
+valid saved outputs when evidence is insufficient. Frontend BA feedback remains
+pose-only; this cleanup makes no new covariance-consistency claim. Bounded
+queues retain storage backpressure. Orin NX CPU/latency/RSS acceptance is separate.

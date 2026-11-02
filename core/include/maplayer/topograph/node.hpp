@@ -11,7 +11,8 @@
 
 namespace sapphire {
 
-// Graph node with immutable node-local geometry. New nodes are detached until
+// Graph node with immutable node-local geometry and an optimizable graph pose.
+// Shared cloud snapshots are immutable. New nodes are detached until
 // Memory admits them; persisted nodes carry a database ID and map identity.
 class Node {
  public:
@@ -28,6 +29,7 @@ class Node {
   const GaussianCloudPtr& lidar_cloud() const { return lidar_cloud_; }
   void set_lidar_cloud(GaussianCloudPtr cloud) {
     if (cloud) validateGaussianCloud(*cloud);
+    _geometryModified = _modified = true;
     lidar_cloud_ = std::move(cloud);
   }
   bool isBadNode() const;
@@ -74,6 +76,7 @@ class Node {
   void setModified(bool modified) {
     _modified = modified;
     _linksModified = modified;
+    if (!modified) _geometryModified = false;
   }
 
   const std::multimap<int, Link>& getLinks() const { return _links; }
@@ -82,6 +85,7 @@ class Node {
 
   bool isModified() const { return _modified || _linksModified; }
 
+  bool isGeometryModified() const { return _geometryModified; }
   bool isLinksModified() const { return _linksModified; }
 
   void setPose(const SE3f& pose) { _pose = pose; }
@@ -112,6 +116,7 @@ class Node {
   std::multimap<int, Link> _links;  ///< Links to other nodes (target ID -> Link, allows multiple links per target)
   int _weight;                      ///< Weight/importance of this node
   std::string _label;               ///< Optional label/name for this node
+  bool _geometryModified = false;
   bool _saved;                      ///< Flag indicating if node is saved to database
   bool _modified;                   ///< Flag indicating if node data has been modified
   bool _linksModified;              ///< Flag indicating if links have been modified (optimization for database updates)

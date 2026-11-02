@@ -17,6 +17,12 @@
 #include <optional>
 #include <set>
 #include <thread>
+#include <future>
+#include <omp.h>
+#include <ctime>
+#include <iomanip>
+#include <sys/resource.h>
+#include "tools/process.hpp"
 
 #include "common/se3_state.hpp"
 #include "database/compression.hpp"
@@ -40,6 +46,32 @@ std::set<int> Mapping::swap_results() {
 
 namespace {
 
+double clock_seconds(clockid_t clock) {
+  timespec value{};
+  if (clock_gettime(clock, &value)) throw std::runtime_error("Cannot read resource clock");
+  return value.tv_sec + value.tv_nsec * 1e-9;
+}
+bool prepare_trace(const std::filesystem::path& path, const std::string& columns,
+                   const std::string& archive_prefix, bool fresh) {
+  if(fresh || !std::filesystem::exists(path) || !std::filesystem::file_size(path))return true;
+  std::ifstream previous(path);std::string header;std::getline(previous,header);
+  if(header+"\n"==columns)return false;
+  previous.close();unsigned revision=1;std::filesystem::path saved;
+  do {saved=path.parent_path()/(archive_prefix+std::to_string(revision++)+".tsv");}
+  while(std::filesystem::exists(saved));
+  std::filesystem::rename(path,saved);return true;
+}
+Relocalizer::Verification evaluate_geometry(Relocalizer::Input input, const RelocalizerParams& config,
+                                             const RegistrationParams& registration) {
+  const auto start=clock_seconds(CLOCK_MONOTONIC),cpu=clock_seconds(CLOCK_THREAD_CPUTIME_ID),process=clock_seconds(CLOCK_PROCESS_CPUTIME_ID);
+  const auto rss=tools::resident_set_size();
+  auto result=Relocalizer::evaluate(std::move(input),config,registration);
+  result.start_s=start;result.end_s=clock_seconds(CLOCK_MONOTONIC);
+  result.thread_cpu_ms=(clock_seconds(CLOCK_THREAD_CPUTIME_ID)-cpu)*1000;
+  result.process_cpu_ms=(clock_seconds(CLOCK_PROCESS_CPUTIME_ID)-process)*1000;
+  result.rss_before=rss;result.rss_after=tools::resident_set_size();
+  return result;
+}
 void stateGroupToXyzRpy(const SE3f& state, float& x, float& y, float& z, float& roll, float& pitch, float& yaw) {
   const SE3f::Vector3 translation = state.translationVector();
   const SE3f::Vector3 yawPitchRoll = state.rotationMatrix().eulerAngles(2, 1, 0);
@@ -52,6 +84,12 @@ void stateGroupToXyzRpy(const SE3f& state, float& x, float& y, float& z, float& 
 }
 
 }  // namespace
+
+struct Mapping::RelocalizationWork {
+  int query = 0;
+  std::map<int,SE3f> poses;
+  std::future<std::vector<Relocalizer::Verification>> result;
+};
 
 Mapping::Mapping() = default;
 
@@ -134,6 +172,27 @@ void Mapping::init(const MappingParameters& parameters, const std::string& datab
     statistics_log_.open(
         log_directory.empty() ? std::filesystem::path(databasePath).parent_path().string() : log_directory,
         _parameters.statistics, newDatabase);
+
+    if (_parameters.statistics.log_enabled) {
+      const auto directory = log_directory.empty() ? std::filesystem::path(databasePath).parent_path() : std::filesystem::path(log_directory);
+      const std::string loop_columns = "query\tanchor\tpath\tstart_s\tend_s\tthread_cpu_ms\tprocess_cpu_ms\trss_before\trss_after\tquery_points\ttarget_points\tload_ms\tassemble_ms\tpyramid_ms\tbbs_ms\tgicp_ms\tmetric_ms\tinliers\tfitness\titerations\tbbs_roots\tbbs_expanded\tbbs_pruned\tbbs_queue_peak\tdevice_peak_bytes\tfailure\tused_path\trequested_bytes\ttarget_bytes\tresource_limited\tinitialization_trace\tT_reference_query\n";
+      const std::string query_columns = "query\tstamp\tstart_s\tend_s\tthread_cpu_ms\tprocess_cpu_ms\trss_before\trss_after\tprocess_hwm_bytes\tprepare_ms\tpgo_ms\tcommit_ms\tstorage_ms\tcandidate_trials\tloop_anchor\tmatch_decision\n";
+      const bool loop_header=prepare_trace(directory/"relocalization.tsv",loop_columns,"loops.previous.",newDatabase);
+      const bool query_header=prepare_trace(directory/"relocalization_queries.tsv",query_columns,"queries.previous.",newDatabase);
+      const auto mode = std::ios::out | (newDatabase ? std::ios::trunc : std::ios::app);
+      loop_trace_.exceptions(std::ios::failbit | std::ios::badbit);
+      query_trace_.exceptions(std::ios::failbit | std::ios::badbit);
+      loop_trace_.open(directory / "relocalization.tsv", mode);
+      query_trace_.open(directory / "relocalization_queries.tsv", mode);
+      loop_trace_ << std::setprecision(17);
+      query_trace_ << std::setprecision(17);
+      if (loop_header) {
+        loop_trace_ << loop_columns;
+      }
+      if (query_header) {
+        query_trace_ << query_columns;
+      }
+    }
 
   } catch (...) {
     close(false);
@@ -224,6 +283,8 @@ void Mapping::append_lidar_odometry(double stamp, const SE3f& pose) {
 }
 
 void Mapping::close(bool databaseSaved, const std::string& ouputDatabasePath) {
+  if (databaseSaved) poll_relocalization(true);
+  else relocalization_work_.reset(); // joins immutable work before owner destruction
   // Drain owned map evidence before tearing down the storage owner. Failure
   // retains owners until the caller can safely close the failed task.
 
@@ -232,6 +293,8 @@ void Mapping::close(bool databaseSaved, const std::string& ouputDatabasePath) {
   run_ = {};
 
   statistics_log_.close();
+  if (loop_trace_.is_open()) loop_trace_.close();
+  if (query_trace_.is_open()) query_trace_.close();
 
   if (_memory) {
     if (databaseSaved) {
@@ -255,6 +318,7 @@ void Mapping::close(bool databaseSaved, const std::string& ouputDatabasePath) {
   // Reset configuration without constructing another optimizer while closing.
 
   _parameters = {};
+  async_relocalization_ = false;
 }
 
 void Mapping::setParameterRecord(const ParametersMap& parameters) {
@@ -300,239 +364,194 @@ int Mapping::triggerNewMap() {
 // MAIN LOOP
 //============================================================
 
-struct Mapping::LoopProposal {
-  std::list<std::pair<int, int>> loopClosureLinksAdded;
+struct Mapping::RelocalizationProposal {
   std::vector<Link> candidate_links;
   int loop_candidate = 0;
-  int spatial_candidates_checked = 0;
+  unsigned candidate_trials = 0;
+  Relocalizer::Path path;
+  std::string match_decision;
 };
 
-Mapping::LoopProposal Mapping::prepare_loops(const Node& query, Relocalization& recognition) {
-  LoopProposal proposal;
-  if (!_parameters.relocalizer.spatial_enabled || _graphOptimizer->options.max_iterations <= 0) return proposal;
-  auto poses = topograph_.aligned() ? topograph_.world_poses() : topograph_.poses();
-  for (const auto& entry : topograph_.poses()) poses.insert_or_assign(entry.first, entry.second);
-  for (int candidate : relocalizer_->spatial_candidates(query, poses)) {
-    ++proposal.spatial_candidates_checked;
-    const bool cold = !_memory->getNode(candidate);
-    const auto verified = relocalizer_->verify(candidate, query.id(), poses.at(candidate).inverse().compose(poses.at(query.id())));
-    if (cold && _memory->getNode(candidate)) recognition.loaded.insert(candidate);
-    if (verified.T_target_query.isNull()) continue;
-    const float limit = _parameters.relocalizer.max_loop_distance_m > 0
-                            ? std::min(_parameters.relocalizer.spatial_radius_m, _parameters.relocalizer.max_loop_distance_m)
-                            : _parameters.relocalizer.spatial_radius_m;
-    if (verified.T_target_query.translationNorm() > limit) continue;
-    proposal.loop_candidate = candidate;
-    proposal.candidate_links.push_back(
-        Link(candidate, query.id(), Link::kLoopClosure, verified.T_target_query, getInformation(*verified.covariance)).inverse());
-    proposal.loopClosureLinksAdded.emplace_back(query.id(), candidate);
-    break;
+std::vector<Relocalizer::Input> Mapping::prepare_relocalization_inputs(const Node& query, Relocalization& recognition) {
+  std::vector<Relocalizer::Input> inputs;
+  if ((!_parameters.relocalizer.spatial_enabled && !_parameters.relocalizer.global_enabled) || _graphOptimizer->options.max_iterations <= 0) return inputs;
+  std::map<int,SE3f> poses;std::multimap<int,Link> links;getCompleteGraph(poses,links);
+  const auto candidates=relocalizer_->candidates(query,poses);
+  std::vector<std::vector<Relocalizer::Path>> paths;
+  std::size_t rounds=0,bytes=0;
+  for(int id:candidates) {paths.push_back(relocalizer_->paths(id,query.id(),poses));rounds=std::max(rounds,paths.back().size());}
+  std::set<std::vector<int>> attempted;
+  for(std::size_t round=0;round<rounds;++round)for(std::size_t index=0;index<paths.size();++index) {
+    if(round>=paths[index].size() || inputs.size()>=_parameters.relocalizer.spatial_max_candidates)continue;
+    auto input=relocalizer_->prepare(paths[index][round],query.id(),poses,attempted);
+    if(input.result.duplicate)continue;
+    auto identity=input.result.path.nodes;std::sort(identity.begin(),identity.end());attempted.insert(identity);
+    recognition.loaded.insert(input.result.path.anchor);
+    // One query owns a bounded aggregate of frozen targets, never K full budgets.
+    if(input.target && input.result.target_bytes>_parameters.relocalizer.path_max_bytes-bytes) {
+      input.target.reset();input.source.reset();input.result.resource_failure="Query target payload budget exceeded";
+    } else if(input.target)bytes+=input.result.target_bytes;
+    inputs.push_back(std::move(input));
   }
+  return inputs;
+}
+Mapping::RelocalizationProposal Mapping::finish_relocalization(int query, std::vector<Relocalizer::Verification> results) {
+  RelocalizationProposal proposal;proposal.candidate_trials=results.size();
+  for(auto& verified:results) {
+    const int candidate=verified.path.anchor;
+    auto& alignment=verified.alignment;
+    if (loop_trace_.is_open()) {
+        loop_trace_ << query << '\t' << candidate << '\t';
+        for (int id : verified.path.nodes) loop_trace_ << id << ',';
+        loop_trace_ << '\t' << verified.start_s << '\t' << verified.end_s
+          << '\t' << verified.thread_cpu_ms << '\t' << verified.process_cpu_ms
+          << '\t' << verified.rss_before << '\t' << verified.rss_after << '\t' << verified.query_points << '\t' << verified.target_points
+          << '\t' << verified.load_ms << '\t' << verified.assemble_ms << '\t' << alignment.pyramid_ms << '\t' << alignment.bbs_ms
+          << '\t' << alignment.gicp_ms << '\t' << alignment.metric_ms  << '\t' << alignment.inliers
+          << '\t' << alignment.fitness << '\t' << alignment.iterations << '\t' << alignment.bbs_roots << '\t' << alignment.bbs_expanded
+          << '\t' << alignment.bbs_pruned << '\t' << alignment.bbs_queue_peak << '\t' << alignment.device_peak_bytes
+          << '\t' << (verified.resource_failure.empty() ? alignment.failure : verified.resource_failure) << '\t';
+        for (int id : verified.path.nodes) loop_trace_ << id << ',';
+        loop_trace_ << '\t' << verified.requested_bytes << '\t' << verified.target_bytes
+                    << '\t' << !verified.resource_failure.empty() << '\t' << verified.initialization_trace << '\t';
+        if (!alignment.T_target_query.isNull()) {
+          const auto transform = alignment.T_target_query.matrix();
+          for (int row = 0; row < 3; ++row) for (int column = 0; column < 4; ++column)
+            loop_trace_ << transform(row,column) << ',';
+        }
+        loop_trace_ << '\n';
+        loop_trace_.flush();
+      }
+
+  }
+  const auto selected=Relocalizer::select(results,_parameters.registration,proposal.match_decision);
+  if(selected) {
+    auto& verified=results[*selected];auto& a=verified.alignment;
+    const int candidate=verified.path.anchor;
+    proposal.candidate_links.push_back(Link(candidate,query,Link::kRelocalization,a.T_target_query,getInformation(*a.covariance)).inverse());
+    proposal.loop_candidate=candidate;proposal.path=verified.path;
+  }
+  EXT_LOG_INFO("[relocalization] query={} decision={} candidates={}",query,proposal.match_decision,results.size());
   return proposal;
+}
+Mapping::RelocalizationProposal Mapping::prepare_relocalization(const Node& query, Relocalization& recognition) {
+  auto inputs=prepare_relocalization_inputs(query,recognition);
+  std::vector<Relocalizer::Verification> results;
+  for(auto& input:inputs)results.push_back(evaluate_geometry(std::move(input),_parameters.relocalizer,_parameters.registration));
+  return finish_relocalization(query.id(),std::move(results));
+}
+void Mapping::enable_async_relocalization() {
+  async_relocalization_=true;
+}
+bool Mapping::relocalization_pending() const { return bool(relocalization_work_); }
+void Mapping::schedule_relocalization(const Node& query) {
+  if(relocalization_work_)return; // Optional matching has no backlog; all observations are still archived.
+  Relocalization recognition;
+  auto inputs=prepare_relocalization_inputs(query,recognition);
+  if(inputs.empty())return;
+  auto work=std::make_unique<RelocalizationWork>();work->query=query.id();
+  std::map<int,SE3f> poses;std::multimap<int,Link> links;getCompleteGraph(poses,links);
+  for(const auto& input:inputs)for(int id:input.result.path.nodes)work->poses.emplace(id,poses.at(id));
+  const auto config=_parameters.relocalizer;const auto registration=_parameters.registration;
+  work->result=std::async(std::launch::async,[inputs=std::move(inputs),config,registration]() mutable {
+    omp_set_num_threads(1);
+    std::vector<Relocalizer::Verification> results;
+    for(auto& input:inputs)results.push_back(evaluate_geometry(std::move(input),config,registration));
+    return results;
+  });
+  relocalization_work_=std::move(work);
+}
+bool Mapping::poll_relocalization(bool wait) {
+  if(!relocalization_work_)return false;
+  if(!wait && relocalization_work_->result.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return false;
+  auto work=std::move(relocalization_work_);
+  auto proposal=finish_relocalization(work->query,work->result.get());
+  const bool committed=[&]() -> bool {
+    if(proposal.candidate_links.empty())return false;
+    std::map<int,SE3f> current;std::multimap<int,Link> links;getCompleteGraph(current,links);
+    // Appending nodes/reset does not invalidate immutable old evidence. A changed
+    // target's internal geometry does; never apply a stale assembled-path result.
+    const int anchor=proposal.loop_candidate;
+    for(int id:proposal.path.nodes) {
+      if(!current.count(id) || !work->poses.count(id))return false;
+      const auto before=work->poses.at(anchor).inverse().compose(work->poses.at(id));
+      const auto after=current.at(anchor).inverse().compose(current.at(id));
+      if((before.matrix()-after.matrix()).norm()>1e-4)return false;
+    }
+    // Frozen batch payloads never change after admission.
+    const auto& edge=proposal.candidate_links.front();
+    if(getNodeCopy(edge.from()).hasLink(edge.to()))return false;
+    if(!prepare_relocalization_graph(edge,current,links)) {
+      EXT_LOG_INFO("[relocalization] query={} decision=graph_rejected",work->query);return false;
+    }
+    commit_relocalizations(proposal.candidate_links,std::move(current),links);
+    checkpoint();
+    EXT_LOG_INFO("[relocalization] query={} decision=committed anchor={}",work->query,anchor);
+    return true;
+  }();
+  if(async_relocalization_ && getLastLocationId()>work->query) {
+    const auto latest=getNodeCopy(getLastLocationId());schedule_relocalization(latest);
+  }
+  if(wait && relocalization_work_)return poll_relocalization(true) || committed;
+  return committed;
 }
 
 struct Mapping::GraphUpdate {
   std::map<int, SE3f> poses;
   SE3f correction, mapped;
   std::optional<Mat66_t<double>> covariance;
-  std::vector<std::pair<int, int>> repaired_links;
-  std::optional<sapphire::solver::PoseGraphSolver::Trial> optimizer_trial;
 };
 
-void Mapping::optimize_observation(const Node& query, LoopProposal& loops, Relocalization& recognition, bool reduced, GraphUpdate& update) {
+void Mapping::optimize_observation(const Node& query, RelocalizationProposal& loops, Relocalization& recognition, bool reduced, GraphUpdate& update) {
   const auto* node = &query;
-  const bool hasPosePrior = node->hasLink(node->id(), Link::kPosePrior) && !_graphOptimizer->options.ignore_priors;
-  const bool hasGravityConstraint =
-      node->hasLink(node->id(), Link::kGravity) && _graphOptimizer->options.gravity_sigma > 0.0f && !_parameters.topograph.use_odometry_gravity;
-  const bool optimize = loops.loop_candidate > 0 || reduced || hasPosePrior || hasGravityConstraint || !recognition.loaded.empty();
-  if (node->getWeight() != -1 && optimize) {
-    if (!loops.loopClosureLinksAdded.empty()) update.optimizer_trial.emplace(*_graphOptimizer);
-    EXT_ASSERT(topograph_.poses().count(node->id()));
-    std::map<int, SE3f> poses = topograph_.poses();
-    graph::MaxGraphErrors maxGraphErrors;
-    std::pair<int, int> maxGraphErrorsLinearIds;
-    double optimizationError = 0;
-    int optimizationIterations = 0;
-
-    std::multimap<int, Link> constraints;
-    std::optional<Mat66_t<double>> covariance;
-    // WM eviction does not remove the historical graph. A verified loop must
-    // propagate through cold nodes too; this reads poses/links, not Gaussian payloads.
-    const bool global_correction = _memory->topograph().persistent_root_frames() || loops.loop_candidate > 0;
-    optimizeCurrentMap(node->id(), global_correction, poses, covariance, &constraints, &optimizationError, &optimizationIterations,
-                       loops.candidate_links);
-
-    // Check added loop closures have broken the graph
-    // (in case of wrong loop closures).
-    bool accepted = true;
-    if (poses.empty()) {
-      EXT_LOG_WARN("[graph] Optimization failed; reverting trial loop constraints");
-      for (std::list<std::pair<int, int>>::iterator iter = loops.loopClosureLinksAdded.begin(); iter != loops.loopClosureLinksAdded.end(); ++iter) {
-        if (iter->second < 0) _memory->topograph().removeLink(iter->first, iter->second);
+  if(!loops.candidate_links.empty()) {
+    std::map<int,SE3f> poses;std::multimap<int,Link> links;
+    if(prepare_relocalization_graph(loops.candidate_links.front(),poses,links)) {
+      // Only the connected component belongs in the live projection. All other
+      // solutions retain their independent datums in storage.
+      topograph_.remember_solution(poses);
+      auto connected=_memory->metric_component(query.id());
+      for(int endpoint:{loops.candidate_links.front().from(),loops.candidate_links.front().to()}) {
+        const auto ids=_memory->metric_component(endpoint);connected.insert(ids.begin(),ids.end());
       }
-      accepted = false;
-      loops.loop_candidate = 0;
-      recognition.rejected = true;
-    } else if (loops.loopClosureLinksAdded.size() && optimizationIterations > 0 && constraints.size()) {
-      maxGraphErrors = graph::computeMaxGraphErrors(poses, constraints);
-      if (!maxGraphErrors.linearLink.isValid() && !maxGraphErrors.angularLink.isValid()) {
-        EXT_LOG_WARN("[graph] Cannot check residuals: no valid constraints; loop consistency unverified");
-      }
-
-      bool reject = false;
-      if (maxGraphErrors.linearLink.isValid()) {
-        maxGraphErrorsLinearIds = std::make_pair(maxGraphErrors.linearLink.from(), maxGraphErrors.linearLink.to());
-        EXT_LOG_DEBUG("[graph] Max optimization linear error = {:.6f} m (link {:d}->{:d}, var={:.6f}, ratio error/std={:.6f})",
-                      maxGraphErrors.linear, maxGraphErrors.linearLink.from(), maxGraphErrors.linearLink.to(),
-                      maxGraphErrors.linearLink.transVariance(),
-                      maxGraphErrors.linear / sqrt(maxGraphErrors.linearLink.transVariance()));
-        if (_parameters.pose_graph.max_constraint_error_sigma > 0.0f &&
-            maxGraphErrors.linearRatio > _parameters.pose_graph.max_constraint_error_sigma) {
-          if (maxGraphErrorsLinearIds.first != maxGraphErrorsLinearIds.second && _parameters.pose_graph.repair_radius_m > 0.0 &&
-              maxGraphErrorsLinearIds == topograph_.rejected_edge() &&
-              graph::findLink(constraints, maxGraphErrorsLinearIds.first, maxGraphErrorsLinearIds.second) != constraints.end()) {
-            EXT_LOG_WARN("[graph] Repeated excessive residual on constraint {:d} -> {:d}; attempting graph repair",
-                         maxGraphErrorsLinearIds.first, maxGraphErrorsLinearIds.second);
-
-            std::list<std::pair<int, int>> removedLinks =
-                repairGraph(maxGraphErrors, poses, constraints, optimizationError, optimizationIterations, covariance);
-
-            if (removedLinks.empty()) {
-              EXT_LOG_WARN("[graph] Repair failed; rejecting trial loop constraints");
-              reject = true;
-            } else {
-              for (auto link : removedLinks) {
-                EXT_LOG_WARN("[graph] Repair removed constraint: {:d} -> {:d}", link.first, link.second);
-                update.repaired_links.push_back(link);
-              }
-              EXT_LOG_INFO("[graph] Repair succeeded; conflicting constraints removed");
-            }
-          } else {
-            reject = true;
-          }
-
-          if (reject) {
-            EXT_LOG_WARN(
-                "[graph] Rejecting {:d} trial loop constraints (first {:d} -> {:d}): residual_sigma_ratio={:.3f}; "
-                "worst_constraint={:d} -> {:d} type={:d} position_error_m={:.6f} sigma_m={:.6f}; threshold {} = {:.3f}",
-                (int)loops.loopClosureLinksAdded.size(), loops.loopClosureLinksAdded.front().first, loops.loopClosureLinksAdded.front().second,
-                maxGraphErrors.linearRatio, maxGraphErrors.linearLink.from(), maxGraphErrors.linearLink.to(),
-                maxGraphErrors.linearLink.type(), maxGraphErrors.linear, sqrt(maxGraphErrors.linearLink.transVariance()),
-                "pose_graph.max_constraint_error_sigma", _parameters.pose_graph.max_constraint_error_sigma);
-
-            if (maxGraphErrors.linearLink.isLoopClosure()) {
-              topograph_.record_rejected_edge(maxGraphErrorsLinearIds);
-            }
-          }
-        } else if (_parameters.pose_graph.max_constraint_error_sigma == 0.0f && maxGraphErrors.linearRatio > 100 &&
-                   !_graphOptimizer->options.robust) {
-          EXT_LOG_ERROR(
-              "[graph] Excessive position residual accepted: residual_sigma_ratio={:.3f} constraint={:d} -> {:d} type={:d} error_m={:.6f}; "
-              "sigma_m={:.6f}; rejection threshold {} disabled",
-              maxGraphErrors.linearRatio, maxGraphErrors.linearLink.from(), maxGraphErrors.linearLink.to(),
-              maxGraphErrors.linearLink.type(), maxGraphErrors.linear, sqrt(maxGraphErrors.linearLink.transVariance()),
-              "pose_graph.max_constraint_error_sigma");
-        }
-      }
-
-      if (maxGraphErrors.angularLink.isValid()) {
-        EXT_LOG_DEBUG("[graph] Max optimization angular error = {:.6f} deg (link {:d}->{:d}, var={:.6f}, ratio error/std={:.6f})",
-                      maxGraphErrors.angular * 180.0f / CV_PI, maxGraphErrors.angularLink.from(),
-                      maxGraphErrors.angularLink.to(), maxGraphErrors.angularLink.rotVariance(),
-                      maxGraphErrors.angular / sqrt(maxGraphErrors.angularLink.rotVariance()));
-        if (_parameters.pose_graph.max_constraint_error_sigma > 0.0f &&
-            maxGraphErrors.angularRatio > _parameters.pose_graph.max_constraint_error_sigma) {
-          EXT_LOG_WARN(
-              "[graph] Rejecting {:d} trial loop constraints (first {:d} -> {:d}): residual_sigma_ratio={:.3f}; "
-              "worst_constraint={:d} -> {:d} type={:d} angular_error_deg={:.6f} sigma_rad={:.6f}; threshold {} = {:.3f}",
-              (int)loops.loopClosureLinksAdded.size(), loops.loopClosureLinksAdded.front().first, loops.loopClosureLinksAdded.front().second,
-              maxGraphErrors.angularRatio, maxGraphErrors.angularLink.from(), maxGraphErrors.angularLink.to(),
-              maxGraphErrors.angularLink.type(), maxGraphErrors.angular * 180.0f / CV_PI,
-              sqrt(maxGraphErrors.angularLink.rotVariance()), "pose_graph.max_constraint_error_sigma",
-              _parameters.pose_graph.max_constraint_error_sigma);
-          reject = true;
-        } else if (_parameters.pose_graph.max_constraint_error_sigma == 0.0f && maxGraphErrors.angularRatio > 100 &&
-                   !_graphOptimizer->options.robust) {
-          EXT_LOG_ERROR(
-              "[graph] Excessive angular residual accepted: residual_sigma_ratio={:.3f} constraint={:d} -> {:d} type={:d} error_deg={:.6f}; "
-              "sigma_rad={:.6f}; rejection threshold {} disabled",
-              maxGraphErrors.angularRatio, maxGraphErrors.angularLink.from(), maxGraphErrors.angularLink.to(),
-              maxGraphErrors.angularLink.type(), maxGraphErrors.angular * 180.0f / CV_PI,
-              sqrt(maxGraphErrors.angularLink.rotVariance()), "pose_graph.max_constraint_error_sigma");
-        }
-      }
-
-      // Removing a rejected private candidate requires no committed edit. A
-      // historical repair, however, must be applicable by its state owner in
-      // full. Never publish poses from a repair while silently skipping a cold
-      // endpoint.
-      update.repaired_links.erase(std::remove_if(update.repaired_links.begin(), update.repaired_links.end(),
-                                                 [&](const auto& removed) {
-                                                   return std::any_of(
-                                                       loops.candidate_links.begin(), loops.candidate_links.end(), [&](const Link& candidate) {
-                                                         return (candidate.from() == removed.first && candidate.to() == removed.second) ||
-                                                                (candidate.to() == removed.first && candidate.from() == removed.second);
-                                                       });
-                                                 }),
-                                  update.repaired_links.end());
-      for (const auto& edge : update.repaired_links) {
-        if ((edge.first > 0 && !_memory->getNode(edge.first)) || (edge.second > 0 && !_memory->getNode(edge.second))) {
-          EXT_LOG_WARN("[graph] Reject trial: repair endpoint {}->{} is not resident", edge.first, edge.second);
-          reject = true;
-        }
-      }
-
-      if (reject) {
-        for (std::list<std::pair<int, int>>::iterator iter = loops.loopClosureLinksAdded.begin(); iter != loops.loopClosureLinksAdded.end(); ++iter) {
-          if (iter->second < 0) _memory->topograph().removeLink(iter->first, iter->second);
-        }
-        accepted = false;
-        loops.loop_candidate = 0;
-        recognition.rejected = true;
-      }
-    }
-
-    if (accepted) {
-      EXT_LOG_DEBUG("[graph] Updated local map (old size={:d}, new size={:d})", (int)topograph_.poses().size(), (int)poses.size());
-      update.poses = std::move(poses);
-      update.covariance = covariance;
-      loops.candidate_links.erase(
-          std::remove_if(loops.candidate_links.begin(), loops.candidate_links.end(),
-                         [&](const Link& edge) { return graph::findLink(constraints, edge.from(), edge.to()) == constraints.end(); }),
-          loops.candidate_links.end());
-      if (loops.loop_candidate && graph::findLink(constraints, node->id(), loops.loop_candidate) == constraints.end()) loops.loop_candidate = 0;
-
+      for(int id:connected)update.poses.emplace(id,poses.at(id));
+      update.correction=update.poses.at(query.id()).compose(query.getPose().inverse());
+      update.mapped=update.poses.at(query.id());
     } else {
-      loops.candidate_links.clear();
-      update.repaired_links.clear();
-      update.optimizer_trial.reset();
-      return;
+      loops.candidate_links.clear();loops.loop_candidate=0;recognition.rejected=true;
     }
-
-    // Update map correction, it should be identify when optimizing from the last node
-    EXT_ASSERT(update.poses.find(node->id()) != update.poses.end());
-    update.correction = update.poses.at(node->id()).compose(node->getPose().inverse());
-    update.mapped = update.poses.at(node->id());  // update
-    if (update.correction.translationSquaredNorm() > 0.1f && _parameters.pose_graph.anchor_at_last_node) {
-      bool hasPrior = node->hasLink(node->id());
-      if (!_graphOptimizer->options.ignore_priors) {
-        for (std::multimap<int, Link>::reverse_iterator iter = constraints.rbegin(); !hasPrior && iter != constraints.rend(); ++iter) {
-          if (iter->second.type() == Link::kPosePrior) {
-            hasPrior = true;
-          }
-        }
-      }
-      if ((!hasPrior || _graphOptimizer->options.ignore_priors) && _graphOptimizer->options.gravity_sigma == 0.0f) {
-        EXT_LOG_ERROR("[graph] Map correction should be identity when optimizing from the last node. T={}", update.correction.debugString().c_str());
-      }
-    }
+    return;
   }
+  // No relocalization proposal: only refresh existing priors/resident projection.
+  // All new metric constraints have already taken the shared graph-trial path.
+  const bool has_prior = node->hasLink(node->id(), Link::kPosePrior) && !_graphOptimizer->options.ignore_priors;
+  const bool has_gravity = node->hasLink(node->id(), Link::kGravity) && _graphOptimizer->options.gravity_sigma > 0.f &&
+                           !_parameters.topograph.use_odometry_gravity;
+  if (node->getWeight() == -1 || !(reduced || has_prior || has_gravity || !recognition.loaded.empty())) return;
+  EXT_ASSERT(topograph_.poses().count(node->id()));
+  auto poses = topograph_.poses();
+  std::multimap<int, Link> constraints;
+  std::optional<Mat66_t<double>> covariance;
+  optimizeCurrentMap(node->id(), _memory->topograph().persistent_root_frames(), poses, covariance, &constraints);
+  if (poses.empty()) {
+    recognition.rejected = true;
+    EXT_LOG_WARN("[graph] Existing-map optimization failed; retaining committed projection");
+    return;
+  }
+  update.poses = std::move(poses);
+  update.covariance = covariance;
+  EXT_ASSERT(update.poses.count(node->id()));
+  update.correction = update.poses.at(node->id()).compose(node->getPose().inverse());
+  update.mapped = update.poses.at(node->id());
 }
 
 std::map<int, int> Mapping::maintain_residency(bool all) {
   std::map<int, int> reduced;
   for (int id : _memory->promote_recent_nodes(all)) {
     if (!topograph_.isGraphReduced()) continue;
+    // Keep loop/trajectory anchors even if all their geometry has been fused.
+    const auto* node = topograph_.getNode(id);
+    if (node && node->hasLink(0, Link::kRelocalization)) continue;
     const int retained = topograph_.reduceNode(id, 0, 0);
     if (!retained) continue;
     // The graph rewrites constraints; storage retains the historical record.
@@ -544,6 +563,7 @@ std::map<int, int> Mapping::maintain_residency(bool all) {
 
 bool Mapping::process_node(std::unique_ptr<Node> input, const Mat66_t<double>& covariance) {
   if (!_memory) throw std::logic_error("Initialize mapping before node input");
+  poll_relocalization();
   if (!input || input->mapId() != -1 || input->isSaved() || !input->getLinks().empty() ||
       !input->getPose().isValid() || !input->has_lidar() || !std::isfinite(input->getStamp()))
     throw std::invalid_argument("Mapping requires a detached LiDAR node");
@@ -551,6 +571,8 @@ bool Mapping::process_node(std::unique_ptr<Node> input, const Mat66_t<double>& c
   const double stamp = input->getStamp();
   statistics_ = Statistics{};
   tools::Timer processing_timer;
+  const auto query_start = clock_seconds(CLOCK_MONOTONIC), query_cpu = clock_seconds(CLOCK_THREAD_CPUTIME_ID), query_process_cpu = clock_seconds(CLOCK_PROCESS_CPUTIME_ID);
+  const auto query_rss = tools::resident_set_size();
   const auto last_pose = topograph_.current_odom_pose();
   if (!last_pose.isNull() &&
       ((!last_pose.isIdentity() && odom.isIdentity()) ||
@@ -574,27 +596,35 @@ bool Mapping::process_node(std::unique_ptr<Node> input, const Mat66_t<double>& c
   topograph_.track_observation(*node, covariance);
   topograph_.remove_reduced(reduced);
   Relocalization recognition;
-  auto loops = prepare_loops(*node, recognition);
+  tools::Timer stages;
+  auto loops = async_relocalization_ ? RelocalizationProposal{} : prepare_relocalization(*node, recognition);
+  const auto prepare_ms = stages.lap_seconds()*1000;
   GraphUpdate graph;
   optimize_observation(*node, loops, recognition, !reduced.empty(), graph);
-  _memory->topograph().apply_links(loops.candidate_links, graph.repaired_links);
+  const auto pgo_ms = stages.lap_seconds()*1000;
+  std::map<int, Node> drafts;
+  int last_loop = 0;
+  topograph_.prepare_links(loops.candidate_links, {}, drafts, last_loop);
+  if (!drafts.empty()) topograph_.apply_links(drafts, last_loop);
   if (!graph.poses.empty()) topograph_.commit_solution(graph.poses, graph.correction, graph.covariance, graph.mapped);
-  if (graph.optimizer_trial) graph.optimizer_trial->commit();
   topograph_.commit_loop(loops.loop_candidate);
-  if (loops.loop_candidate) run_.distance_since_last_loop = 0;
+  if (loops.loop_candidate) {
+    run_.distance_since_last_loop = 0;
+  }
+  const auto commit_ms = stages.lap_seconds()*1000;
   if (const int component = topograph_.publication_component(_parameters.topograph.use_previous_map, _graphOptimizer->options.max_iterations > 0))
     selectWorldComponent(component);
   topograph_.publish_current(reduced, {});
   statistics_.setRefNodeId(node->id());
   statistics_.setStamp(stamp);
-  statistics_.addStatistic("Loop/SpatialId/", loops.loop_candidate);
-  statistics_.addStatistic("Loop/SpatialCandidates/", loops.spatial_candidates_checked);
+  statistics_.addStatistic("Relocalization/SpatialId/", loops.loop_candidate);
+  statistics_.addStatistic("Relocalization/CandidateTrials/", loops.candidate_trials);
   statistics_.addStatistic("Localization/MapAligned/", topograph_.aligned());
-  statistics_.addStatistic("Loop/Id/", loops.loop_candidate);
+  statistics_.addStatistic("Relocalization/Id/", loops.loop_candidate);
   statistics_.addStatistic("Memory/Distance_travelled/m", run_.distance_travelled);
-  statistics_.addStatistic("Loop/Distance_since_last_closure/m", run_.distance_since_last_loop);
+  statistics_.addStatistic("Relocalization/Distance_since_last_closure/m", run_.distance_since_last_loop);
   const OdomObservation observation{node->id(), ++trajectory_sequence_, stamp, SE3f::identity(), odom};
-  _memory->save_keyframe(node->id(), {observation}, &statistics_, _parameters.statistics.save_resident_nodes);
+  _memory->save_keyframe(node->id(), {observation}, &statistics_, _parameters.statistics.save_resident_nodes, loops.loop_candidate > 0);
   std::list<int> removed;
   if (_memory->working_memory_over_budget(_parameters.memory.resident_budget_nodes))
     removed = _memory->trim_working_memory(_parameters.memory.resident_budget_nodes, recognition.loaded);
@@ -605,6 +635,17 @@ bool Mapping::process_node(std::unique_ptr<Node> input, const Mat66_t<double>& c
   statistics_.addStatistic("Timing/Total/ms", processing_timer.elapsed_seconds() * 1000);
   statistics_.addStatistic("Memory/WorkingPayloadBytes/", _memory->working_memory_bytes());
   statistics_log_.write(statistics_);
+  if (query_trace_.is_open()) {
+    rusage usage{}; getrusage(RUSAGE_SELF,&usage);
+    query_trace_ << node->id() << '\t' << stamp << '\t' << query_start << '\t' << clock_seconds(CLOCK_MONOTONIC)
+      << '\t' << (clock_seconds(CLOCK_THREAD_CPUTIME_ID)-query_cpu)*1000 << '\t' << (clock_seconds(CLOCK_PROCESS_CPUTIME_ID)-query_process_cpu)*1000
+      << '\t' << query_rss << '\t' << tools::resident_set_size() << '\t' << usage.ru_maxrss*1024ULL
+      << '\t' << prepare_ms << '\t' << pgo_ms << '\t' << commit_ms << '\t' << stages.elapsed_seconds()*1000
+      << '\t' << loops.candidate_trials << '\t' << loops.loop_candidate
+      << '\t' << loops.match_decision << '\n';
+    query_trace_.flush();
+  }
+  if(async_relocalization_)schedule_relocalization(*node);
   return true;
 }
 
@@ -851,7 +892,7 @@ std::list<std::pair<int, int>> Mapping::repairGraph(graph::MaxGraphErrors& maxGr
         EXT_LOG_WARN("[graph] Cannot check residuals: no valid constraints; loop consistency unverified");
       } else if (subMaxGraphErrors.linearRatio > _parameters.pose_graph.max_constraint_error_sigma) {
         float distance = poses.at(originalMaxErrorLinkFrom).translationDistance(poses.at(subMaxGraphErrors.linearLink.from()));
-        if (subMaxGraphErrors.linearLink.isLoopClosure() && distance < _parameters.pose_graph.repair_radius_m) {
+        if (subMaxGraphErrors.linearLink.isRelocalization() && distance < _parameters.pose_graph.repair_radius_m) {
           EXT_LOG_WARN(
               "[graph] Optimization error is still high ({:.6f}, on link {:d}->{:d} type={:d}) after removing the loop closure with the highest "
               "error. "
@@ -942,14 +983,14 @@ void Mapping::getGraph(std::map<int, SE3f>& poses, std::multimap<int, Link>& con
   }
 }
 
-std::optional<Link> Mapping::verify_loop(int from, int to, const SE3f& guess) const {
+std::optional<Link> Mapping::verify_relocalization(int from, int to, const SE3f& guess) const {
   if (!_memory || _graphOptimizer->options.max_iterations <= 0)
     throw std::logic_error("Loop verification requires an initialized metric map and optimizer");
   const auto source = getNodeCopy(from);
   const auto target = getNodeCopy(to);
   const auto registration = relocalizer_->verify(from, to, guess);
   if (registration.T_target_query.isNull()) return {};
-  return Link(from, to, Link::kLoopClosure, registration.T_target_query, getInformation(*registration.covariance));
+  return Link(from, to, Link::kRelocalization, registration.T_target_query, getInformation(*registration.covariance));
 }
 
 std::map<int, SE3f> Mapping::solve_graph(const std::map<int, SE3f>& poses, const std::multimap<int, Link>& links) const {
@@ -961,7 +1002,7 @@ std::map<int, SE3f> Mapping::solve_graph(const std::map<int, SE3f>& poses, const
   return optimizeOfflineComponents(poses, links);
 }
 
-void Mapping::commit_loops(const std::vector<Link>& added, std::map<int, SE3f> poses, const std::multimap<int, Link>& links) {
+void Mapping::commit_relocalizations(const std::vector<Link>& added, std::map<int, SE3f> poses, const std::multimap<int, Link>& links) {
   if (added.empty()) return;
   if (!_memory || poses.empty()) throw std::invalid_argument("Cannot commit an empty graph solution");
   topograph_.validateFramePose(poses);
@@ -970,7 +1011,7 @@ void Mapping::commit_loops(const std::vector<Link>& added, std::map<int, SE3f> p
   if (limit > 0 && (errors.linearRatio > limit || errors.angularRatio > limit))
     throw std::invalid_argument("Offline graph exceeds the configured residual limit");
   for (const auto& edge : added) {
-    if (!edge.isLoopClosure() || !poses.count(edge.from()) || !poses.count(edge.to()) ||
+    if (!edge.isRelocalization() || !poses.count(edge.from()) || !poses.count(edge.to()) ||
         graph::findLink(links, edge.from(), edge.to()) == links.end())
       throw std::invalid_argument("Offline loop is absent from the accepted graph");
   }
@@ -996,6 +1037,61 @@ void Mapping::commit_loops(const std::vector<Link>& added, std::map<int, SE3f> p
     // Update optimized poses
     topograph_.apply_offline_solution(poses, false);
   }
+}
+
+std::optional<Link> Mapping::join_segments(int reference, int query, const SE3f& seed) {
+  if (!_memory || reference <= 0 || query <= 0 || reference == query || !seed.isValid())
+    throw std::invalid_argument("Joining segments requires distinct saved nodes and a finite T_reference_query seed");
+  if (!topograph_.current_odom_pose().isNull())
+    throw std::logic_error("Join a reopened archive with no active odometry session");
+  const auto edge=verify_relocalization(reference,query,seed);
+  if(!edge)return {};
+  std::map<int,SE3f> poses;std::multimap<int,Link> links;
+  if(!prepare_relocalization_graph(*edge,poses,links))return {};
+  commit_relocalizations({*edge},std::move(poses),links);
+  topograph_.clear_projection();selectWorldComponent(reference);checkpoint();return edge;
+}
+
+bool Mapping::prepare_relocalization_graph(const Link& edge,std::map<int,SE3f>& poses,std::multimap<int,Link>& links) const {
+  const auto a=_memory->metric_component(edge.from()),b=_memory->metric_component(edge.to());
+  getCompleteGraph(poses,links);
+  if(!a.count(edge.to())) {
+    const auto oldest=[&](const std::set<int>& ids) {
+      std::int64_t order=std::numeric_limits<std::int64_t>::max();
+      for(const auto& [id,frame]:topograph_.root_frames())if(ids.count(id))order=std::min(order,frame.creation_order);
+      return order;
+    };
+    const auto order_a=oldest(a),order_b=oldest(b);
+    if(order_a==std::numeric_limits<std::int64_t>::max()||order_b==std::numeric_limits<std::int64_t>::max())throw std::runtime_error("Missing component datum");
+    const auto a_from_b=poses.at(edge.from()).compose(edge.transform()).compose(poses.at(edge.to()).inverse());
+    const auto& moving=order_a<order_b?b:a;const auto T=order_a<order_b?a_from_b:a_from_b.inverse();
+    for(int id:moving)poses.at(id)=T.compose(poses.at(id));
+  }
+  links.emplace(edge.from(),edge);
+  poses=solve_graph(poses,links);if(poses.empty())return false;
+  const auto errors=graph::computeMaxGraphErrors(poses,links);const auto limit=_parameters.pose_graph.max_constraint_error_sigma;
+  return limit<=0 || (errors.linearRatio<=limit && errors.angularRatio<=limit);
+}
+
+std::size_t Mapping::relocalize() {
+  if(!_memory || !topograph_.current_odom_pose().isNull())throw std::logic_error("Automatic archive relocalization requires a reopened idle map");
+  size_t committed=0;
+  for(int id:_memory->getAllNodeIds()) {
+    const auto query=getNodeCopy(id);Relocalization recognition;
+    auto proposal=prepare_relocalization(query,recognition);
+    if(query_trace_.is_open()) {
+      query_trace_<<id<<'\t'<<query.getStamp();
+      for(int column=2;column<15;++column)query_trace_<<'\t';
+      query_trace_<<'\t'<<proposal.match_decision<<'\n';query_trace_.flush();
+    }
+    if(proposal.candidate_links.empty())continue;
+    std::map<int,SE3f> poses;std::multimap<int,Link> links;
+    if(!prepare_relocalization_graph(proposal.candidate_links.front(),poses,links))continue;
+    commit_relocalizations(proposal.candidate_links,std::move(poses),links);
+    topograph_.clear_projection();selectWorldComponent(id);checkpoint();
+    ++committed;
+  }
+  return committed;
 }
 
 bool Mapping::addLink(const Link& link) {

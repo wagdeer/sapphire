@@ -12,24 +12,17 @@ class LidarFactor {
   std::vector<PointCluster> sig_vecs;
   std::vector<std::vector<PointCluster>> plvec_voxels;
   std::vector<double> coeffs;
-  vvec<double, 3> eig_values;
-  vmat<double, 3> eig_vectors;
-  std::vector<PointCluster> pcr_adds;
   int win_size;
 
   LidarFactor(int _w) : win_size(_w) {}
 
-  void push_voxel(std::vector<PointCluster> &vec_orig, PointCluster &fix, double coe, Eigen::Vector3d &eig_value, Eigen::Matrix3d &eig_vector,
-                  PointCluster &pcr_add) {
+  void push_voxel(const std::vector<PointCluster> &vec_orig, const PointCluster &fix, double coe) {
     plvec_voxels.push_back(vec_orig);
     sig_vecs.push_back(fix);
     coeffs.push_back(coe);
-    eig_values.push_back(eig_value);
-    eig_vectors.push_back(eig_vector);
-    pcr_adds.push_back(pcr_add);
   }
 
-  void acc_evaluate2(const std::vector<StateGroup> &xs, int head, int end, Eigen::MatrixXd &Hess, Eigen::VectorXd &JacT, double &residual) {
+  void acc_evaluate2(const std::vector<StateGroup> &xs, int head, int end, Eigen::MatrixXd &Hess, Eigen::VectorXd &JacT, double &residual) const {
     Hess.setZero();
     JacT.setZero();
     residual = 0;
@@ -43,13 +36,15 @@ class LidarFactor {
     Eigen::Matrix3d umumT;
 
     for (int a = head; a < end; a++) {
-      std::vector<PointCluster> &sig_orig = plvec_voxels[a];
+      const std::vector<PointCluster> &sig_orig = plvec_voxels[a];
       double coe = coeffs[a];
 
-      Eigen::Vector3d lmbd = eig_values[a];
-      Eigen::Matrix3d U = eig_vectors[a];
-      int NN = pcr_adds[a].N;
-      Eigen::Vector3d vBar = pcr_adds[a].v / NN;
+      const PointCluster aggregate = world_moments(xs, a);
+      Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(aggregate.cov());
+      Eigen::Vector3d lmbd = solver.eigenvalues();
+      Eigen::Matrix3d U = solver.eigenvectors();
+      int NN = aggregate.N;
+      Eigen::Vector3d vBar = aggregate.mean();
 
       Eigen::Vector3d u[3] = {U.col(0), U.col(1), U.col(2)};
       Eigen::Vector3d &uk = u[kk];
@@ -128,45 +123,33 @@ class LidarFactor {
     }
   }
 
-  void evaluate_only_residual(const std::vector<StateGroup> &xs, int head, int end, double &residual) {
+  // Pure evaluation: rejected trial poses must never leak into map geometry.
+  void evaluate_only_residual(const std::vector<StateGroup> &xs, int head, int end, double &residual) const {
     residual = 0;
-    int kk = 0;
-
-    PointCluster pcr;
-
-    for (int a = head; a < end; a++) {
-      const std::vector<PointCluster> &sig_orig = plvec_voxels[a];
-      PointCluster sig = sig_vecs[a];
-
-      for (int i = 0; i < win_size; i++) {
-        if (sig_orig[i].N != 0) {
-          pcr.transform(sig_orig[i], xs[i]);
-          sig += pcr;
-        }
-      }
-
-      Eigen::Vector3d vBar = sig.v / sig.N;
-      Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(sig.P / sig.N - vBar * vBar.transpose());
-      Eigen::Vector3d lmbd = saes.eigenvalues();
-
-      eig_values[a] = saes.eigenvalues();
-      eig_vectors[a] = saes.eigenvectors();
-      pcr_adds[a] = sig;
-
-      residual += coeffs[a] * lmbd[kk];
+    for (int a = head; a < end; ++a) {
+      const PointCluster aggregate = world_moments(xs, a);
+      Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(aggregate.cov());
+      residual += coeffs[a] * solver.eigenvalues()[0];
     }
   }
 
   void clear() {
     sig_vecs.clear();
     plvec_voxels.clear();
-    eig_values.clear();
-    eig_vectors.clear();
-    pcr_adds.clear();
     coeffs.clear();
   }
 
-  ~LidarFactor() {}
+  // Sufficient statistics at an explicit pose argument; never a cached trial.
+  PointCluster world_moments(const std::vector<StateGroup> &states, int factor) const {
+    PointCluster sum = sig_vecs[factor];
+    for (int i = 0; i < win_size; ++i) {
+      if (!plvec_voxels[factor][i].N) continue;
+      PointCluster transformed;
+      transformed.transform(plvec_voxels[factor][i], states[i]);
+      sum += transformed;
+    }
+    return sum;
+  }
 };
 
 }  // namespace sapphire

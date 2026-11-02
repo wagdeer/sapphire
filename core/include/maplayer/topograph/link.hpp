@@ -11,7 +11,7 @@ class Link {
 
   enum Type : int {
     kOdometry = 0,     ///< Trajectory backbone, including pure-odometry composition.
-    kLoopClosure = 1,  ///< Verified node-to-node measurement; search origin is logged by the producer.
+    kRelocalization = 1,  ///< Verified node-to-node measurement; search origin is logged by the producer.
     kPosePrior = 7,    ///< Absolute pose prior (from == to).
     kGravity = 9,      ///< Gravity direction (from == to).
     kUndef = 99        ///< Default invalid object, never persisted.
@@ -20,7 +20,7 @@ class Link {
   static constexpr bool isConstraintType(Type type) {
     switch (type) {
       case kOdometry:
-      case kLoopClosure:
+      case kRelocalization:
       case kPosePrior:
       case kGravity:
         return true;
@@ -29,7 +29,7 @@ class Link {
     }
   }
   bool isOdometry() const { return type_ == kOdometry; }
-  bool isLoopClosure() const { return type_ == kLoopClosure; }
+  bool isRelocalization() const { return type_ == kRelocalization; }
 
   static const char* typeName(Type type) noexcept;
 

@@ -73,7 +73,8 @@ def rotation_to_quaternion(node_id: int, rotation: np.ndarray) -> np.ndarray:
     return quaternion / norm
 
 
-def export(database_path: Path, output_path: Path) -> tuple[int, int]:
+def export(database_path: Path, output_path: Path, segment: int | None = None,
+           component_node: int | None = None) -> tuple[int, int]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = output_path.with_name(output_path.name + ".tmp")
     anchors = set()
@@ -82,13 +83,16 @@ def export(database_path: Path, output_path: Path) -> tuple[int, int]:
     connection = sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True)
     try:
         connection.execute("BEGIN")
-        poses = load_optimized_poses(connection)
+        poses = load_optimized_poses(connection, segment, component_node)
+        known_nodes = {row[0] for row in connection.execute("SELECT id FROM Node")}
         rows = connection.execute("SELECT anchor_id,stamp,anchor_from_body FROM Trajectory ORDER BY sequence")
         try:
             with temporary_path.open("w", encoding="ascii", newline="\n") as output:
                 for anchor, timestamp, relative_blob in rows:
+                    if anchor not in known_nodes:
+                        raise RuntimeError(f"轨迹锚点 {anchor} 缺少地图节点")
                     if anchor not in poses:
-                        raise RuntimeError(f"轨迹锚点 {anchor} 缺少优化位姿")
+                        continue
                     if not np.isfinite(timestamp) or (previous_timestamp is not None and timestamp <= previous_timestamp):
                         raise RuntimeError("轨迹时间戳非有限或未严格递增")
                     transform = poses[anchor] @ decode_pose(anchor, relative_blob)
@@ -119,6 +123,9 @@ def parse_arguments() -> argparse.Namespace:
         type=Path,
         help="输出路径，默认写入地图会话目录下的 odom_pose.tum",
     )
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--segment", type=int, help="只导出指定采集片段（Node.map_id）")
+    selection.add_argument("--component-node", type=int, help="导出包含该节点的已对齐连通地图轨迹；时间须递增")
     return parser.parse_args()
 
 
@@ -131,7 +138,7 @@ def main() -> int:
             if arguments.output
             else session_dir / "odom_pose.tum"
         )
-        node_count, pose_count = export(database_path, output_path)
+        node_count, pose_count = export(database_path, output_path, arguments.segment, arguments.component_node)
         print(
             f"完成：{output_path}，从 {node_count} 个优化锚点 "
             f"拼接 {pose_count} 条归档轨迹位姿"

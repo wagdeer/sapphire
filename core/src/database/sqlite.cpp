@@ -886,6 +886,18 @@ void DBDriverSqlite3::getWeightQuery(int nodeId, int &weight) const {
   }
 }
 
+std::optional<GaussianCloudSize> DBDriverSqlite3::node_geometry_size_query(int id) const {
+  if (!_ppDb) return std::nullopt;
+  const auto statement = prepare_statement(_ppDb, "SELECT substr(lidar_geometry, 1, 24), substr(lidar_geometry, -12) FROM Node WHERE id=?1");
+  check_sqlite(_ppDb, sqlite3_bind_int(statement.get(), 1, id));
+  const int status = sqlite3_step(statement.get());
+  if (status == SQLITE_DONE) return std::nullopt;
+  if (status != SQLITE_ROW) throw std::runtime_error(sqlite3_errmsg(_ppDb));
+  if (sqlite3_column_type(statement.get(), 0) == SQLITE_NULL) return GaussianCloudSize{};
+  return lidar::decoded_size(sqlite3_column_blob(statement.get(), 0), sqlite3_column_bytes(statement.get(), 0),
+                             sqlite3_column_blob(statement.get(), 1), sqlite3_column_bytes(statement.get(), 1));
+}
+
 void DBDriverSqlite3::loadNodesQuery(const std::list<int> &ids, std::list<Node *> &output) const {
   // Publish raw-pointer API results only after every archive has decoded.
   std::vector<std::unique_ptr<Node>> owned;
@@ -1130,6 +1142,19 @@ void DBDriverSqlite3::updateQuery(const std::list<Node *> &nodes) const {
     EXT_ASSERT_MSG(rc == SQLITE_OK, "DB error ({}): {}", _version.c_str(), sqlite3_errmsg(_ppDb));
 
     EXT_LOG_DEBUG("Update Node table, Time={:.6f}s", timer.lap_seconds());
+
+    // Geometry replacement participates in the same transaction as its loop
+    // edges and the other endpoint. An empty remainder clears the old archive.
+    auto geometry_update = prepare_statement(_ppDb, "UPDATE Node SET lidar_geometry=?1 WHERE id=?2");
+    for (const auto* node : nodes) if (node->isGeometryModified()) {
+      const auto geometry = node->has_lidar() ? lidar::encode(*node->lidar_cloud()) : cv::Mat();
+      check_sqlite(_ppDb, geometry.empty() ? sqlite3_bind_null(geometry_update.get(), 1) :
+          sqlite3_bind_blob(geometry_update.get(), 1, geometry.data, int(geometry.total()), SQLITE_TRANSIENT));
+      check_sqlite(_ppDb, sqlite3_bind_int(geometry_update.get(), 2, node->id()));
+      const int status = sqlite3_step(geometry_update.get());
+      if (status != SQLITE_DONE) check_sqlite(_ppDb, status);
+      check_sqlite(_ppDb, sqlite3_reset(geometry_update.get()));
+    }
 
     // Update links part1
     query = fmt::format("DELETE FROM Link WHERE from_id=?;");

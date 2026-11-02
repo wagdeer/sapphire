@@ -40,8 +40,9 @@ void LocalMap::insert(const StateGroup &state, const PointCloudPtr &points, doub
   lidar_factor_.clear();
   lidar_factor_.win_size = capacity();
   geometry_.cut_voxel_multi(points_.back(), size() - 1, capacity(), world_points);
-  geometry_.recut_multi(size(), states_, lidar_factor_, parameters_.odometry.min_eigen_value,
+  geometry_.recut_multi(size(), states_, parameters_.odometry.min_eigen_value,
                         parameters_.local_submap.plane_eigen_value_thre_inv);
+  geometry_.collect_factors(lidar_factor_);
 }
 
 void LocalMap::insert_initial(const StateGroup &state, const PointCloudPtr &points, MeasGroup &&raw, double gravity_scale) {
@@ -68,16 +69,24 @@ void LocalMap::optimize(StateGroup &current) {
 
 LidarFrame LocalMap::retire_oldest(double journey, bool emit_geometry) {
   if (!full() || !optimized_) throw std::logic_error("Only a full optimized LocalMap can retire a frame");
-  Eigen::Matrix<double, 6, 1> variance = hessian_.block<POSE_DOF, POSE_DOF>(0, STATE_DOF).diagonal();
-  for (int i = 0; i < 6; ++i) variance[i] = 1.0 / std::abs(variance[i]);
-  GaussianCloud frozen = geometry_.marginalize(journey, size(), 1, states_, lidar_factor_, emit_geometry);
-  if (frozen.size() > 16 * 1024 * 1024 / sizeof(GaussianPoint)) throw std::length_error("Marginal evidence exceeds finite producer bound");
-  LidarFrame frame(states_.front(), std::move(frozen), times_.front(), variance, journeys_.front());
+  return retire(journey, emit_geometry);
+}
+std::optional<LidarFrame> LocalMap::seal_oldest() {
+  if (states_.empty() || !initial_measures_.empty()) return std::nullopt;
+  for (const auto& state : states_)
+    if (!state.R.allFinite() || !state.p.allFinite() || !state.v.allFinite() || !state.cov.allFinite())
+      throw std::runtime_error("Cannot seal a non-finite accepted window");
+  return retire(journeys_.front(), true);
+}
+LidarFrame LocalMap::retire(double journey, bool emit_geometry) {
+  GaussianCloud frozen = geometry_.marginalize(journey, size(), 1, states_, emit_geometry);
+  if (frozen.size() > LidarFrame::max_geometry_bytes / sizeof(GaussianPoint)) throw std::length_error("Marginal evidence exceeds finite producer bound");
+  LidarFrame frame(states_.front(), std::move(frozen), times_.front(), journeys_.front());
   states_.erase(states_.begin());
   points_.erase(points_.begin());
   times_.erase(times_.begin());
   journeys_.erase(journeys_.begin());
-  imu_factors_.pop_front();
+  if (!imu_factors_.empty()) imu_factors_.pop_front();
   ++retired_frames_;
   optimized_ = false;
   return frame;

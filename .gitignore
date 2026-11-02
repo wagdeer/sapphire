@@ -21,6 +21,16 @@ log/
 [Aa][Gg][Ee][Nn][Tt].md
 [Aa][Gg][Ee][Nn][Tt][Ss].md
 
-# Test sources and fixtures stay local, including bundled dependency tests.
+# Bundled dependency tests stay local; first-party regressions are versioned.
 test/
 tests/
+!/tests/
+!/tests/backend/
+!/tests/package_consumer/
+!/tests/*.cpp
+!/tests/*.py
+!/tests/*.cmake
+!/tests/CMakeLists.txt
+!/tests/backend/*.cpp
+!/tests/package_consumer/*.cpp
+!/tests/package_consumer/CMakeLists.txt

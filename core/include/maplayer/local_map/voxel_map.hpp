@@ -1,4 +1,6 @@
 #pragma once
+#include <list>
+#include <unordered_set>
 
 #include "maplayer/local_map/voxel.hpp"
 
@@ -7,13 +9,45 @@ namespace sapphire {
 class VoxelMap {
   friend struct VoxelMapTestAccess;
  private:
-  using TreeMap = std::unordered_map<VOXEL_LOC, unique_ptr<OctoTree>>;
+  // Root cache metadata belongs to this owner, not to recursive geometry.
+  struct Root {
+    unique_ptr<OctoTree> tree;
+    std::list<VOXEL_LOC>::iterator fixed_position;
+    size_t fixed_bytes = 0; // Zero means pinned / not on the fixed LRU.
+    Root(unique_ptr<OctoTree> value) : tree(std::move(value)) {}
+  };
+  using TreeMap = std::unordered_map<VOXEL_LOC, Root>;
   using ActiveMap = std::unordered_map<VOXEL_LOC, OctoTree *>;
 
   OctoTree::Layout layout_;
   const double voxel_size_, voxel_size_inv_;
   TreeMap local_voxel_map_;
   ActiveMap active_voxels_;
+  std::list<VOXEL_LOC> fixed_lru_; // newest first; never contains an active root
+  size_t fixed_bytes_ = 0;
+  const size_t fixed_budget_bytes_;
+  size_t evicted_roots_ = 0;
+
+  static size_t treeBytes(const OctoTree &tree) {
+    size_t bytes = sizeof(tree) + tree.point_fix.capacity() * sizeof(pointVar);
+    if (tree.sw) bytes += tree.sw->allocatedBytes();
+    for (const auto &child : tree.leaves) if (child) bytes += treeBytes(*child);
+    return bytes;
+  }
+  void pin(Root &root) {
+    if (!root.fixed_bytes) return;
+    fixed_bytes_ -= root.fixed_bytes;
+    fixed_lru_.erase(root.fixed_position);
+    root.fixed_bytes = 0;
+  }
+  void cacheFixed(const VOXEL_LOC &key) {
+    auto &root = local_voxel_map_.at(key);
+    pin(root);
+    fixed_lru_.push_front(key);
+    root.fixed_position = fixed_lru_.begin();
+    root.fixed_bytes = sizeof(Root) + treeBytes(*root.tree);
+    fixed_bytes_ += root.fixed_bytes;
+  }
   vector<unique_ptr<OctoTree>> retired_trees_;
   vector<vector<SlideWindow *>> slide_window_pool_;
   int thread_num_;
@@ -25,7 +59,7 @@ class VoxelMap {
 
  public:
   VoxelMap(const OdometryParameters &odometry, const LocalSubmapParameters &local_submap, tools::ParallelExecutor<> &executor)
-      : layout_(local_submap), voxel_size_(odometry.voxel_size), voxel_size_inv_(odometry.voxel_size_inv), slide_window_pool_(std::max(1, local_submap.thread_num)), thread_num_(std::max(1, local_submap.thread_num)), executor_(executor) {
+      : layout_(local_submap), voxel_size_(odometry.voxel_size), voxel_size_inv_(odometry.voxel_size_inv), fixed_budget_bytes_(odometry.fixed_map_budget_bytes), slide_window_pool_(std::max(1, local_submap.thread_num)), thread_num_(std::max(1, local_submap.thread_num)), executor_(executor) {
     if (executor_.thread_count() != static_cast<std::size_t>(thread_num_))
       throw std::invalid_argument("VoxelMap executor must match configured parallelism");
   }
@@ -66,7 +100,7 @@ class VoxelMap {
       if (tree.sw) { ++result.active_windows; window(*tree.sw, tree.layer >= layout_.max_layer); }
       for (const auto &child : tree.leaves) if (child) self(self, *child);
     };
-    for (const auto &entry : local_voxel_map_) visit(visit, *entry.second);
+    for (const auto &entry : local_voxel_map_) visit(visit, *entry.second.tree);
     for (const auto &tree : retired_trees_) visit(visit, *tree);
     for (const auto &pool : slide_window_pool_) for (const auto *w : pool) { ++result.pooled_windows; result.pooled_window_bytes += w->allocatedBytes(); window(*w, false); }
     return result;
@@ -92,7 +126,8 @@ class VoxelMap {
       VOXEL_LOC position(loc[0], loc[1], loc[2]);
       auto iter = local_voxel_map_.find(position);
       if (iter != local_voxel_map_.end()) {
-        OctoTree *tree = iter->second.get();
+        pin(iter->second);
+        OctoTree *tree = iter->second.tree.get();
         tree->allocate(win_count, pv, pw, slide_window_pool_[0]);
         tree->isexist = true;
         active_voxels_.try_emplace(position, tree);
@@ -129,7 +164,8 @@ class VoxelMap {
       auto iter = local_voxel_map_.find(position);
       OctoTree *ot = nullptr;
       if (iter != local_voxel_map_.end()) {
-        ot = iter->second.get();
+        pin(iter->second);
+        ot = iter->second.tree.get();
         ot->isexist = true;
         active_voxels_.try_emplace(position, ot);
       } else {
@@ -188,6 +224,7 @@ class VoxelMap {
   }
 
   void cut_voxel(PointCloud &pvec, int wdsize, double jour) {
+    std::unordered_set<VOXEL_LOC> touched;
     for (pointVar &pv : pvec) {
       float loc[3];
       for (int j = 0; j < 3; j++) {
@@ -198,9 +235,11 @@ class VoxelMap {
       }
 
       VOXEL_LOC position(loc[0], loc[1], loc[2]);
+      touched.insert(position);
       auto iter = local_voxel_map_.find(position);
       if (iter != local_voxel_map_.end()) {
-        iter->second->allocate_fix(pv);
+        pin(iter->second);
+        iter->second.tree->allocate_fix(pv);
       } else {
         auto owner = make_unique<OctoTree>(layout_, 0, wdsize, position);
         OctoTree *ot = owner.get();
@@ -213,6 +252,8 @@ class VoxelMap {
         local_voxel_map_.emplace(position, std::move(owner));
       }
     }
+    for (const auto &key : touched) if (!active_voxels_.count(key)) cacheFixed(key);
+    trimFixed();
   }
 
   const OctoTree *nearest_cluster(const Eigen::Vector3d &wld, double max_distance) const {
@@ -229,7 +270,7 @@ class VoxelMap {
     const OctoTree *best = nullptr;
     for (int x = -1; x <= 1; ++x) for (int y = -1; y <= 1; ++y) for (int z = -1; z <= 1; ++z) {
       const auto found = local_voxel_map_.find(VOXEL_LOC(key[0]+x,key[1]+y,key[2]+z));
-      if (found != local_voxel_map_.end()) found->second->nearest_cluster(wld, d, best);
+      if (found != local_voxel_map_.end()) found->second.tree->nearest_cluster(wld, d, best);
     }
     return best;
   }
@@ -250,7 +291,7 @@ class VoxelMap {
     auto iter = local_voxel_map_.find(position);
     if (iter != local_voxel_map_.end()) {
       double max_prob = 0;
-      flag = iter->second->match(wld, pla, max_prob, point, rotation, pose_covariance, jacobian, sigma_d, oc);
+      flag = iter->second.tree->match(wld, pla, max_prob, point, rotation, pose_covariance, jacobian, sigma_d, oc);
       if (flag && pla == nullptr) {
         spdlog::warn("pla null max_prob: {} {} {} {}", max_prob, iter->first.x, iter->first.y, iter->first.z);
       }
@@ -259,17 +300,14 @@ class VoxelMap {
     return flag;
   }
 
-  void recut(int win_count, vector<StateGroup> &states, LidarFactor &factor, double eigen_threshold, const vector<double> &plane_thresholds) {
+  void recut(int win_count, vector<StateGroup> &states, double eigen_threshold, const vector<double> &plane_thresholds) {
     pool_accounting_dirty_ = true;
     for (auto &entry : active_voxels_) {
       entry.second->recut(win_count, states, slide_window_pool_[0], eigen_threshold, plane_thresholds);
     }
-    for (auto &entry : active_voxels_) {
-      entry.second->tras_opt(factor);
-    }
   }
 
-  void recut_multi(int win_count, vector<StateGroup> &states, LidarFactor &factor, double eigen_threshold, const vector<double> &plane_thresholds) {
+  void recut_multi(int win_count, vector<StateGroup> &states, double eigen_threshold, const vector<double> &plane_thresholds) {
     pool_accounting_dirty_ = true;
     vector<OctoTree *> trees;
     trees.reserve(active_voxels_.size());
@@ -280,7 +318,7 @@ class VoxelMap {
     const int tree_count = static_cast<int>(trees.size());
     const int worker_count = std::min(thread_num_, tree_count);
     if (worker_count <= 1) {
-      recut(win_count, states, factor, eigen_threshold, plane_thresholds);
+      recut(win_count, states, eigen_threshold, plane_thresholds);
       return;
     }
 
@@ -303,12 +341,15 @@ class VoxelMap {
       slide_window_pool_[0].insert(slide_window_pool_[0].end(), slide_window_pool_[i].begin(), slide_window_pool_[i].end());
       slide_window_pool_[i].clear();
     }
-    for (OctoTree *tree : trees) {
-      tree->tras_opt(factor);
-    }
   }
 
-  GaussianCloud marginalize(double journey, int win_count, int margin_size, vector<StateGroup> &states, LidarFactor &factor,
+  // Assemble joint factors from current active geometry; trial evaluation does
+  // not own or mutate the map used for accepted-state marginalization.
+  void collect_factors(LidarFactor &factor) {
+    for (auto &entry : active_voxels_) entry.second->tras_opt(factor);
+  }
+
+  GaussianCloud marginalize(double journey, int win_count, int margin_size, vector<StateGroup> &states,
                             bool emit_gaussians = true) {
     pool_accounting_dirty_ = true;
     vector<OctoTree *> trees;
@@ -324,14 +365,14 @@ class VoxelMap {
     if (worker_count <= 1) {
       vector<PointCluster> moments(win_count);
       for (OctoTree *tree : trees) {
-        tree->margi(win_count, margin_size, states, factor, worker_clouds[0], moments, emit_gaussians);
+        tree->margi(win_count, margin_size, states, worker_clouds[0], moments, emit_gaussians);
       }
     } else {
       const int part = (tree_count + worker_count - 1) / worker_count;
       auto margi_range = [&](int head, int tail, GaussianCloud &cloud) {
         vector<PointCluster> moments(win_count);
         for (int i = head; i < tail; ++i) {
-          trees[i]->margi(win_count, margin_size, states, factor, cloud, moments, emit_gaussians);
+          trees[i]->margi(win_count, margin_size, states, cloud, moments, emit_gaussians);
         }
       };
 
@@ -348,6 +389,7 @@ class VoxelMap {
         ++iter;
       } else {
         iter->second->clear_slwd(slide_window_pool_[0]);
+        cacheFixed(iter->first);
         iter = active_voxels_.erase(iter);
       }
     }
@@ -369,8 +411,10 @@ class VoxelMap {
     pool_accounting_dirty_ = true;
     active_voxels_.clear();
     for (auto &entry : local_voxel_map_) {
-      entry.second->clear_slwd(slide_window_pool_[0]);
+      entry.second.tree->clear_slwd(slide_window_pool_[0]);
     }
+    fixed_lru_.clear();
+    fixed_bytes_ = 0;
     local_voxel_map_.clear();
     layout_.reset_window_order();
   }
@@ -380,26 +424,33 @@ class VoxelMap {
     active_voxels_.clear();
     retired_trees_.reserve(retired_trees_.size() + local_voxel_map_.size());
     for (auto &entry : local_voxel_map_) {
-      entry.second->clear_slwd(slide_window_pool_[0]);
-      retired_trees_.push_back(std::move(entry.second));
+      entry.second.tree->clear_slwd(slide_window_pool_[0]);
+      retired_trees_.push_back(std::move(entry.second.tree));
     }
+    fixed_lru_.clear();
+    fixed_bytes_ = 0;
     local_voxel_map_.clear();
     layout_.reset_window_order();
   }
 
-  void prune(double journey, double max_distance) {
-    pool_accounting_dirty_ = true;
-    for (auto iter = local_voxel_map_.begin(); iter != local_voxel_map_.end();) {
-      if (journey - iter->second->jour < max_distance) {
-        ++iter;
-        continue;
-      }
-      active_voxels_.erase(iter->first);
-      iter->second->clear_slwd(slide_window_pool_[0]);
-      retired_trees_.push_back(std::move(iter->second));
-      iter = local_voxel_map_.erase(iter);
+  // Called only after marginalization/handoff, with numerical workers joined.
+  // Destruction is immediate: deferred garbage is not outside the budget.
+  size_t trimFixed() {
+    size_t released = 0;
+    while (fixed_bytes_ > fixed_budget_bytes_ && !fixed_lru_.empty()) {
+      auto victim = local_voxel_map_.find(fixed_lru_.back());
+      if (active_voxels_.count(victim->first))
+        throw std::logic_error("Active optimization root entered fixed-map LRU");
+      pin(victim->second);
+      local_voxel_map_.erase(victim);
+      ++released;
     }
+    evicted_roots_ += released;
+    return released;
   }
+  size_t fixedBytes() const { return fixed_bytes_; }
+  size_t fixedSize() const { return fixed_lru_.size(); }
+  size_t evictedRoots() const { return evicted_roots_; }
 
   size_t release_retired(size_t max_count) {
     const size_t count = std::min(max_count, retired_trees_.size());

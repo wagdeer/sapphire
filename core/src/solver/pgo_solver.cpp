@@ -377,7 +377,7 @@ bool PoseGraphSolver::optimizeISAM2(int rootId, std::map<int, SE3f>& poses, cons
       if (range.second == 0) continue;
       pendingGroups.push_back(PendingGroup{desired.first, range.first, range.second});
       const Link& link = *desired.second[occurrence];
-      loopClosureAdded = loopClosureAdded || link.isLoopClosure();
+      loopClosureAdded = loopClosureAdded || link.isRelocalization();
     }
   }
 
@@ -618,7 +618,7 @@ std::map<int, SE3f> PoseGraphSolver::optimize(int rootId, const std::map<int, SE
 
         graph.add(gtsam::BetweenFactor<gtsam::Pose3>(id1, id2, to_pose3(iter->second.transform()), model));
       }
-      if (iter->second.isLoopClosure()) {
+      if (iter->second.isRelocalization()) {
         for (size_t factor = firstFactor; factor < graph.size(); ++factor) uncertainFactors.emplace(factor, iter->second);
       }
     }

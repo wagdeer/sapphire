@@ -23,6 +23,9 @@ inline const Eigen::Matrix<T, 3, 3> I33 = Eigen::Matrix<T, 3, 3>::Identity();
 struct alignas(16) pointVar {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   Eigen::Vector3d pnt;
+  // var_init stores measurement covariance in the body frame. pvec_update
+  // replaces it with a world-frame per-point marginal including pose variance;
+  // correlations between points sharing that pose are not represented here.
   Eigen::Matrix3d var;
 
   // Right attitude error and world position error: J = [-R[p]x, I].
@@ -41,26 +44,19 @@ struct alignas(16) pointVar {
 using PointCloud = std::vector<pointVar>;
 using PointCloudPtr = std::shared_ptr<PointCloud>;
 
-inline void calcMeasVar(Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &var) {
-  if (pb[2] == 0) {
-    pb[2] = 0.0001;
+// range_inc is radial standard deviation in metres; degree_inc is the angular
+// error in degrees, retaining the existing sin(angle)^2 tangent variance model.
+inline void calcMeasVar(const Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &var) {
+  const double range = pb.norm();
+  if (!std::isfinite(range) || range <= 0.0) {
+    throw std::invalid_argument("LiDAR measurement requires finite positive range");
   }
-  const float range = pb.norm();
-  const float range_var = range_inc * range_inc;
-  Eigen::Matrix2d direction_var;
+  const double range_var = static_cast<double>(range_inc) * range_inc;
   const double angle_sine = sin(static_cast<double>(degree_inc) * M_PI / 180.0);
-  direction_var << angle_sine * angle_sine, 0, 0, angle_sine * angle_sine;
-  Eigen::Vector3d direction(pb);
-  direction.normalize();
-  Eigen::Matrix3d direction_hat = lie::SO3d::wedge(direction);
-  Eigen::Vector3d base_vector1(1, 1, -(direction(0) + direction(1)) / direction(2));
-  base_vector1.normalize();
-  Eigen::Vector3d base_vector2 = base_vector1.cross(direction);
-  base_vector2.normalize();
-  Eigen::Matrix<double, 3, 2> N;
-  N << base_vector1(0), base_vector2(0), base_vector1(1), base_vector2(1), base_vector1(2), base_vector2(2);
-  const Eigen::Matrix<double, 3, 2> A = range * direction_hat * N;
-  var = direction * range_var * direction.transpose() + A * direction_var * A.transpose();
+  const Eigen::Vector3d direction = pb / range;
+  const Eigen::Matrix3d radial = direction * direction.transpose();
+  const double tangent_sigma = range * angle_sine;
+  var = range_var * radial + (tangent_sigma * tangent_sigma) * (Eigen::Matrix3d::Identity() - radial);
 }
 
 inline void var_init(const StateGroup &extrinsic, const std::vector<LidarPoint> &cloud, const PointCloudPtr &points, double range_error,
@@ -78,6 +74,8 @@ inline void var_init(const StateGroup &extrinsic, const std::vector<LidarPoint> 
 }
 
 inline void pvec_update(const PointCloudPtr &points, const StateGroup &state, vvec<double, 3> &world_points) {
+  // Existing marginal approximation uses attitude/translation blocks separately,
+  // omitting their cross terms and cross-point correlations from the shared pose.
   const Eigen::Matrix3d rot_var = state.cov.block<3, 3>(0, 0);
   const Eigen::Matrix3d tsl_var = state.cov.block<3, 3>(3, 3);
   for (pointVar &point : *points) {

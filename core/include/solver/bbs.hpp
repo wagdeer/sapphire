@@ -23,6 +23,7 @@ struct BbsResult {
   Eigen::Isometry3d T_target_query = Eigen::Isometry3d::Identity();
   gpu::SearchTermination termination = gpu::SearchTermination::kNoCandidates;
   std::size_t root_nodes = 0;
+  std::size_t queue_peak_nodes = 0, device_peak_bytes = 0;
   std::array<std::size_t, 4> expanded_nodes{};
   std::array<std::size_t, 4> pruned_nodes{};
 };

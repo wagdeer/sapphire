@@ -1,0 +1,12 @@
+foreach(kind lidar publication)
+  add_executable(sapphire_ros_${kind}_test "${SAPPHIRE_REPOSITORY}/tests/ros2_${kind}_test.cpp")
+  target_include_directories(sapphire_ros_${kind}_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+  target_link_libraries(sapphire_ros_${kind}_test sapphire::core)
+  ament_target_dependencies(sapphire_ros_${kind}_test ament_index_cpp rclcpp sensor_msgs geometry_msgs nav_msgs tf2 tf2_ros)
+  target_compile_options(sapphire_ros_${kind}_test PRIVATE -UNDEBUG)
+  add_test(NAME sapphire_ros_${kind}_test COMMAND sapphire_ros_${kind}_test)
+endforeach()
+target_sources(sapphire_ros_publication_test PRIVATE src/sapphire_node.cpp)
+target_link_options(sapphire_ros_publication_test PRIVATE "-Wl,--wrap=rcl_publish")
+
+target_include_directories(sapphire_ros_publication_test PRIVATE "${SAPPHIRE_REPOSITORY}/core/src")

@@ -91,7 +91,7 @@ struct PGOParams {
 struct RegistrationParams {
   float lidar_odometry_translation_sigma_m = 0.01;
   float lidar_odometry_rotation_sigma_rad = 0.001;
-  bool lidar_bbs_enabled = true;
+  bool lidar_bbs_enabled = false;
   int lidar_min_inliers = 64;
   int lidar_max_iterations = 32;
   float lidar_max_correspondence_m = 2;
@@ -105,12 +105,20 @@ struct RegistrationParams {
 };
 
 struct RelocalizerParams {
+  bool global_enabled = false;
+  float global_resolution_m = .5f;
+  float global_feature_radius_m = 2.5f;
+  float global_clique_time_sec = .5f;
+  unsigned int global_max_associations = 3000;
+  unsigned int global_index_max_nodes = 16384;
   bool limit_covariance_by_odometry = false;
   float max_loop_distance_m = 0.0;
   bool spatial_enabled = true;
   unsigned int spatial_max_candidates = 5;
   float spatial_radius_m = 1;
   unsigned int spatial_max_graph_hops = 49;
+  unsigned int path_max_nodes = 3;
+  unsigned int path_max_bytes = 64U * 1024U * 1024U;
 
   RelocalizerParams withOverrides(const ParametersMap& input) const;
   ParametersMap parameters() const;
@@ -275,14 +283,15 @@ struct OdometryParameters {
   double beam_err = 0.05;
   double voxel_size = 1.0;
   double voxel_size_inv = 1.0;
-  // Retire voxels after this traveled distance since their last active window.
-  double map_retention_distance = 700.0;
+  // Disposable fixed-history cache. Active BA observations are protected
+  // separately and are not covered by this byte budget.
+  std::size_t fixed_map_budget_bytes = 64U * 1024 * 1024;
   double min_eigen_value = 0.0025;
   int degrade_bound = 10;
 };
 
 struct LocalSubmapParameters {
-  int win_size = 10;
+  int win_size = 10;  // Joint LiDAR/IMU window during initialization and tracking.
   int max_layer = 2;
   double cov_gyr = 0.1;
   double cov_acc = 0.1;
@@ -308,8 +317,15 @@ struct PoseGraphParameters {
   std::string database_path;  // Empty in new mode selects the normal timestamp destination.
   bool enabled = true;
   double submap_travel_distance = 15.0;
-  double submap_max_point_range = 20.0;
   double update_period_sec = 1.0;
+};
+
+struct RecoveryParameters {
+  // Wall-clock silence budget. Zero is explicit offline/externally-clocked mode.
+  double input_timeout_sec = 2.0;
+  // Sensor-clock continuity budgets, independent of playback speed.
+  double max_imu_gap_sec = 0.05;
+  double max_lidar_gap_sec = 0.5;
 };
 
 struct SapphireParameters {
@@ -319,6 +335,7 @@ struct SapphireParameters {
   OdometryParameters odometry;
   LocalSubmapParameters local_submap;
   PoseGraphParameters pose_graph;
+  RecoveryParameters recovery;
 };
 
 SapphireParameters load_parameters(const std::filesystem::path &path, const SensorParameters &sensor);

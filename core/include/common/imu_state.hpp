@@ -66,6 +66,7 @@ struct StateGroup {
     v.setZero();
     bg.setZero();
     ba.setZero();
+    g = Eigen::Vector3d(0, 0, -G_m_s2);
     cov.setIdentity();
     cov *= 0.0001;
     cov.block<6, 6>(9, 9) = Eigen::Matrix<double, 6, 6>::Identity() * 0.00001;

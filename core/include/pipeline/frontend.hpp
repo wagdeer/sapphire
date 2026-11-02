@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <chrono>
 
 #include "slam.hpp"
 #include "parameters.hpp"
@@ -26,33 +27,44 @@ class FrontendRuntime {
     std::function<bool()> wait_for_capacity;
     // Exclusive ownership transfers on entry; callbacks must not copy the cloud.
     std::function<void(LidarFrame &&)> lidar;
-    std::function<void()> reset, invalidate_domain, suspend_output;
+    std::function<bool(LidarFrame &&)> seal;
+    std::function<bool(std::uint64_t)> reset;
+    std::function<void()> suspend_output;
   };
   FrontendRuntime(const SapphireParameters &, const SlamPipeline::Callbacks &, Handoff);
   FrontendRuntime(const FrontendRuntime &) = delete;
   FrontendRuntime &operator=(const FrontendRuntime &) = delete;
   bool push_imu(ImuMeas);
-  bool push_lidar(double, std::vector<LidarPoint> &&, std::optional<double> = std::nullopt);
+  ScanAdmission push_lidar(double, std::vector<LidarPoint> &&, std::optional<double> = std::nullopt);
+  ScanAdmission rejectLidar(double, RecoveryReason);
+  void requestRecovery(RecoveryReason);
+  RecoveryProgress recoveryProgress() const;
+  void markFailed();
+  void checkInputHealth();
   void stop();
   void run();
 
  private:
   friend struct SlamPipelineTestAccess;
   struct ScanCompletion;
-  void notifyInputLoss();
-  void invalidateOdometryDomain();
+  bool recover();
+  void setPhase(TrackingPhase);
+  void acknowledge(const MeasGroup&, ScanDisposition, RecoveryReason = RecoveryReason::None);
+  void cancelQueued(RecoveryReason);
+  RecoveryReason stalledSensor() const;
   void emit_local_scan(const vvec<double, 3> &points);
   void emit_local_map(int marginal_count);
   bool update_lidar_window(const PointCloudPtr &points, const std::deque<ImuMeas> &imus, double journey);
   int initialization(MeasGroup &measures, vvec<double, 3> &points);
-  void system_reset(const std::deque<ImuMeas> &imus);
+  void system_reset();
+  void sealWindow();
 
   const SapphireParameters &parameters_;
   const SlamPipeline::Callbacks &output_;
   Handoff handoff_;
   std::atomic_bool accepting_{true}, stopping_{false};
   std::atomic_uint64_t imu_refusals_{0}, lidar_refusals_{0}, input_revision_{0};
-  std::mutex input_mutex_;
+  mutable std::mutex input_mutex_;
   std::condition_variable input_cv_;
   Synchronizer synchronizer_;
   tools::ParallelExecutor<> parallel_executor_;
@@ -61,5 +73,12 @@ class FrontendRuntime {
   ESKF eskf_;
   std::unique_ptr<Ricp> ricp_;
   LocalMap local_map_;
+  RecoveryProgress recovery_;
+  RecoveryReason pending_reason_ = RecoveryReason::None;
+  bool recovery_episode_ = false;
+  std::uint64_t next_scan_sequence_ = 0;
+  using Clock = std::chrono::steady_clock;
+  Clock::time_point imu_arrival_{}, lidar_arrival_{}, last_scan_finished_{}, stream_started_{};
+  bool seen_imu_ = false, seen_lidar_ = false;
 };
 }  // namespace sapphire

@@ -13,8 +13,8 @@ const char* Link::typeName(Type type) noexcept {
   switch (type) {
     case kOdometry:
       return "Odometry";
-    case kLoopClosure:
-      return "LoopClosure";
+    case kRelocalization:
+      return "Relocalization";
     case kPosePrior:
       return "PosePrior";
     case kGravity:

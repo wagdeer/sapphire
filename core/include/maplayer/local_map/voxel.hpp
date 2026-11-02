@@ -122,7 +122,7 @@ class OctoTree {
   Eigen::Vector3d eig_value;
   Eigen::Matrix3d eig_vector;
 
-  int last_num = 0, opt_state = -1;
+  int last_num = 0;
   mutex mVox;
 
   OctoTree(const Layout &map_layout, int _l, int _w, const VOXEL_LOC &_key = VOXEL_LOC()) : layout(map_layout), layer(_l), octo_state(0), wdsize(_w), voxel_key(_key) {
@@ -312,7 +312,6 @@ class OctoTree {
   void recut(int win_count, vector<StateGroup> &x_buf, vector<SlideWindow *> &sws, double eigen_threshold, const vector<double> &plane_thresholds) {
     if (octo_state == 0) {
       if (layer >= 0) {
-        opt_state = -1;
         if (pcr_add.N <= min_points) {
           plane.is_plane = false;
           return;
@@ -355,7 +354,7 @@ class OctoTree {
     }
   }
 
-  void margi(int win_count, int mgsize, vector<StateGroup> &x_buf, const LidarFactor &vox_opt, GaussianCloud &marginalized,
+  void margi(int win_count, int mgsize, vector<StateGroup> &x_buf, GaussianCloud &marginalized,
              vector<PointCluster> &pcrs_world, bool emit_gaussians) {
     if (octo_state == 0 && layer >= 0) {
       if (!isexist || sw == nullptr) {
@@ -366,35 +365,19 @@ class OctoTree {
       // Child visits are serial; reset the old leaf's moments before reuse.
       for (auto &cluster : pcrs_world) cluster.clear();
 
-      if (opt_state >= static_cast<int>(vox_opt.pcr_adds.size())) [[unlikely]] {
-        throw std::logic_error("Invalid lidar-factor voxel index");
+      // The optimizer's trial evaluations are not map state. Reconstruct only
+      // from the final accepted poses, including the observations being retired.
+      pcr_add = pcr_fix;
+      for (int i = 0; i < win_count; ++i) {
+        if (sw->pcrs_local[layout.window_order[i]].N != 0) {
+          pcrs_world[i].transform(sw->pcrs_local[layout.window_order[i]], x_buf[i]);
+          pcr_add += pcrs_world[i];
+        }
       }
-
-      if (opt_state >= 0) {
-        pcr_add = vox_opt.pcr_adds[opt_state];
-        eig_value = vox_opt.eig_values[opt_state];
-        eig_vector = vox_opt.eig_vectors[opt_state];
-        opt_state = -1;
-
-        for (int i = 0; i < mgsize; i++) {
-          if (sw->pcrs_local[layout.window_order[i]].N != 0) {
-            pcrs_world[i].transform(sw->pcrs_local[layout.window_order[i]], x_buf[i]);
-          }
-        }
-      } else {
-        pcr_add = pcr_fix;
-        for (int i = 0; i < win_count; i++) {
-          if (sw->pcrs_local[layout.window_order[i]].N != 0) {
-            pcrs_world[i].transform(sw->pcrs_local[layout.window_order[i]], x_buf[i]);
-            pcr_add += pcrs_world[i];
-          }
-        }
-
-        if (plane.is_plane) {
-          Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(pcr_add.cov());
-          eig_value = saes.eigenvalues();
-          eig_vector = saes.eigenvectors();
-        }
+      if (plane.is_plane) {
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(pcr_add.cov());
+        eig_value = solver.eigenvalues();
+        eig_vector = solver.eigenvectors();
       }
 
       if (emit_gaussians) {
@@ -450,7 +433,7 @@ class OctoTree {
       isexist = false;
       for (int i = 0; i < 8; i++) {
         if (leaves[i] != nullptr) {
-          leaves[i]->margi(win_count, mgsize, x_buf, vox_opt, marginalized, pcrs_world, emit_gaussians);
+          leaves[i]->margi(win_count, mgsize, x_buf, marginalized, pcrs_world, emit_gaussians);
           isexist = isexist || leaves[i]->isexist;
         }
       }
@@ -469,8 +452,7 @@ class OctoTree {
         for (int i = 0; i < wdsize; i++) {
           pcrs[i] = sw->pcrs_local[layout.window_order[i]];
         }
-        opt_state = vox_opt.plvec_voxels.size();
-        vox_opt.push_voxel(pcrs, pcr_fix, coe, eig_value, eig_vector, pcr_add);
+        vox_opt.push_voxel(pcrs, pcr_fix, coe);
       }
     } else {
       for (int i = 0; i < 8; i++) {

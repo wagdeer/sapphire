@@ -18,6 +18,7 @@
 #include "parameters.hpp"
 #include "module/synchronizer.hpp"
 #include "common/lidar_frame.hpp"
+#include "common/recovery.hpp"
 
 namespace sapphire {
 
@@ -27,7 +28,7 @@ class BackendRuntime;
 class SlamPipeline {
  public:
   enum class CommitOutcome { NotCommitted, Committed, Unknown };
-  enum class ContinuationHead { Idle, Processing, Retryable, Failed };
+  enum class ContinuationHead { Idle, Processing, Failed };
   // Observable admission/commit state. Completed does not imply map-frame readiness.
   struct ContinuationProgress {
     std::uint64_t ready_revision = 0, accepted = 0, completed = 0;
@@ -38,9 +39,6 @@ class SlamPipeline {
     std::exception_ptr first_failure;
     CommitOutcome commit_outcome = CommitOutcome::NotCommitted;
     ContinuationHead head = ContinuationHead::Idle;
-    std::string cancellation_reason;
-    std::size_t association_pending = 0;
-    std::uint64_t association_attempts = 0;
   };
 
   struct Callbacks {
@@ -52,22 +50,25 @@ class SlamPipeline {
     std::function<void(const StateGroup &, bool, double)> lidar_update;
     // Completion of one synchronized scan, including initialization/rejection/BA.
     std::function<void(double, double)> scan_processed;
+    // Exactly one terminal result per submitted scan, even if no pose was made.
+    std::function<void(const ScanResult&)> scan_finished;
+    std::function<void(const RecoveryProgress&)> recovery_changed;
     // Current scan points and local-map increments are in the odometry frame.
     std::function<void(std::shared_ptr<const vvec<double, 3>>)> local_scan;
     std::function<void(std::shared_ptr<const vvec<double, 3>>)> local_map;
   };
 
-  explicit SlamPipeline(SapphireParameters, Callbacks = {}, std::optional<std::pair<int, Eigen::Isometry3d>> = std::nullopt);
+  explicit SlamPipeline(SapphireParameters, Callbacks = {});
   ~SlamPipeline();
   SlamPipeline(const SlamPipeline&) = delete;
   SlamPipeline& operator=(const SlamPipeline&) = delete;
   bool push_imu(ImuMeas imu);
-  bool push_lidar(double t, std::vector<LidarPoint>&& cloud, std::optional<double> end = std::nullopt);
-  bool push_lidar(double t, const std::vector<LidarPoint>& cloud, std::optional<double> end = std::nullopt);
-  void setAttachmentTarget(int target, const Eigen::Isometry3d& seed);
-  void retryContinuation(std::uint64_t sequence);
+  ScanAdmission push_lidar(double t, std::vector<LidarPoint>&& cloud, std::optional<double> end = std::nullopt);
+  ScanAdmission push_lidar(double t, const std::vector<LidarPoint>& cloud, std::optional<double> end = std::nullopt);
+  ScanAdmission rejectLidar(double stamp, RecoveryReason reason = RecoveryReason::InvalidLidar);
+  RecoveryProgress recoveryProgress() const;
   void invalidateOdometryDomain();
-  void notifyInputLoss();
+  void notifyInputLoss(RecoveryReason reason = RecoveryReason::InputUnavailable);
   std::exception_ptr producerFailure() const;
   ContinuationProgress continuationProgress() const;
   void shutdown();
@@ -78,7 +79,6 @@ class SlamPipeline {
                                                   Eigen::Isometry3d& correction, Eigen::Isometry3d& pose) const;
 
   bool failed() const { return failed_.load(std::memory_order_acquire); }
-  std::uint64_t unacceptedTailDrops() const;
 
  private:
   friend struct SlamPipelineTestAccess;
@@ -91,9 +91,9 @@ class SlamPipeline {
     try { callback(std::forward<Args>(args)...); }
     catch (...) { reportCallbackFailure(); }
   }
-  bool waitForCapacity();
+  bool waitForCapacity(bool sealing = false);
   void transfer(LidarFrame&&);
-  void requestReset();
+  bool requestReset(std::uint64_t generation);
   void thd_mapping();
   void recordFailure(std::exception_ptr);
   const SapphireParameters parameters_;
@@ -105,8 +105,8 @@ class SlamPipeline {
   std::exception_ptr producer_failure_;
   std::mutex marginal_mutex_;
   std::condition_variable marginal_cv_;
-  std::deque<LidarFrame, Eigen::aligned_allocator<LidarFrame>> marginal_frames_, reset_tail_;
-  int reset_flag_ = 0;
+  std::deque<LidarFrame, Eigen::aligned_allocator<LidarFrame>> marginal_frames_;
+  std::uint64_t reset_requested_ = 0, reset_completed_ = 0;
   std::atomic_bool failed_{false}, stopping_{false}, odometry_done_{false};
   std::thread odometry_thread_, mapping_thread_;
 };

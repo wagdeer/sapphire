@@ -71,6 +71,7 @@ file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS "${SAPPHIRE_SOURCE}/src/*.cpp")
 target_sources(sapphire_core PRIVATE ${CORE_SOURCES})
 include(thirdparty/gtsam-4.3a2/minimal.cmake)
 add_library(sapphire::gtsam ALIAS gtsam)
+include(thirdparty/g3reg/pagor.cmake)
 configure_file(src/database/schema.sql.in DatabaseSchema.sql @ONLY)
 file(READ "${CMAKE_CURRENT_BINARY_DIR}/DatabaseSchema.sql" SCHEMA_HEX HEX)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/DatabaseSchema_sql.h" "#pragma once\nnamespace sapphire { static const char * DATABASESCHEMA_SQL = \"${SCHEMA_HEX}\"; }\n")
@@ -104,7 +105,7 @@ install(FILES thirdparty/nanoflann/nanoflann.hpp DESTINATION include/thirdparty/
 install(DIRECTORY include/ DESTINATION include FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h")
 
 include(CTest)
-if(BUILD_TESTING AND EXISTS "${SAPPHIRE_REPOSITORY}/tests/CMakeLists.txt")
+if(BUILD_TESTING)
   add_subdirectory("${SAPPHIRE_REPOSITORY}/tests" tests)
 endif()
 
@@ -133,8 +134,8 @@ install(DIRECTORY config/
   FILES_MATCHING PATTERN "*.toml"
 )
 
-# Explicitly opt in: experimental Gaussian-to-PAGOR adapter, not production GEM.
-option(SAPPHIRE_BUILD_G3REG_EXPERIMENTS "Build isolated G3Reg registration experiments" OFF)
-if(BUILD_TESTING AND SAPPHIRE_BUILD_G3REG_EXPERIMENTS AND EXISTS "${SAPPHIRE_REPOSITORY}/tests/g3reg/CMakeLists.txt")
-  add_subdirectory("${SAPPHIRE_REPOSITORY}/tests/g3reg" tests/g3reg)
-endif()
+# Optional post-run segment inspection/metric joining, not a sensor adapter.
+add_executable(sapphire_segments apps/segments.cpp)
+target_link_libraries(sapphire_segments PRIVATE sapphire::core SQLite::SQLite3)
+set_target_properties(sapphire_segments PROPERTIES INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+install(TARGETS sapphire_segments RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

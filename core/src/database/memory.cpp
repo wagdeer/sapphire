@@ -505,7 +505,7 @@ std::list<int> Memory::trim_working_memory(unsigned int node_limit, const std::s
   return result;
 }
 
-uint64_t Memory::save_keyframe(int node_id, const std::vector<OdomObservation>& trajectory, const Statistics* statistics, bool save_wm) {
+uint64_t Memory::save_keyframe(int node_id, const std::vector<OdomObservation>& trajectory, const Statistics* statistics, bool save_wm, bool save_graph) {
   if (!_dbDriver) return 0;
   DBDriver::WriteBatch batch;
   batch.epoch = _dbDriver->write_epoch();
@@ -513,8 +513,15 @@ uint64_t Memory::save_keyframe(int node_id, const std::vector<OdomObservation>& 
   std::set<int> anchors;
   if (node_id > 0) anchors.insert(node_id);
   for (const auto& row : trajectory) anchors.insert(row.anchor_id);
+  if (save_graph) {
+    for (const auto& [id, node] : graph_.nodes()) if (!node->isSaved() || node->isModified()) anchors.insert(id);
+    batch.optimized_poses = graph_.stored_poses();
+    for (const auto& entry : graph_.world_poses()) batch.optimized_poses->insert_or_assign(entry.first, entry.second);
+    for (const auto& entry : graph_.poses()) batch.optimized_poses->insert_or_assign(entry.first, entry.second);
+    batch.last_pose = graph_.last_mapped_pose();
+  }
   for (int id : anchors) {
-    if (const auto* node = _getNode(id); node && !node->isSaved()) {
+    if (const auto* node = _getNode(id); node && (!node->isSaved() || (save_graph && node->isModified()))) {
       batch.nodes.push_back(std::make_shared<Node>(*node));
     }
   }
@@ -532,10 +539,12 @@ uint64_t Memory::save_keyframe(int node_id, const std::vector<OdomObservation>& 
   const auto sequence = _dbDriver->asyncWrite(std::move(batch));
   if (!sequence) throw std::runtime_error("Cannot submit keyframe persistence: " + _dbDriver->getWorkerError());
   for (int id : anchors) {
-    if (auto* node = _getNode(id); node && !node->isSaved()) {
+    if (auto* node = _getNode(id); node && (!node->isSaved() || save_graph)) {
+      if (save_graph) node->setModified(false);
       node->setSaved(true);  // Snapshot is now owned and visible through the writer.
     }
   }
+  if (save_graph) joinTrashThread();
   return sequence;
 }
 

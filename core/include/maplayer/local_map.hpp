@@ -29,17 +29,19 @@ class LocalMap final {
   void insert(const StateGroup &state, const PointCloudPtr &points, double journey, const vvec<double, 3> &world_points);
   void insert_initial(const StateGroup &state, const PointCloudPtr &points, MeasGroup &&raw, double gravity_scale);
   bool initialize(StateGroup &current, StateGroup &extrinsic, double gravity_scale);
-  const std::deque<ImuMeas> &last_initial_imus() const { return initial_measures_.back().imu_buf; }
 
   void optimize(StateGroup &current);
   // Requires a full, optimized window. Only the oldest frame's contributions
   // are frozen in odom coordinates; the remaining frames stay jointly optimizable.
   LidarFrame retire_oldest(double journey, bool emit_geometry);
+  // Seal accepted tail without requiring a full BA window; initialization is excluded.
+  std::optional<LidarFrame> seal_oldest();
   void reset();
 
  private:
   friend class Initialization;
   friend struct SlamPipelineTestAccess;
+  LidarFrame retire(double journey, bool emit_geometry);
   void append_frame(const StateGroup &state, const PointCloudPtr &points, double stamp, double journey);
 
   const SapphireParameters &parameters_;

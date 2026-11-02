@@ -50,14 +50,28 @@ class VOXEL_LOC {
   bool operator==(const VOXEL_LOC &other) const { return x == other.x && y == other.y && z == other.z && level == other.level; }
 };
 
+// Legacy SAPLID02 observation support, preserved when loading old archives.
+// Newly frozen primitives do not allocate this metadata.
+struct alignas(16) GaussianSupport {
+  Eigen::Matrix3d covariance_lower;
+  Eigen::Matrix3d plane_upper;
+  Eigen::Matrix3d box_axes;
+  Eigen::Vector3d box_center;
+  Eigen::Vector3d box_half;
+};
+
 struct alignas(16) GaussianPoint {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   Eigen::Vector3f mean = Eigen::Vector3f::Zero();
+  // Spatial scatter, currently conditioned by NodeBuilder::regularize before
+  // storage. Not mean or plane-estimation uncertainty;
+  // raw observation scatter and the GICP metric are not yet stored separately.
   Eigen::Matrix3f covariance = Eigen::Matrix3f::Identity();
   VOXEL_LOC voxel_key;
   float radius = 0.0F;
   int N = 0;
   bool is_plane = false;
+  std::shared_ptr<const GaussianSupport> support;
 
   bool valid() const { return N > 0 && mean.allFinite() && covariance.allFinite() && std::isfinite(radius) && radius > 0.0F; }
 
@@ -67,10 +81,20 @@ struct alignas(16) GaussianPoint {
     const Eigen::Matrix3d covariance_d = covariance.cast<double>();
     output.mean = (rotation * mean_d + translation).cast<float>();
     output.covariance = (rotation * covariance_d * rotation.transpose()).cast<float>();
+    if (support) {
+      auto history = std::make_shared<GaussianSupport>(*support);
+      history->covariance_lower = (rotation * support->covariance_lower * rotation.transpose()).eval();
+      history->plane_upper = (rotation * support->plane_upper * rotation.transpose()).eval();
+      history->box_axes = rotation * support->box_axes;
+      history->box_center = rotation * support->box_center + translation;
+      output.support = std::move(history);
+    }
     return output;
   }
 
   GaussianPoint &operator+=(const GaussianPoint &source) {
+    if (support || source.support)
+      throw std::logic_error("Cannot merge immutable legacy geometry with observation support");
     if (!(voxel_key == source.voxel_key)) {
       throw std::invalid_argument("Cannot merge Gaussian points with different voxel keys");
     }
@@ -107,19 +131,34 @@ struct alignas(16) GaussianPoint {
     return *this;
   }
 
+  // A derived registration metric, not observation scatter or mean uncertainty.
+  // In particular, evaluating it must not thicken a raw planar Gaussian stored
+  // for later moment accumulation. Uses the existing regularize() conditioning.
+  Eigen::Matrix3f registration_covariance() const {
+    const Eigen::Matrix3d covariance_d = covariance.cast<double>();
+    const Eigen::Matrix3d symmetric = 0.5 * (covariance_d + covariance_d.transpose());
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(symmetric);
+    if (solver.info() != Eigen::Success || !solver.eigenvalues().allFinite() || !solver.eigenvectors().allFinite()) {
+      return (1e-6 * Eigen::Matrix3d::Identity()).cast<float>();
+    }
+    const Eigen::Vector3d eigenvalues = conditioned_eigenvalues(solver.eigenvalues());
+    return (solver.eigenvectors() * eigenvalues.asDiagonal() * solver.eigenvectors().transpose()).cast<float>();
+  }
+
   void regularize(Eigen::Vector3d eigenvalues, const Eigen::Matrix3d &eigenvectors) {
+    if (support) throw std::logic_error("Fused geometry must retain its observed covariance");
     if (!eigenvalues.allFinite() || !eigenvectors.allFinite()) {
       covariance = (1e-6 * Eigen::Matrix3d::Identity()).cast<float>();
       radius = static_cast<float>(3.0 * std::sqrt(1e-6));
       return;
     }
-    const double largest = std::max(1e-6, eigenvalues.maxCoeff());
-    eigenvalues = eigenvalues.cwiseMax(std::max(1e-6, largest / 1e3));
+    eigenvalues = conditioned_eigenvalues(eigenvalues);
     covariance = (eigenvectors * eigenvalues.asDiagonal() * eigenvectors.transpose()).cast<float>();
     radius = static_cast<float>(3.0 * std::sqrt(eigenvalues.maxCoeff()));
   }
 
   void regularize() {
+    if (support) throw std::logic_error("Fused geometry must retain its observed covariance");
     const Eigen::Matrix3d covariance_d = covariance.cast<double>();
     const Eigen::Matrix3d symmetric = 0.5 * (covariance_d + covariance_d.transpose());
     Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(symmetric);
@@ -129,6 +168,12 @@ struct alignas(16) GaussianPoint {
       return;
     }
     regularize(solver.eigenvalues(), solver.eigenvectors());
+  }
+
+ private:
+  static Eigen::Vector3d conditioned_eigenvalues(const Eigen::Vector3d &eigenvalues) {
+    const double largest = std::max(1e-6, eigenvalues.maxCoeff());
+    return eigenvalues.cwiseMax(std::max(1e-6, largest / 1e3));
   }
 };
 using GaussianCloud = std::vector<GaussianPoint, Eigen::aligned_allocator<GaussianPoint>>;
@@ -140,6 +185,30 @@ inline void validateGaussianCloud(const GaussianCloud& cloud) {
     if (!p.valid() || p.voxel_key.level < 0 || p.voxel_key.level > 30 || !p.covariance.isApprox(p.covariance.transpose(), 1e-5f) ||
         p.covariance.llt().info() != Eigen::Success)
       throw std::invalid_argument("LiDAR node requires finite positive-definite Gaussian geometry");
+  for (const auto& p : cloud) if (p.support) {
+    const auto& s = *p.support;
+    if (!s.covariance_lower.allFinite() || !s.plane_upper.allFinite() || !s.box_axes.allFinite() ||
+        !s.box_center.allFinite() || !s.box_half.allFinite() || (s.box_half.array() < 0).any() ||
+        !s.covariance_lower.isApprox(s.covariance_lower.transpose(), 1e-10) ||
+        !s.plane_upper.isApprox(s.plane_upper.transpose(), 1e-10) ||
+        !(s.box_axes.transpose()*s.box_axes).isApprox(Eigen::Matrix3d::Identity(), 1e-5) ||
+        s.covariance_lower.llt().info() != Eigen::Success || s.plane_upper.llt().info() != Eigen::Success)
+      throw std::invalid_argument("Invalid Gaussian history geometry");
+  }
+}
+
+struct GaussianCloudSize {
+  std::size_t points = 0, supports = 0;
+  std::size_t bytes() const {
+    if (supports > points || points > std::numeric_limits<std::size_t>::max() / sizeof(GaussianPoint) ||
+        supports > (std::numeric_limits<std::size_t>::max() - points * sizeof(GaussianPoint)) / sizeof(GaussianSupport))
+      throw std::length_error("Gaussian payload size overflow");
+    return points * sizeof(GaussianPoint) + supports * sizeof(GaussianSupport);
+  }
+};
+
+inline GaussianCloudSize gaussian_cloud_size(const GaussianCloud& cloud) {
+  return {cloud.size(), std::size_t(std::count_if(cloud.begin(), cloud.end(), [](const auto& p) { return bool(p.support); }))};
 }
 
 

@@ -195,6 +195,18 @@ SapphireNode::SapphireNode(const rclcpp::NodeOptions &options) : Node("cmn_sapph
     output_cv_.notify_one();
   };
   output.owner_reset = [this](bool begin) { reset_output(begin); };
+  output.recovery_changed = [this, map_base = map_frame_, odom_base = odom_frame_](const sapphire::RecoveryProgress& status) {
+    if (status.phase == sapphire::TrackingPhase::Resetting) {
+      lidar_reset_requested_.store(true);
+      // owner_reset(true) has joined active publication and fenced new output.
+      // A reset origin must never masquerade as the previous odom/map frame.
+      std::lock_guard<std::mutex> lock(output_mutex_);
+      map_frame_ = map_base + "_session_" + std::to_string(status.generation);
+      odom_frame_ = odom_base + "_session_" + std::to_string(status.generation);
+    }
+    RCLCPP_INFO(get_logger(), "recovery generation=%lu phase=%d reason=%s", status.generation,
+                static_cast<int>(status.phase), sapphire::recoveryReasonName(status.reason));
+  };
   output.optional_drop = [this](bool incremental) {
     std::lock_guard<std::mutex> lock(output_mutex_);
     ++optional_dropped_;
@@ -270,6 +282,7 @@ void SapphireNode::imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr &mes
 
 void SapphireNode::lidar_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &message) {
   if (shutdown_started_.load()) return;
+  if (!prepare_lidar()) return;
   if (lidar_sync_) {
     lidar_sync_->push(false, decode_lidar_scan(message), message->header.frame_id);
     drain_lidar();
@@ -279,7 +292,7 @@ void SapphireNode::lidar_callback(const sensor_msgs::msg::PointCloud2::ConstShar
   std::optional<double> end_timestamp;
   std::vector<sapphire::LidarPoint> points;
   if (!lidar_handler_->process(message, timestamp, points, end_timestamp)) {
-    pipeline_->notifyInputLoss();
+    pipeline_->rejectLidar(rclcpp::Time(message->header.stamp).seconds(), sapphire::RecoveryReason::InvalidLidar);
     RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000, "Unsupported or malformed PointCloud2 input");
     return;
   }
@@ -292,23 +305,36 @@ void SapphireNode::lidar_callback(const sensor_msgs::msg::PointCloud2::ConstShar
 
 void SapphireNode::rear_lidar_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &message) {
   if (shutdown_started_.load()) return;
+  if (!prepare_lidar()) return;
   lidar_sync_->push(true, decode_lidar_scan(message), message->header.frame_id);
   drain_lidar();
 }
 
+bool SapphireNode::prepare_lidar() {
+  if (lidar_reset_requested_.exchange(false) && lidar_sync_) lidar_sync_->reset();
+  const auto state = pipeline_->recoveryProgress();
+  return !state.pending && state.phase != sapphire::TrackingPhase::Resetting && state.phase != sapphire::TrackingPhase::Failed;
+}
 void SapphireNode::drain_lidar() {
-  if (shutdown_started_.load()) return;
+  if (shutdown_started_.load() || !prepare_lidar()) return;
   while (auto scan = lidar_sync_->pop()) {
-    if (lidar_sync_->statistics().dropped() != last_lidar_drop_count_) pipeline_->notifyInputLoss();
+    if (lidar_sync_->statistics().dropped() != last_lidar_drop_count_) {
+      last_lidar_drop_count_ = lidar_sync_->statistics().dropped();
+      pipeline_->notifyInputLoss();
+      return;
+    }
     if (!pipeline_->push_lidar(scan->begin, std::move(scan->points), scan->end)) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "Rejected fused LiDAR scan");
     }
   }
   const auto &s = lidar_sync_->statistics();
-  if (s.dropped() != last_lidar_drop_count_) pipeline_->notifyInputLoss();
-  const auto now = std::chrono::steady_clock::now();
-  if (s.dropped() != last_lidar_drop_count_ && now - last_lidar_report_ >= std::chrono::seconds(5)) {
+  if (s.dropped() != last_lidar_drop_count_) {
     last_lidar_drop_count_ = s.dropped();
+    pipeline_->notifyInputLoss();
+  }
+  const auto now = std::chrono::steady_clock::now();
+  if (s.dropped() != reported_lidar_drop_count_ && now - last_lidar_report_ >= std::chrono::seconds(5)) {
+    reported_lidar_drop_count_ = s.dropped();
     last_lidar_report_ = now;
     RCLCPP_WARN(get_logger(), "dual totals: emitted=%zu invalid=%zu out_of_order=%zu overflow=%zu timeout=%zu coverage=%zu empty=%zu", s.emitted,
                 s.invalid, s.out_of_order, s.overflow, s.timeout, s.coverage, s.empty);
@@ -476,6 +502,7 @@ bool SapphireNode::finish_checked() {
     }
   } catch (...) {
     mapping_error = std::current_exception();
+    RCLCPP_ERROR(get_logger(), "SLAM drain failed: %s", output_error().c_str());
   }
   const auto drained = std::chrono::steady_clock::now();
   {
@@ -505,6 +532,21 @@ bool SapphireNode::finish_checked() {
   finished_ = true;
   finish_success_ = !mapping_error_ && close_success_ && get_node_base_interface()->get_context()->is_valid() &&
                     (!final_revision_ || correction_group_.published == final_revision_);
+  if (!get_node_base_interface()->get_context()->is_valid())
+    RCLCPP_ERROR(get_logger(), "SLAM shutdown failed: ROS context unavailable");
+  if (final_revision_ && correction_group_.published != final_revision_) {
+    std::string detail = correction_group_.error;
+    if (detail.empty() && correction_group_.first_error) {
+      try {
+        std::rethrow_exception(correction_group_.first_error);
+      } catch (...) {
+        detail = output_error();
+      }
+    }
+    RCLCPP_ERROR(get_logger(), "SLAM final publication failed: target=%lu published=%lu cause=%s",
+                 *final_revision_, correction_group_.published.value_or(0),
+                 detail.empty() ? "Final map output unavailable" : detail.c_str());
+  }
   const auto ms = [](auto duration) { return std::chrono::duration<double, std::milli>(duration).count(); };
   RCLCPP_INFO(
       get_logger(),

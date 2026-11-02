@@ -76,6 +76,8 @@ BbsResult alignLoopBbs(const vvec<float, 3> &query, const std::vector<gpu::Local
     result.termination = search.termination;
     result.elapsed_ms += search.elapsed_ms;
     result.root_nodes += search.root_nodes;
+    result.queue_peak_nodes = std::max(result.queue_peak_nodes, search.queue_peak_nodes);
+    result.device_peak_bytes = std::max(result.device_peak_bytes, search.device_peak_bytes);
     for (std::size_t level = 0; level < result.expanded_nodes.size(); ++level) {
       result.expanded_nodes[level] += search.expanded_nodes[level];
       result.pruned_nodes[level] += search.pruned_nodes[level];

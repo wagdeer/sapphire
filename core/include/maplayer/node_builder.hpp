@@ -2,6 +2,7 @@
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "common/lidar_frame.hpp"
 #include "maplayer/topograph/node.hpp"
@@ -26,13 +27,11 @@ class NodeBuilder final {
     OdomPoses trajectory;
   };
 
-  explicit NodeBuilder(double target_distance = 15.0, double max_point_range = 20.0)
-      : target_distance_(target_distance), max_point_range_(max_point_range), max_point_range_squared_(max_point_range * max_point_range) {
+  explicit NodeBuilder(double target_distance = 15.0, std::size_t max_geometry_bytes = LidarFrame::max_geometry_bytes)
+      : target_distance_(target_distance), max_gaussians_(max_geometry_bytes / sizeof(GaussianPoint)) {
+    if (!max_gaussians_) throw std::invalid_argument("Submap geometry budget must hold a Gaussian");
     if (!std::isfinite(target_distance_) || target_distance_ <= 0.0) {
       throw std::invalid_argument("Submap target distance must be positive");
-    }
-    if (!std::isfinite(max_point_range_) || max_point_range_ <= 0.0) {
-      throw std::invalid_argument("Submap maximum point range must be positive");
     }
   }
 
@@ -55,8 +54,22 @@ class NodeBuilder final {
       throw std::invalid_argument("Submap journey must be monotonically non-decreasing");
     }
 
+    // An accepted frozen frame is indivisible; validate before mutating a node.
+    if (marginal_frame.gaussians.size() > max_gaussians_)
+      throw std::length_error("Frozen frame exceeds submap geometry contract");
+    for (const auto &point : marginal_frame.gaussians)
+      if (point.N <= 0 || !point.mean.allFinite() || !point.covariance.allFinite())
+        throw std::invalid_argument("Frozen frame contains invalid Gaussian evidence");
     std::optional<Result> ready;
-    if (odom_poses_.size() >= max_history_frames) ready = flush();
+    bool geometry_full = false;
+    if (voxel_gaussians_.size() + marginal_frame.gaussians.size() > max_gaussians_) {
+      std::unordered_set<VOXEL_LOC> new_keys;
+      for (const auto &point : marginal_frame.gaussians)
+        if (!voxel_gaussians_.count(point.voxel_key))
+          new_keys.insert(point.voxel_key);
+      geometry_full = voxel_gaussians_.size() + new_keys.size() > max_gaussians_;
+    }
+    if (odom_poses_.size() >= max_history_frames || geometry_full) ready = flush();
 
     if (!has_reference_) {
       reference_rotation_ = marginal_frame.x.R;
@@ -87,7 +100,6 @@ class NodeBuilder final {
   std::size_t buffered_frame_count() const noexcept { return odom_poses_.size(); }
   std::size_t buffered_point_count() const noexcept { return voxel_gaussians_.size(); }
   double target_distance() const noexcept { return target_distance_; }
-  double max_point_range() const noexcept { return max_point_range_; }
   double travel_distance() const noexcept { return has_reference_ ? end_journey_ - begin_journey_ : 0.0; }
 
  private:
@@ -102,14 +114,6 @@ class NodeBuilder final {
     const Eigen::Matrix3d rotation_base_world = reference_rotation_.transpose();
     const Eigen::Vector3d translation_base_world = -rotation_base_world * reference_position_;
     for (const GaussianPoint &point : source.gaussians) {
-      if (!point.mean.allFinite() || !point.covariance.allFinite()) {
-        continue;
-      }
-      const Eigen::Vector3d source_mean = source.x.R.transpose() * (point.mean.cast<double>() - source.x.p);
-      if (source_mean.squaredNorm() > max_point_range_squared_) {
-        continue;
-      }
-
       GaussianPoint transformed = point.transformed(rotation_base_world, translation_base_world);
       auto [iter, inserted] = voxel_gaussians_.try_emplace(transformed.voxel_key, transformed);
       if (!inserted) {
@@ -156,8 +160,7 @@ class NodeBuilder final {
   // Bound retained trajectory history even when the platform is stationary.
   static constexpr std::size_t max_history_frames = 256;
   double target_distance_;
-  double max_point_range_;
-  double max_point_range_squared_;
+  const std::size_t max_gaussians_;
   bool has_reference_ = false;
   Eigen::Matrix3d reference_rotation_ = Eigen::Matrix3d::Identity();
   Eigen::Vector3d reference_position_ = Eigen::Vector3d::Zero();

@@ -57,7 +57,7 @@ class Memory final {
 
   std::set<int> reactivateNodes(const std::list<int> &ids, unsigned int maxLoaded, double &timeDbAccess);
 
-  uint64_t save_keyframe(int node_id, const std::vector<OdomObservation> &trajectory, const Statistics *statistics = nullptr, bool save_wm = false);
+  uint64_t save_keyframe(int node_id, const std::vector<OdomObservation> &trajectory, const Statistics *statistics = nullptr, bool save_wm = false, bool save_graph = false);
 
   const RootFrame &create_root_frame(int anchor, const SE3f &pose);
 

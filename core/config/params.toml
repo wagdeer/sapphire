@@ -13,7 +13,16 @@ degeneracy_threshold = 15.0
 min_eigen_value = 0.02
 plane_eigen_value_thre = 4.0
 
+[recovery]
+# Missing live sensors trigger one reset, then wait for a healthy new stream.
+# Use 0 only for offline playback with deliberate wall-clock pauses.
+input_timeout_sec = 2.0
+max_imu_gap_sec = 0.05
+max_lidar_gap_sec = 0.5
+
 [odometry]
+# Disposable fixed-history budget; active BA geometry and scratch are separate.
+fixed_map_budget_bytes = 67108864
 cov_gyr = 0.1
 cov_acc = 1.0
 rdw_gyr = 0.0001
@@ -33,6 +42,7 @@ variance_floor = 0.0005  # m^2; geometric covariance regularization
 max_iterations = 20      # small_gicp default; range 1..20
 
 [local_submap]
+# Joint LiDAR/IMU window. Retire the oldest observation after optimization.
 win_size = 10
 max_layer = 2
 cov_gyr = 0.01
@@ -46,11 +56,10 @@ thread_num = 1
 [pose_graph]
 enabled = true
 submap_travel_distance = 15.0
-submap_max_point_range = 20.0
 update_period_sec = 1.0
 
 [mapping.registration.lidar]
-bbs_enabled = true
+bbs_enabled = false # Optional coarse search for larger initial-pose errors
 min_inliers = 64
 max_iterations = 32
 max_correspondence_m = 2.0
@@ -64,3 +73,15 @@ enabled = true
 max_candidates = 5
 radius_m = 30.0
 max_graph_hops = 0  # Pure LIO must also retrieve distant historical graph nodes.
+
+[mapping.relocalizer.path]
+max_nodes = 3       # One centered segment per unbranched route
+max_bytes = 67108864  # Target Gaussian payload; shorten path by whole Nodes if needed (not an RSS cap)
+
+[mapping.relocalizer.global]
+enabled = true
+resolution_m = 0.5
+feature_radius_m = 2.5
+clique_time_sec = 0.5
+max_associations = 3000
+index_max_nodes = 16384

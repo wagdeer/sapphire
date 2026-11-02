@@ -296,7 +296,7 @@ class LI_BA_OptimizerGravity {
         break;
       }
     }
-    residuals.push_back(trial_residual);
+    residuals.push_back(evaluate_residual(window_size, states, lidar_factor, imu_factors));
   }
 
  private:

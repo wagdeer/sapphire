@@ -87,7 +87,6 @@ class Topograph final {
     out.swap(changed_poses_);
     return out;
   }
-  void record_pose_changes(std::set<int>& changes) noexcept { changed_poses_.merge(changes); }
 
   bool links_changed() const { return _linksChanged; }
   void restore_frames(bool persistent, std::map<int, RootFrame> frames);
@@ -149,7 +148,7 @@ class Topograph final {
   TopographParams parameters_;
   std::map<int, RootFrame> root_frames_;
   bool persistent_root_frames_ = false;
-  // Nodes whose optimized placement changed; their local Gaussian geometry is unchanged.
+  // Publication invalidation after committed placement or Gaussian geometry changes.
   std::set<int> changed_poses_;
   int _lastLoopClosureId = 0;
   bool _linksChanged = false;  // False by default, become true when links are modified.

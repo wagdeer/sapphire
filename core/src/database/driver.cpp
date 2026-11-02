@@ -382,6 +382,7 @@ void DBDriver::markSequenceCompletedLocked(uint64_t sequence) {
 uint64_t DBDriver::enqueueWrite(WriteBatch batch) {
   size_t bytes = sizeof(WriteEntry) + batch.trajectory.capacity() * sizeof(OdomObservation);
   for (const auto& node : batch.nodes) bytes += node->getMemoryUsed();
+  if (batch.optimized_poses) bytes += batch.optimized_poses->size() * (sizeof(std::pair<const int, SE3f>) + 4*sizeof(void*));
 
   if (batch.statistics) {
     bytes += batch.statistics->wmState().size() * sizeof(int);
@@ -519,12 +520,20 @@ bool DBDriver::processBatch(bool draining) {
     if (!draining && first.sequence > _requiredSequence && !_discardRequested.load() && _maxBatchLatency.count() > 0 &&
         _pendingItems < _maxBatchItems && (_maxBatchBytes == 0 || _pendingBytes < _maxBatchBytes)) {
       const auto deadline = first.enqueued + _maxBatchLatency;
+      // Enqueue notifications only recheck the batch. They are not flush
+      // requests: ending the wait on every arrival defeats coalescing and
+      // turns a sensor stream into a stream of tiny durable transactions.
+      const auto ready = [&] {
+        return _workerFailed.load() || _discardRequested.load() || !_accepting.load() ||
+               first.sequence <= _requiredSequence || _pendingItems >= _maxBatchItems ||
+               (_maxBatchBytes != 0 && _pendingBytes >= _maxBatchBytes);
+      };
 #ifdef EXTERIOR_TSAN_ENABLED
       const auto remaining = deadline - std::chrono::steady_clock::now();
       if (remaining > std::chrono::steady_clock::duration::zero())
-        _pendingChanged.wait_until(pendingLock, std::chrono::system_clock::now() + remaining);
+        _pendingChanged.wait_until(pendingLock, std::chrono::system_clock::now() + remaining, ready);
 #else
-      _pendingChanged.wait_until(pendingLock, deadline);
+      _pendingChanged.wait_until(pendingLock, deadline, ready);
 #endif
     }
     if (_workerFailed.load()) return false;
@@ -566,6 +575,7 @@ bool DBDriver::processBatch(bool draining) {
         }
         saveOrUpdateLocked(nodes);
         if (!batch.trajectory.empty()) save_trajectory_query(batch.trajectory);
+        if (batch.optimized_poses) saveOptimizedPosesQuery(*batch.optimized_poses, batch.last_pose);
         if (batch.statistics) addStatisticsQuery(*batch.statistics, batch.saveWmState);
       }
       if (_workerFailed.load()) throw std::runtime_error("Database transaction cancelled after writer failure");
@@ -838,6 +848,16 @@ void DBDriver::loadNodes(const std::list<int>& signIds, std::list<Node*>& nodes,
   for (auto* node : loaded) node->write_epoch = write_epoch();
   nodes.splice(nodes.end(), loaded);
   if (loadedFromTrash) loadedFromTrash->insert(fromTrash.begin(), fromTrash.end());
+}
+
+std::optional<GaussianCloudSize> DBDriver::node_geometry_size(int id) const {
+  {
+    std::lock_guard<std::mutex> pendingLock(_pendingMutex);
+    if (const auto* node = findVisibleNodeLocked(id))
+      return node->has_lidar() ? gaussian_cloud_size(*node->lidar_cloud()) : GaussianCloudSize{};
+  }
+  std::lock_guard<std::mutex> databaseLock(_dbSafeAccessMutex);
+  return node_geometry_size_query(id);
 }
 
 bool DBDriver::getNodeInfo(int nodeId, SE3f& pose, int& mapId, int& weight, std::string& label, double& stamp,

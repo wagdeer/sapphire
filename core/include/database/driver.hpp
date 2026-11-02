@@ -33,6 +33,8 @@ class DBDriver {
     std::vector<std::shared_ptr<Node>> nodes;
     std::vector<OdomObservation> trajectory;
     std::optional<Statistics> statistics;
+    std::optional<std::map<int, SE3f>> optimized_poses;
+    SE3f last_pose;
     bool saveWmState = false;
     uint64_t epoch = 0;
   };
@@ -138,6 +140,9 @@ class DBDriver {
                  std::set<int> *loadedFromTrash = 0);  // returned nodes must be freed after usage
 
   bool getNodeInfo(int nodeId, SE3f &pose, int &mapId, int &weight, std::string &label, double &stamp, std::vector<float> &velocity) const;
+  // Latest visible target payload size, without decoding persisted Gaussian data.
+  // Missing node -> nullopt; node with no geometry -> 0.
+  std::optional<GaussianCloudSize> node_geometry_size(int id) const;
 
   void loadLinks(int nodeId, std::multimap<int, Link> &links, std::optional<Link::Type> type = std::nullopt) const;
   void getWeight(int nodeId, int &weight) const;
@@ -193,6 +198,7 @@ class DBDriver {
   virtual int trajectory_high_water_query() const = 0;
   virtual void loadLastNodesQuery(std::list<Node *> &nodes) const = 0;
   virtual void loadNodesQuery(const std::list<int> &ids, std::list<Node *> &nodes) const = 0;
+  virtual std::optional<GaussianCloudSize> node_geometry_size_query(int id) const = 0;
   virtual void loadLinksQuery(int nodeId, std::multimap<int, Link> &links, std::optional<Link::Type> type = std::nullopt) const = 0;
 
 

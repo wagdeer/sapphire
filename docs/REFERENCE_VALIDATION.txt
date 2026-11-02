@@ -1,0 +1,35 @@
+Reference inspection: Faster-LIO iVox LRU, 2026-11-01
+
+Scope: official source/paper inspection only; no Sapphire implementation change,
+runtime benchmark, S3E accuracy comparison, or resource acceptance performed.
+Sources:
+https://github.com/gaoxiang12/faster-lio/blob/main/include/ivox3d/ivox3d.h
+https://github.com/gaoxiang12/faster-lio/blob/main/src/laser_mapping.cc
+https://raw.githubusercontent.com/gaoxiang12/faster-lio/main/doc/faster-lio.pdf
+
+iVox maintains a hash map and recency list of voxel nodes. AddPoints creates or
+promotes nodes; insertion at the capacity boundary removes the oldest node.
+GetClosestPoint does not promote recency. This is local odometry map residency,
+not a backend submap construction, persistent archive, or relocalization policy.
+PCD saving separately accumulates world-transformed scan points and optionally
+flushes by scan count; it is not an archive of LRU-evicted voxel submaps.
+
+At the time of this inspection, Sapphire had a 10-frame optimization window, frozen marginal Gaussian
+handoff, a distance/frame-bounded NodeBuilder, and separately owned backend map
+storage. Frontend voxel pruning used journey since last activity. These are
+distinct responsibilities; replacing cache eviction does not itself redefine
+submap identity or establish registration uniqueness.
+
+Historical status: reference retained as an unvalidated design candidate for residency.
+No claim that LRU improves matching success or fixes the observed false joins.
+Any implementation must protect active optimization observations, preserve
+frozen geometry/trajectory ownership and reset datums, and distinguish memory
+eviction from loss of persistent evidence. Compare resource use and actual S3E
+positive/negative matching before accepting a change. Do not import pointwise
+KNN/PCA normals or change Gaussian observation models as part of an LRU change.
+
+Baseline update, 2026-11-02: the current implementation has a byte-bounded
+fixed-history cache with active BA observations protected separately. This
+reference note is not the current design specification or a pending algorithm
+proposal. See STABLE_BASELINE.txt and BASELINE_VALIDATION.txt for the accepted
+architecture and its actual verification scope.

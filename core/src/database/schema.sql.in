@@ -14,7 +14,7 @@
 -- CREATE
 -- *******************************************************************
 CREATE TABLE Node (
-    lidar_geometry BLOB, -- immutable Gaussian node-local geometry
+    lidar_geometry BLOB, -- immutable node-local Gaussian snapshot
 	id INTEGER NOT NULL,
 	map_id INTEGER NOT NULL,
 	weight INTEGER,

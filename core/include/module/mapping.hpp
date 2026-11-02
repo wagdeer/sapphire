@@ -4,6 +4,7 @@
 #include <parameters.hpp>
 #include <maplayer/topograph.hpp>
 #include <functional>
+#include "module/relocalizer.hpp"
 #include <list>
 #include <opencv2/core/core.hpp>
 #include <set>
@@ -27,7 +28,12 @@ class Mapping final {
   Mapping();
   ~Mapping();
   void checkpoint();
-  int getLoopClosureId() const { return topograph_.committed_loop(); }
+  // Execution policy only; both paths use the same finite geometry query.
+  void enable_async_relocalization();
+  bool poll_relocalization(bool wait = false);
+  bool relocalization_pending() const;
+
+  int getRelocalizationId() const { return topograph_.committed_loop(); }
 
   void getCompleteGraph(std::map<int, SE3f>& poses, std::multimap<int, Link>& links) const;
   void append_lidar_odometry(double stamp, const SE3f&);
@@ -66,19 +72,32 @@ class Mapping final {
 
   void getGraph(std::map<int, SE3f>& poses, std::multimap<int, Link>& constraints, bool optimized, bool global,
                 std::map<int, Node>* nodes = 0) const;
-  std::optional<Link> verify_loop(int from, int to, const SE3f& guess) const;
+  std::optional<Link> verify_relocalization(int from, int to, const SE3f& guess) const;
   std::map<int, SE3f> solve_graph(const std::map<int, SE3f>& poses, const std::multimap<int, Link>& links) const;
-  void commit_loops(const std::vector<Link>& added, std::map<int, SE3f> poses, const std::multimap<int, Link>& links);
+  void commit_relocalizations(const std::vector<Link>& added, std::map<int, SE3f> poses, const std::multimap<int, Link>& links);
 
+  // Explicit optional alignment on a reopened archive without live odometry.
+  // Seed is T_reference_query;
+  // a rejected metric match changes no graph constraints or geometry.
+  std::optional<Link> join_segments(int reference, int query, const SE3f& seed);
+  std::size_t relocalize(); // All saved queries; automatic candidates/seeds, same verifier as live mapping.
   bool addLink(const Link& link);
 
  private:
+  bool prepare_relocalization_graph(const Link&, std::map<int,SE3f>&,std::multimap<int,Link>&) const;
   int trajectory_sequence_ = 0;
-  struct LoopProposal;
+  struct RelocalizationProposal;
   struct GraphUpdate;
 
-  void optimize_observation(const Node&, LoopProposal&, Relocalization&, bool reduced, GraphUpdate&);
-  LoopProposal prepare_loops(const Node&, Relocalization&);
+  void optimize_observation(const Node&, RelocalizationProposal&, Relocalization&, bool reduced, GraphUpdate&);
+  RelocalizationProposal prepare_relocalization(const Node&, Relocalization&);
+  std::vector<Relocalizer::Input> prepare_relocalization_inputs(const Node&, Relocalization&);
+  RelocalizationProposal finish_relocalization(int query, std::vector<Relocalizer::Verification>);
+  void schedule_relocalization(const Node&);
+  struct RelocalizationWork;
+  std::unique_ptr<RelocalizationWork> relocalization_work_;
+  bool async_relocalization_ = false;
+
 
   void optimizeCurrentMap(int id, bool lookInDatabase, std::map<int, SE3f>& optimizedPoses, std::optional<Mat66_t<double>>& covariance,
                           std::multimap<int, Link>* constraints = 0, double* error = 0, int* iterationsDone = 0,
@@ -116,6 +135,7 @@ class Mapping final {
   StatisticsLog statistics_log_;
 
   Statistics statistics_;
+  std::ofstream loop_trace_, query_trace_;
 };
 
 }  // namespace sapphire

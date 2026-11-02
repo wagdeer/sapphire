@@ -20,7 +20,7 @@ void Topograph::erase_graph_edge(Node& a, Node& b, int& last_loop) {
   auto& older = a.id() < b.id() ? a : b;
   auto& newer = a.id() < b.id() ? b : a;
   if (!older.hasLink(newer.id()) || !newer.hasLink(older.id())) return;
-  if (older.getLinks().find(newer.id())->second.type() == Link::kLoopClosure && newer.getWeight() > 0) {
+  if (older.getLinks().find(newer.id())->second.type() == Link::kRelocalization && newer.getWeight() > 0) {
     older.setWeight(older.getWeight() + 1);
     newer.setWeight(newer.getWeight() - 1);
   }
@@ -35,7 +35,7 @@ void Topograph::insert_graph_edge(Node& from, Node& to, const Link& edge, bool r
   if (from.hasLink(to.id())) return;
   from.addLink(edge);
   to.addLink(edge.inverse());
-  if (edge.isLoopClosure()) {
+  if (edge.isRelocalization()) {
     last_loop = std::max(edge.from(), edge.to());
     if ((reduce && edge.from() < edge.to()) || (!reduce && edge.from() > edge.to())) {
       from.setWeight(from.getWeight() + to.getWeight());
@@ -56,7 +56,7 @@ std::map<int, int> Topograph::place_distances(int origin, unsigned max_hops) con
     if (unsigned(hops) >= max_hops) continue;
     for (const auto& entry : getNode(id)->getLinks()) {
       const int next = entry.first;
-      const bool geometric = entry.second.isOdometry() || entry.second.isLoopClosure();
+      const bool geometric = entry.second.isOdometry() || entry.second.isRelocalization();
       if (!geometric || next <= 0 || next == id || !getNode(next)) continue;
       if (distance.emplace(next, hops + 1).second) queue.push_back(next);
     }
@@ -69,7 +69,7 @@ std::map<int, std::vector<int>> Topograph::resident_adjacency() const {
     if (item.first <= 0) continue;
     auto& edges = graph[item.first];
     for (const auto& edge : item.second->getLinks()) {
-      const bool geometric = edge.second.isOdometry() || edge.second.isLoopClosure();
+      const bool geometric = edge.second.isOdometry() || edge.second.isRelocalization();
       if (geometric && edge.first > 0 && edge.first != item.first && getNode(edge.first)) edges.push_back(edge.first);
     }
     std::sort(edges.begin(), edges.end());
@@ -271,7 +271,7 @@ void Topograph::start_session() {
   _lastRejectedLoopClosureIds = {0, 0};
 }
 bool Topograph::canBeReduced(const Link& link, float maxDistance, int direction) {
-  return link.isValid() && link.from() > 0 && link.to() > 0 && link.to() != link.from() && link.isLoopClosure() &&
+  return link.isValid() && link.from() > 0 && link.to() > 0 && link.to() != link.from() && link.isRelocalization() &&
          (maxDistance == 0.0f || link.transform().translationNorm() < maxDistance) &&
          (direction == 0 || (direction == -1 && link.to() < link.from()) || (direction == 1 && link.to() > link.from()));
 }
@@ -287,7 +287,7 @@ int Topograph::reduceNode(int id, float maxDistance, int direction) {
     // A unary prior needs its own marginalization policy. Do not silently drop
     // it or reinterpret it as a relative measurement during node reduction.
     const auto* neighbor = getNode(other);
-    if (other == id || !edge.isValid() || !neighbor || neighbor->getWeight() < 0 || (!edge.isOdometry() && !edge.isLoopClosure())) return 0;
+    if (other == id || !edge.isValid() || !neighbor || neighbor->getWeight() < 0 || (!edge.isOdometry() && !edge.isRelocalization())) return 0;
     if (canBeReduced(edge, maxDistance, direction)) selected = &edge;
   }
   if (!selected) return 0;
@@ -404,7 +404,7 @@ std::map<int, int> Topograph::getNeighborsId(int nodeId,
               } else {
                 nextMargin.insert(iter->first);
               }
-            } else if (!ignoreLoopIds && iter->second.isLoopClosure()) {
+            } else if (!ignoreLoopIds && iter->second.isRelocalization()) {
               if (incrementMarginOnLoop) {
                 nextMargin.insert(iter->first);
               } else {
@@ -474,7 +474,7 @@ void Topograph::detach(Node& node) {
       }
 
       // child
-      if (iter->second.type() == Link::kLoopClosure && s->getWeight() > 0) {
+      if (iter->second.type() == Link::kRelocalization && s->getWeight() > 0) {
         sTo->setWeight(sTo->getWeight() + s->getWeight());  // copy weight
       }
 

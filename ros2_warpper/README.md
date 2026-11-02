@@ -12,6 +12,14 @@
 位姿群使用 `SE3f` / `SE3d`，IMU 状态仍为 `StateGroup`；原 `backend` 和 `backend::io` 命名空间已并入 `sapphire`。
 `captureReady()` 返回与位姿、修正同时读取的 `ContinuationProgress`，其中 `map_id`、`generation`、`ready_revision`、`last_completed` 用于识别地图和输出版本。
 
+自动恢复由现有 `FrontendRuntime`、`SlamPipeline`、`BackendRuntime` 完成，不增加中间播放器、转发进程或恢复管理器。输入异常、IMU 覆盖缺失、传感器时钟跳变、断流，以及连续观测拒绝会停止有效输出，清空旧输入和估计历史，等待后端关闭旧会话，再重新初始化。正常结束输入请调用 `drain()`；不要用 `notifyInputLoss()` 表示 EOF。
+
+`recoveryProgress()` / `recovery_changed` 提供 WaitingForInput、Initializing、Tracking、Resetting、Stopped、Failed 状态及原因。`generation` 标识新的里程计坐标系，`input_epoch` 标识每次输入清理；同一次持续故障的多次初始化失败不会不断创建空地图。`push_lidar()` 返回 `ScanAdmission`，其 sequence 在一个 pipeline 生命周期内单调递增；每个提交通过 `scan_finished` 收到一次终态结果（也可能同步发生在调用返回之前），结果不等同于位姿或持久化成功。`scan_processed` 保留为已同步帧的耗时回调，不应再用它等待所有输入完成。原始格式解码失败时，适配器调用 `rejectLidar()`；其他输入不可用调用 `notifyInputLoss()`。
+
+`[recovery]` 的 `input_timeout_sec` 为实际经过时间的断流检测预算，默认 2 秒；`max_imu_gap_sec` 和 `max_lidar_gap_sec` 为传感器时间上的间断限制。仅在有意暂停的离线单步测试中将前者置 0，正常 ROS 入口保持启用。连续观测拒绝数沿用 `odometry.degrade_bound`。LiDAR 输入缓存同时限制为 32 帧、16 MiB（包括待同步帧），超过任一限制会显式触发恢复。
+
+恢复后 ROS 坐标系使用 `odom_session_N` / `map_session_N`（配置名称作为前缀），避免把原点重置解释成位姿连续运动。每段有效地图和轨迹保存在同一个数据库中，以 `Node.mapId` 区分采集片段，各自保留独立坐标基准；reset 前与正常退出时会封存已接受的窗口段尾。未完成初始化或数值失败的估计状态不当作有效地图保存。resume 模式发生输入故障后也会开启独立片段，不沿用旧匹配种子。后续可用 `sapphire_segments` 在新副本中验证并拼接片段，原始数据保留，详见 `docs/STABLE_BASELINE.txt`。持久化失败仍是终态错误，不能靠传感器 reset 掩盖。`owner_reset` 是必须成功的发布停止/恢复屏障；其异常会终止 pipeline。其他回调仍为通知，不可在回调中阻塞等待自身停止。
+
 雷达点定义位于 `sensor/lidar_type.hpp`；ROS 只解码字段、偏移和字节序。原生双雷达入口为 `sensor/lidar_sync.hpp` 的 `LidarSync::push()` / `pop()`，输入是拥有数据的 `TimedLidarPoint` 数组，保留绝对时间戳和双精度解码值。时间窗口、过滤和后雷达到参考雷达的变换均在 core；单路滤波使用 `LidarHandler`。
 `common/point.hpp` 保留算法中点的协方差、聚合和操作语义；通用 `rtree.hpp` 保留。
 子图由 `NodeBuilder` 按行驶距离构建，最多保留 256 帧轨迹后切分，输入结束时提交尾部。Gaussian 数量没有人为硬上限，也不按点数截断或切分。归档保持原格式，仅校验几何、实际长度和矩阵格式可表示范围；解压按实际产出增长内存。`NodeBuilder` 直接构造拥有几何、锚点和时间戳的 `Node`，以独占所有权通过 `Mapping::process_node()` 交给 `Memory::admit_node()`；接纳时分配地图身份，过程中不重新构造节点。构建结果另携带锚点之后的轨迹样本，提交序号由运行流程维护。续建匹配拒绝时原节点保持未接纳状态，等待重试。
@@ -109,7 +117,7 @@ ROS 订阅 PointCloud2 和 Imu；没有 Livox CustomMsg 订阅。
 双雷达默认按 10 Hz 的 `[begin,end)` 时间窗融合；缺少覆盖时丢窗，不静默退化为单雷达。
 `sync.lidar_merge_hz` 只控制软件时间窗，不修改硬件转速；0 表示使用 lidar0 帧窗口。
 固定窗口频率不超过 `imu.rate_hz / 5`，窗口长度不超过 `preprocess.max_scan_duration`。
-等待、消息缓存和时间缺口限制见 `[sync]`，实际 IMU 数据不足仍会跳过更新。
+等待、双雷达消息缓存和时间缺口限制见 `[sync]`；实际 IMU 数据不足会进入 core 的统一恢复流程。
 
 ## 输出与持久化
 

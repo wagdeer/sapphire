@@ -147,7 +147,8 @@ class Initialization {
       voxhess.win_size = win_size;
       const double eigen_threshold = converge_flag == 0 ? parameters.min_eigen_value : odometry.min_eigen_value;
       const std::vector<double> &plane_thresholds = converge_flag == 0 ? init_plane_thresholds : local_submap.plane_eigen_value_thre_inv;
-      voxel_map.recut(win_size, x_buf, voxhess, eigen_threshold, plane_thresholds);
+      voxel_map.recut(win_size, x_buf, eigen_threshold, plane_thresholds);
+      voxel_map.collect_factors(voxhess);
 
       if (voxhess.plvec_voxels.size() < static_cast<size_t>(parameters.min_plane_factors)) {
         break;
@@ -165,8 +166,9 @@ class Initialization {
       }
 
       if (std::fabs(resis[0] - resis[1]) / resis[0] < converge_thre && iterCnt >= 2) {
-        for (Eigen::Matrix3d &iter : voxhess.eig_vectors) {
-          Eigen::Vector3d v3 = iter.col(0);
+        for (size_t factor = 0; factor < voxhess.plvec_voxels.size(); ++factor) {
+          Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> plane(voxhess.world_moments(x_buf, factor).cov());
+          Eigen::Vector3d v3 = plane.eigenvectors().col(0);
           nnt += v3 * v3.transpose();
         }
         Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(nnt);

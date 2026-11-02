@@ -113,6 +113,7 @@ bool Node::isBadNode() const { return !has_lidar(); }
 unsigned long Node::getMemoryUsed() const  // Return memory usage in Bytes
 {
   unsigned long total = sizeof(Node) + (lidar_cloud_ ? lidar_cloud_->capacity() * sizeof(GaussianPoint) : 0);
+  if (lidar_cloud_) total += gaussian_cloud_size(*lidar_cloud_).supports * sizeof(GaussianSupport);
 
   total += sizeof(_pose);
   total += _velocity.size() * sizeof(float);

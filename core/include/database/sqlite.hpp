@@ -59,6 +59,7 @@ class DBDriverSqlite3 : public DBDriver {
   int trajectory_high_water_query() const override;
   virtual void loadLastNodesQuery(std::list<Node *> &nodes) const;
   virtual void loadNodesQuery(const std::list<int> &ids, std::list<Node *> &nodes) const;
+  std::optional<GaussianCloudSize> node_geometry_size_query(int id) const override;
   virtual void loadLinksQuery(int nodeId, std::multimap<int, Link> &links, std::optional<Link::Type> type = std::nullopt) const;
 
 

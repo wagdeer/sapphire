@@ -36,6 +36,7 @@ class SapphireNode : public rclcpp::Node {
   void lidar_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &message);
   void rear_lidar_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &message);
   void drain_lidar();
+  bool prepare_lidar();
 
   void finish_callback();
   friend struct SapphireNodeTestAccess;
@@ -72,7 +73,8 @@ class SapphireNode : public rclcpp::Node {
   std::unique_ptr<LidarHandler> lidar_handler_;
   double lidar_time_offset_ = 0.0;
   std::unique_ptr<sapphire::LidarSync> lidar_sync_;
-  size_t last_lidar_drop_count_ = 0;
+  size_t last_lidar_drop_count_ = 0, reported_lidar_drop_count_ = 0;
+  std::atomic_bool lidar_reset_requested_{false};
   std::chrono::steady_clock::time_point last_lidar_report_{};
   std::unique_ptr<sapphire::SlamPipeline> pipeline_;
 

@@ -359,19 +359,27 @@ auto bindings(const RegistrationParams&) {
 auto bindings(const RelocalizerParams&) {
   using C = RelocalizerParams;
   return std::tuple{
+      field("relocalizer.global.enabled", &C::global_enabled, "Automatic geometry retrieval and initial poses for all relocalization queries."),
+      field("relocalizer.global.resolution_m", &C::global_resolution_m, "Fixed physical feature voxel size; final registration uses full Gaussians."),
+      field("relocalizer.global.feature_radius_m", &C::global_feature_radius_m, "FPFH feature radius using frozen covariance normals."),
+      field("relocalizer.global.clique_time_sec", &C::global_clique_time_sec, "Serial maximum-clique search time per pyramid level."),
+      field("relocalizer.global.max_associations", &C::global_max_associations, "Maximum association graph vertices; oversized searches reject without adaptive sampling."),
+      field("relocalizer.global.index_max_nodes", &C::global_index_max_nodes, "Maximum cached derived retrieval signatures; evict and rebuild on demand."),
       field("relocalizer.spatial.enabled", &C::spatial_enabled, "Enable bounded spatial candidate search and LiDAR registration."),
       field("relocalizer.spatial.max_candidates", &C::spatial_max_candidates,
-            "Positive maximum of geometric trials. Already tried nodes do not consume slots."),
+            "One positive maximum of effective-path geometric trials per query, shared by all retrieval evidence."),
       field("relocalizer.spatial.radius_m", &C::spatial_radius_m,
-            "Spatial fallback search and accepted relative-pose radius in meters; candidates require poses in the current graph."),
+            "Candidate search radius in metres within a committed metric component; never an acceptance radius."),
       field("relocalizer.spatial.max_graph_hops", &C::spatial_max_graph_hops,
             "Maximum graph edge distance from the query to a spatial candidate (0 disables this filter); not a cap on visited nodes."),
+      field("relocalizer.path.max_nodes", &C::path_max_nodes, "Maximum nodes in a committed historical graph path; 1 is the single-node baseline."),
+      field("relocalizer.path.max_bytes", &C::path_max_bytes, "Target Gaussian payload budget, not total working memory. Shorten context by whole Nodes; an oversized anchor is reported as resource-limited."),
       field("relocalizer.limit_covariance_by_odometry", &C::limit_covariance_by_odometry,
             "Limit covariance of non-neighbor links to minimum covariance of neighbor links. In other words, if covariance of a loop closure link is "
             "smaller "
             "than the minimum covariance of odometry links, its covariance is set to minimum covariance of odometry links."),
       field("relocalizer.max_loop_distance_m", &C::max_loop_distance_m,
-            "Reject loop closures if the distance from the map is over this distance (0=disabled).")};
+            "Optional additional spatial retrieval radius in metres (0=disabled); not a post-registration rejection gate.")};
 }
 
 auto bindings(const StatisticsParams&) {
@@ -585,7 +593,9 @@ RelocalizerParams RelocalizerParams::withOverrides(const ParametersMap& input) c
 ParametersMap RelocalizerParams::parameters() const { return dump(*this); }
 void RelocalizerParams::validate() const {
   finite_fields(*this);
-  if (!spatial_max_candidates || spatial_radius_m <= 0 || max_loop_distance_m < 0)
+  if (global_resolution_m <= 0 || global_feature_radius_m <= global_resolution_m || global_clique_time_sec<=0 || !global_max_associations || global_max_associations>4096 || !global_index_max_nodes)
+    throw std::invalid_argument("Invalid automatic relocalization resource/search bounds");
+  if (!path_max_nodes || path_max_nodes > 9 || !path_max_bytes || !spatial_max_candidates || spatial_radius_m <= 0 || max_loop_distance_m < 0)
     throw std::invalid_argument("Invalid spatial candidate budget or radius");
 }
 
@@ -870,9 +880,12 @@ SapphireParameters load_parameters(const std::filesystem::path &path, const Sens
   read_value(config, "odometry.dept_err", parameters.odometry.dept_err);
   read_value(config, "odometry.beam_err", parameters.odometry.beam_err);
   read_value(config, "odometry.voxel_size", parameters.odometry.voxel_size);
-  read_value(config, "odometry.map_retention_distance", parameters.odometry.map_retention_distance);
+  read_value(config, "odometry.fixed_map_budget_bytes", parameters.odometry.fixed_map_budget_bytes);
   read_value(config, "odometry.min_eigen_value", parameters.odometry.min_eigen_value);
   read_value(config, "odometry.degrade_bound", parameters.odometry.degrade_bound);
+  read_value(config, "recovery.input_timeout_sec", parameters.recovery.input_timeout_sec);
+  read_value(config, "recovery.max_imu_gap_sec", parameters.recovery.max_imu_gap_sec);
+  read_value(config, "recovery.max_lidar_gap_sec", parameters.recovery.max_lidar_gap_sec);
 
   read_value(config, "local_submap.win_size", parameters.local_submap.win_size);
   read_value(config, "local_submap.max_layer", parameters.local_submap.max_layer);
@@ -886,7 +899,6 @@ SapphireParameters load_parameters(const std::filesystem::path &path, const Sens
 
   read_value(config, "pose_graph.enabled", parameters.pose_graph.enabled);
   read_value(config, "pose_graph.submap_travel_distance", parameters.pose_graph.submap_travel_distance);
-  read_value(config, "pose_graph.submap_max_point_range", parameters.pose_graph.submap_max_point_range);
   read_value(config, "pose_graph.update_period_sec", parameters.pose_graph.update_period_sec);
 
   int cloud_cache_mb = 128;
@@ -944,9 +956,14 @@ void validate_parameters(SapphireParameters &parameters) {
   require_positive(parameters.odometry.dept_err, "Odometry.dept_err");
   require_positive(parameters.odometry.beam_err, "Odometry.beam_err");
   require_positive(parameters.odometry.voxel_size, "Odometry.voxel_size");
-  require_positive(parameters.odometry.map_retention_distance, "Odometry.map_retention_distance");
+  if (parameters.odometry.fixed_map_budget_bytes == 0)
+    throw std::invalid_argument("Odometry.fixed_map_budget_bytes must be positive");
   require_positive(parameters.odometry.min_eigen_value, "Odometry.min_eigen_value");
   require_positive(parameters.odometry.degrade_bound, "Odometry.degrade_bound");
+  if (!std::isfinite(parameters.recovery.input_timeout_sec) || parameters.recovery.input_timeout_sec < 0)
+    throw std::invalid_argument("Recovery.input_timeout_sec must be finite and nonnegative");
+  require_positive(parameters.recovery.max_imu_gap_sec, "Recovery.max_imu_gap_sec");
+  require_positive(parameters.recovery.max_lidar_gap_sec, "Recovery.max_lidar_gap_sec");
 
   if (parameters.local_submap.win_size < 2) throw std::invalid_argument("LocalSubmap.win_size must be at least two");
   require_positive(parameters.local_submap.max_layer, "LocalSubmap.max_layer");
@@ -969,7 +986,6 @@ void validate_parameters(SapphireParameters &parameters) {
   }
 
   require_positive(parameters.pose_graph.submap_travel_distance, "PoseGraph.submap_travel_distance");
-  require_positive(parameters.pose_graph.submap_max_point_range, "PoseGraph.submap_max_point_range");
   require_positive(parameters.pose_graph.update_period_sec, "PoseGraph.update_period_sec");
 
   parameters.pose_graph.mapping.validate();
