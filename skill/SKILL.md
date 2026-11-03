@@ -8,9 +8,13 @@ description: >-
 
 # Sapphire 运行命令
 
+这是维护者容器里的运行备忘，不是对外安装说明。对外步骤以仓库 README 和
+`docs/DATASET_REPLAY.md` 为准。那里的数据包回放使用 `use_sim_time:=true` 和
+`--clock`。下面的命令沿用本机 `/workspace` 与 `/data`，并且不打开仿真时钟。
+
 用户指定参数文件和数据集时，只给出两条可复制命令，不要自行启动。用户明确要求执行时再跑。用简体中文回复。
 
-工作空间是 `/workspace`，ROS 2 Humble。算法读消息头时间戳，不要加 `--clock` 或 `use_sim_time`，除非用户要求。
+工作空间是 `/workspace`，ROS 2 Humble。算法读消息头时间戳。
 
 ## 先确定三个值
 
@@ -55,7 +59,7 @@ ros2 bag play <数据集目录> \
 
 只回放这两路。不要回放相机、GPS 或其他机器人。`odom_topic`、`world_frame`、`lidar_frame` 仅在用户点名时追加。
 
-Launch 文件是 `src/sapphire_ros2/launch/sapphire.launch.py`。未改话题时它的默认值是 `lidar_topic:=/front_lidar`、`imu_topic:=/front_lidar/imu`；README 里的 Livox 话题不是当前默认值。
+Launch 文件是 `src/sapphire_ros2/launch/sapphire.launch.py`。未改话题时默认值是 `lidar_topic:=/front_lidar`、`imu_topic:=/front_lidar/imu`。
 
 `src/sapphire_intern` 有 `COLCON_IGNORE`，不要编译它。
 

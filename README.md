@@ -1,53 +1,50 @@
 # Sapphire
 
-LiDAR-inertial odometry using Gal(3) equivariant IMU preintegration.
+LiDAR-inertial odometry with Gal(3) equivariant IMU preintegration.
 
-[中文说明](README.zh.md) · [Design](docs/DESIGN.md) ·
-[Dataset replay](docs/DATASET_REPLAY.md)
+[中文说明](README.zh.md) · [Design](docs/DESIGN.md)
 
-Sapphire estimates a 6-DoF LiDAR-inertial trajectory, removes scan distortion
-with the same Gal(3) motion model used for IMU propagation, and builds a
-globally consistent map through asynchronous pose-graph optimization. The core
-is standalone C++17; ROS 1 and ROS 2 are provided by thin wrappers.
+Sapphire estimates a 6-DoF trajectory from LiDAR and IMU. Scan deskew and IMU
+propagation share one Gal(3) motion model, and an asynchronous pose graph
+keeps the map consistent. The core is standalone C++17. ROS 1 and ROS 2 are
+thin wrappers.
 
 ## Demos
 
-| S3E | HILTI 2023 | Newer College 2020 |
-|---|---|---|
-| ![S3E RViz mapping](docs/sapphire.gif) | ![HILTI 2023 RViz mapping](docs/hilti-2023.gif) | ![Newer College RViz mapping](docs/newer_college.gif) |
+**S3E**
 
-## Benchmark snapshot
+![S3E RViz mapping](docs/sapphire.gif)
 
-| Dataset | Included runs | Included GT coverage | Mean ATE | Median ATE |
-|---|---:|---:|---:|---:|
-| HILTI 2022 | 10 | 103 control points | 0.260 m | 0.082 m |
-| HILTI 2023 | 5 | 346.4 m control path | 0.058 m | 0.052 m |
-| S3E | 17 | 10.42 km | 1.17 m | 1.05 m |
-| Newer College 2020 | 5 | 5.94 km | 0.2639 m | 0.1609 m |
+**HILTI 2022**
 
-ATE is translation RMSE after timestamp association and SE(3) Umeyama
-alignment, without scale correction. HILTI 2022 and HILTI 2023 use sparse
-surveyed control points with a 2.0 s maximum association interval. S3E and
-Newer College use continuous GT with a 0.1 s maximum association interval.
-Complete runs enter the aggregate statistics; partial and unavailable results
-are documented in the detailed table rather than silently dropped. All five
-valid Newer College runs are included regardless of their ATE.
+![HILTI 2022 construction stairs RViz mapping](docs/hilti-2022.gif)
 
-Newer College estimates are exported in the LiDAR frame and transformed to the
-dataset's base frame (the left-camera centre) before evaluation. The transform
-has a 0.101 m lever arm. The latest `Dynamic Spinning` rerun reports 0.093 m ATE
-over 81.6% of the GT trajectory; coverage is retained in the detailed results.
+**HILTI 2023**
 
-Reproduction:
+![HILTI 2023 RViz mapping](docs/hilti-2023.gif)
 
-1. Build the core and ROS wrapper with the commands below.
-2. Replay a sequence at 1× (0.5× for HILTI 2022 as documented in the results)
-   and export its TUM trajectory using
-   [DATASET_REPLAY.md](docs/DATASET_REPLAY.md).
-3. Associate estimate and GT timestamps, apply SE(3) alignment without scale,
-   and compute translation RMSE.
+**Newer College 2020**
 
-[Full results and trajectory plots](docs/benchmarks/benchmark_table.md)
+![Newer College RViz mapping](docs/newer_college.gif)
+
+## Benchmarks
+
+Each number below is the unweighted mean or median of per-run translation ATE:
+RMSE after SE(3) alignment, with no scale correction. Runs are not weighted by
+distance.
+
+| Dataset | Runs in the mean | What the coverage column counts | Mean ATE | Median ATE |
+|---|---:|---|---:|---:|
+| HILTI 2022 | 10 complete | 103 matched control points | 0.260 m | 0.082 m |
+| HILTI 2023 Site 1 handheld | 5 | 346.4 m of control-point polylines | 0.058 m | 0.052 m |
+| S3E | 18 | 11.39 km of ground-truth path | 1.29 m | 1.11 m |
+| Newer College 2020 | 5 | 5.94 km of ground-truth path | 0.2639 m | 0.1609 m |
+
+HILTI uses sparse control points and a 2 s association window. S3E and Newer
+College use a 0.1 s window. Partial runs, sequences that were not replayed,
+and runs withheld from the mean are listed on the benchmark page and are not
+folded into this table.
+[Per-sequence results and trajectory plots](docs/benchmarks/benchmark_table.md).
 
 ## Build
 
@@ -56,52 +53,71 @@ git clone https://github.com/wagdeer/sapphire.git
 cd sapphire
 cmake -S . -B build -DBUILD_TESTING=ON
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure
+cmake --build build --target test
 ```
 
-The core requires CMake, a C++17 compiler, Eigen3, PCL, OpenMP, GTSAM,
-small_gicp, and spdlog. The ROS wrapper additionally requires the matching
-ROS 2 toolchain.
+Requires CMake 3.16 or newer, a C++17 compiler, Eigen 3.4, PCL 1.11 or newer,
+OpenMP, GTSAM 4.3, small_gicp, and spdlog. Configuring PCL also requires an
+MPI C library, because VTK's imported target references `MPI::MPI_C`. Sapphire
+itself does not call MPI. toml++ 3.4 is used when it is already installed;
+otherwise CMake downloads that release. The test target above works on CMake
+3.16; `ctest --test-dir` needs CMake 3.20.
 
-## Run
+## ROS
 
-Keep `sapphire` and
-[`sapphire_ros2`](https://github.com/wagdeer/sapphire_ros2) as sibling
-repositories, then build the wrapper:
+ROS 1 and ROS 2 are separate packages. Put the core beside the wrapper you
+need:
+
+```text
+ws/src/
+├── sapphire/
+└── sapphire_ros2/    or sapphire_ros1/
+```
+
+ROS 2 Humble, from the workspace root:
 
 ```bash
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install --packages-select sapphire_ros2
 source install/setup.bash
-```
 
-Launch with a dataset-specific TOML profile:
-
-```bash
 ros2 launch sapphire_ros2 sapphire.launch.py \
-  config_file:=/absolute/path/to/profile.toml \
-  lidar_topic:=/points \
-  imu_topic:=/imu
+  config_file:=/absolute/path/to/sapphire/cfg/sapphire_mid360.toml \
+  lidar_topic:=/your_lidar \
+  imu_topic:=/your_imu
 ```
 
-Published topics include `/sapphire/odometry`, `/sapphire/deskewed`,
-`/sapphire/trajectory`, and `/sapphire/pgo/map`.
+`config_file` is required. If you omit the topic arguments, the launch file
+subscribes to `/front_lidar` and `/front_lidar/imu`. The node always publishes
+`/sapphire/odometry` and `/sapphire/deskewed`. `/sapphire/trajectory`,
+`/sapphire/pgo/map`, and `/sapphire/pgo/graph` are published only when the
+profile sets `pgo.enabled` to true.
+
+Dependency installation, Docker, and bag playback are in
+[`sapphire_ros2`](https://github.com/wagdeer/sapphire_ros2) and
+[`sapphire_ros1`](https://github.com/wagdeer/sapphire_ros1). Dataset profiles
+live in `cfg/`. A replay walkthrough is in
+[docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md).
 
 ## Documentation
 
-- [Architecture and design](docs/DESIGN.md)
-- [Dataset replay and visualization](docs/DATASET_REPLAY.md)
-- [Detailed benchmark results and trajectory plots](docs/benchmarks/benchmark_table.md)
+| Document | What it is |
+|---|---|
+| [docs/DESIGN.md](docs/DESIGN.md) | Pipeline and repository layout |
+| [docs/benchmarks/benchmark_table.md](docs/benchmarks/benchmark_table.md) | Per-run ATE, including runs left out of the table above |
+| [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md) | How to replay a bag and write a TUM trajectory |
+| [docs/eskf_on_gal3.md](docs/eskf_on_gal3.md) | ESKF derivation |
+| [docs/occupancy_grid.md](docs/occupancy_grid.md) | Occupancy-grid design note |
+
+`docs/code-review/` and `skill/` are maintainer notes. They are not the
+install or replay guide.
 
 ## Credits
 
-- [DLIO](https://github.com/vectr-ucla/direct_lidar_inertial_odometry):
-  pipeline and submap design reference
-- [Equivariant IMU Preintegration with Biases](https://github.com/aau-cns/equivariant-preintegration):
-  Gal(3) preintegration theory and implementation
+- [DLIO](https://github.com/vectr-ucla/direct_lidar_inertial_odometry): pipeline and submap design
+- [Equivariant IMU Preintegration with Biases](https://github.com/aau-cns/equivariant-preintegration): Gal(3) preintegration
 - [small_gicp](https://github.com/koide3/small_gicp): GICP and VGICP
-- [GTSAM](https://github.com/borglab/gtsam): incremental pose-graph
-  optimization
+- [GTSAM](https://github.com/borglab/gtsam): incremental pose-graph optimization
 
 ## License
 

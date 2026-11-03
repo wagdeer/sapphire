@@ -15,19 +15,19 @@ main{width:min(1380px,calc(100% - 36px));margin:auto;padding:42px 0 80px}.hero{p
 </style>
 </head>
 <body><main>
-<header class="hero"><div class="kicker">Sapphire · ATE evaluation</div><h1>轨迹精度与对应轨迹图</h1><p>汇总当前 README 中纳入统计的 <strong>37 条有效轨迹</strong>，并保留部分覆盖结果。HILTI 使用稀疏控制点与 2.0 s 最大时间关联；S3E 和 Newer College 使用连续 GT 与 0.1 s 最大时间关联。所有 ATE 均为 SE(3) Umeyama 对齐后的平移 RMSE，不做尺度修正。</p></header>
+<header class="hero"><div class="kicker">Sapphire · ATE evaluation</div><h1>轨迹精度与对应轨迹图</h1><p>汇总当前 README 中纳入统计的 <strong>38 条轨迹</strong>，并保留部分覆盖和未纳入均值的结果。HILTI 使用稀疏控制点与 2.0 s 最大时间关联；S3E 和 Newer College 使用 0.1 s 最大时间关联。所有 ATE 均为 SE(3) Umeyama 对齐后的平移 RMSE，不做尺度修正。均值按轨迹等权，不按长度加权。</p></header>
 <section class="stats" aria-label="总体统计">
-<div class="stat"><div class="label">有效轨迹</div><div class="value">37</div><div class="detail">4 个数据集</div></div>
+<div class="stat"><div class="label">纳入均值的轨迹</div><div class="value">38</div><div class="detail">4 个数据集</div></div>
 <div class="stat"><div class="label">HILTI 2022 平均 ATE</div><div class="value">0.260 m</div><div class="detail">10 条 · 中位数 0.082 m</div></div>
-<div class="stat"><div class="label">HILTI 2023 平均 ATE</div><div class="value">0.058 m</div><div class="detail">5 条 · 中位数 0.052 m</div></div>
-<div class="stat"><div class="label">S3E 平均 ATE</div><div class="value">1.17 m</div><div class="detail">17 条 · 中位数 1.05 m</div></div>
+<div class="stat"><div class="label">HILTI 2023 Site 1 平均 ATE</div><div class="value">0.058 m</div><div class="detail">5 条 · 中位数 0.052 m</div></div>
+<div class="stat"><div class="label">S3E 平均 ATE</div><div class="value">1.29 m</div><div class="detail">18 条 · 中位数 1.11 m</div></div>
 <div class="stat"><div class="label">Newer College 平均 ATE</div><div class="value">0.2639 m</div><div class="detail">5 条 · 中位数 0.1609 m</div></div>
 </section>
-<div class="callout">Newer College 的估计位姿先从 LiDAR 系转换到数据集 base 系（左相机中心）再评估，转换杆臂为 0.1012 m。五条有效轨迹全部纳入；其中 Dynamic Spinning 最新重跑覆盖 81.6%。HILTI 2022 回放使用 0.5× 速率。</div>
+<div class="callout">Newer College 的估计位姿先从 LiDAR 系转换到数据集 base 系（左相机中心）再评估，转换杆臂为 0.1012 m。五条轨迹全部纳入均值，其中 Dynamic Spinning 覆盖真值的 81.6%。S3E 均值包含 Campus Road 3 的 Bob（3.330 m）。Site 2、Tunnel 1 和部分覆盖结果不进入均值，说明见 Markdown 基准表。</div>
 <section class="panel" id="summary"><div class="panel-head"><div><span class="eyebrow">README snapshot</span><h2>基准汇总</h2><p>数值与 README 和中英文 benchmark table 保持一致。</p></div></div><div class="table-wrap"><table><thead><tr><th>数据集</th><th class="num">纳入轨迹</th><th class="num">纳入 GT 覆盖</th><th class="num">平均 ATE</th><th class="num">ATE 中位数</th></tr></thead><tbody>
 <tr><td><span class="dataset hilti22">HILTI 2022</span></td><td class="num">10</td><td class="num">103 个控制点</td><td class="num">0.260 m</td><td class="num">0.082 m</td></tr>
-<tr><td><span class="dataset hilti23">HILTI 2023</span></td><td class="num">5</td><td class="num">346.4 m 控制点路径</td><td class="num">0.058 m</td><td class="num">0.052 m</td></tr>
-<tr><td><span class="dataset s3e">S3E</span></td><td class="num">17</td><td class="num">10.42 km</td><td class="num">1.17 m</td><td class="num">1.05 m</td></tr>
+<tr><td><span class="dataset hilti23">HILTI 2023 Site 1</span></td><td class="num">5</td><td class="num">346.4 m 控制点路径</td><td class="num">0.058 m</td><td class="num">0.052 m</td></tr>
+<tr><td><span class="dataset s3e">S3E</span></td><td class="num">18</td><td class="num">11.39 km</td><td class="num">1.29 m</td><td class="num">1.11 m</td></tr>
 <tr><td><span class="dataset newer">Newer College 2020</span></td><td class="num">5</td><td class="num">5.94 km</td><td class="num">0.2639 m</td><td class="num">0.1609 m</td></tr>
 </tbody></table></div></section>
 <section class="panel" id="results"><div class="panel-head"><div><span class="eyebrow">Per-sequence results</span><h2>逐序列 ATE 指标</h2><p>点击“查看轨迹”跳到下方对应图。HILTI 2022 的 4 条未评估序列因本地缺少完整 ROS bag 而保留为空项。</p></div></div><div class="table-wrap"><table><thead><tr><th>数据集</th><th>序列</th><th>机器人</th><th>指标</th><th class="num">ATE RMSE (m)</th><th>RMSE 对比</th><th class="num">GT 覆盖</th><th>状态</th><th>轨迹</th></tr></thead><tbody>
@@ -53,6 +53,7 @@ main{width:min(1380px,calc(100% - 36px));margin:auto;padding:42px 0 80px}.hero{p
 <tr><td><span class="dataset hilti23">HILTI 2023</span></td><td>Site 1 · Handheld 4</td><td>reference</td><td>稀疏 ATE</td><td class="num">0.053</td><td><div class="bar-track"><div class="bar " style="width:2.6%"></div></div><div class="bar-note"></div></td><td class="num">52.88 m</td><td>完整</td><td><a class="jump" href="#traj-hilti-2023-site-1-handheld-4">查看轨迹 ↓</a></td></tr>
 <tr><td><span class="dataset hilti23">HILTI 2023</span></td><td>Site 1 · Handheld 5</td><td>reference</td><td>稀疏 ATE</td><td class="num">0.045</td><td><div class="bar-track"><div class="bar " style="width:2.2%"></div></div><div class="bar-note"></div></td><td class="num">45.94 m</td><td>完整</td><td><a class="jump" href="#traj-hilti-2023-site-1-handheld-5">查看轨迹 ↓</a></td></tr>
 <tr><td><span class="dataset s3e">S3E</span></td><td>Campus Road 3</td><td>Alpha</td><td>ATE</td><td class="num">0.876</td><td><div class="bar-track"><div class="bar " style="width:43.8%"></div></div><div class="bar-note"></div></td><td class="num">983.3 m</td><td>完整</td><td><a class="jump" href="#traj-s3e-campus-road-3-alpha">查看轨迹 ↓</a></td></tr>
+<tr><td><span class="dataset s3e">S3E</span></td><td>Campus Road 3</td><td>Bob</td><td>ATE</td><td class="num">3.330</td><td><div class="bar-track"><div class="bar " style="width:100%"></div></div><div class="bar-note">纳入均值 · 未生成轨迹图</div></td><td class="num">967.6 m</td><td>完整</td><td>—</td></tr>
 <tr><td><span class="dataset s3e">S3E</span></td><td>Campus Road 3</td><td>Carol</td><td>ATE</td><td class="num">1.050</td><td><div class="bar-track"><div class="bar " style="width:52.5%"></div></div><div class="bar-note"></div></td><td class="num">986.9 m</td><td>完整</td><td><a class="jump" href="#traj-s3e-campus-road-3-carol">查看轨迹 ↓</a></td></tr>
 <tr><td><span class="dataset s3e">S3E</span></td><td>Dormitory 1</td><td>Alpha</td><td>ATE</td><td class="num">0.478</td><td><div class="bar-track"><div class="bar " style="width:23.9%"></div></div><div class="bar-note"></div></td><td class="num">727.0 m</td><td>完整</td><td><a class="jump" href="#traj-s3e-dormitory-1-alpha">查看轨迹 ↓</a></td></tr>
 <tr><td><span class="dataset s3e">S3E</span></td><td>Dormitory 1</td><td>Bob</td><td>ATE</td><td class="num">1.378</td><td><div class="bar-track"><div class="bar " style="width:68.9%"></div></div><div class="bar-note"></div></td><td class="num">719.3 m</td><td>完整</td><td><a class="jump" href="#traj-s3e-dormitory-1-bob">查看轨迹 ↓</a></td></tr>

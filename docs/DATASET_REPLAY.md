@@ -1,386 +1,207 @@
-# Running HILTI and S3E in Docker
+# Dataset replay
 
-This guide treats the work as two independent batches:
-
-1. ROS 1 / `sapphire:noetic`
-2. ROS 2 Humble / `sapphire:humble`
-
-The shortest path is:
-
-```text
-ROS 1 batch: HILTI direct + convert S3E to ROS 1
-ROS 2 batch: S3E direct  + convert HILTI to ROS 2
-```
-
-Both containers expose the datasets through the same read-only paths:
+Replay one sequence and write `trajectory.tum` when the node shuts down
+normally. Build the wrapper first, using the instructions in
+[`sapphire_ros1`](https://github.com/wagdeer/sapphire_ros1) or
+[`sapphire_ros2`](https://github.com/wagdeer/sapphire_ros2). Both wrappers
+expect this repository as a sibling:
 
 ```text
-HILTI: /datasets/hilti-2023
-S3E:   /datasets/s3e
+ws/src/
+├── sapphire/
+└── sapphire_ros1/     or sapphire_ros2/
 ```
 
-Each recording should produce one trajectory and one log under:
-
-```text
-results/dataset_replay/<ros-version>/<dataset>/<sequence>/
-├── trajectory.tum
-└── run.log
-```
-
-The S3E examples use `Alpha`. Change `AGENT` to `Bob` or `Carol` if a different
-robot should be shown.
-
-## Prepare the shared workspace
-
-Run these commands once from the workspace root:
+Set the dataset location in the shell you use for the commands below:
 
 ```bash
-cd /home/bindeer/git/sapphire_ws
-mkdir -p \
-  .cache/sapphire_dataset_replay/ros1_s3e \
-  .cache/sapphire_dataset_replay/ros2_hilti
+export HILTI_DIR=/path/to/hilti-2023
+export S3E_DIR=/path/to/s3e
+export OUT=$PWD/results/dataset_replay
+```
 
+`HILTI_DIR` should contain `rosbags/<sequence>.bag` for the 2023 handheld
+recordings. Each S3E sequence is a ROS 2 bag directory such as
+`$S3E_DIR/S3E_Dormitory_1`.
+
+## Clock and the trajectory file
+
+The estimator reads the LiDAR and IMU header stamps. RViz, TF markers, and
+bag playback still need one clock. For a recording, pass `use_sim_time:=true`
+to the launch file and `--clock` to the bag player.
+
+The TUM file is written once, on a normal shutdown. After the bag ends, stop
+the launch process with Ctrl-C. `kill -9` and stopping the container do not
+flush the file.
+
+Give each robot its own output directory. The examples below put the robot
+name in the path so Alpha, Bob, and Carol do not overwrite one another.
+
+## ROS 1
+
+Source the workspace, then play HILTI 2023 handheld with the dedicated launch
+file. It already selects `/hesai/pandar`, `/alphasense/imu`, the handheld
+extrinsic frames, and the LiDAR time offset:
+
+```bash
+mkdir -p "$OUT/ros1/hilti_2023/site1_handheld_1"
+roslaunch sapphire_ros1 hilti_2023_handheld.launch \
+  config_file:=/path/to/sapphire/cfg/sapphire_hilti_2023_handheld.toml \
+  bag:="$HILTI_DIR/rosbags/site1_handheld_1.bag" \
+  rate:=1.0 \
+  rviz:=false \
+  bag_required:=true \
+  trajectory_output:="$OUT/ros1/hilti_2023/site1_handheld_1/trajectory.tum"
+```
+
+`rviz:=true` needs a working display. The default RViz file is
+`sapphire_ros1/launch/display.rviz`. See that package's Docker notes for X11.
+
+S3E is published as ROS 2 bags. Convert one robot's topics to a ROS 1 bag
+before replay. The image is built from this repository:
+
+```bash
 docker build \
   -t sapphire-bag-convert:0.11.9 \
-  src/sapphire/tools/bag-convert
-```
+  tools/bag-convert
 
-Only the `velodyne_points` and `imu/data` topics are converted for S3E. This
-keeps the ROS 1 conversions small and avoids replaying all three robots and
-cameras at once.
-
----
-
-## Batch 1: ROS 1
-
-### Start and build
-
-The local `CATKIN_IGNORE` marker excludes the ROS 2 package from catkin
-discovery:
-
-```bash
-cd /home/bindeer/git/sapphire_ws
-touch src/sapphire_ros2/CATKIN_IGNORE
-docker compose -f docker-compose.ros1.yml build sapphire_ros1
-docker compose -f docker-compose.ros1.yml up -d --force-recreate
-
-docker exec sapphire_ros1_dev bash -lc '
-  source /opt/ros/noetic/setup.bash
-  cd /workspace
-  catkin build sapphire_ros1 --no-deps
-'
-```
-
-### Foxglove web visualization
-
-The ROS 1 image includes `foxglove_bridge` on an overlay image. Port `8765`
-is published to Windows, so no Windows client is required.
-
-Start the Sapphire launch in one terminal with RViz disabled:
-
-```bash
-docker exec -it sapphire_ros1_dev bash -lc '
-  source /opt/ros/noetic/setup.bash
-  source /workspace/devel_ros1/setup.bash
-  roslaunch sapphire_ros1 hilti_2023_handheld.launch \
-    config_file:=/workspace/src/sapphire/cfg/sapphire_hilti_2023_handheld.toml \
-    rviz:=false
-'
-```
-
-Start the bridge in a second terminal:
-
-```bash
-docker exec -it sapphire_ros1_dev bash -lc '
-  source /opt/ros/noetic/setup.bash
-  source /workspace/devel_ros1/setup.bash
-  roslaunch sapphire_ros1 foxglove.launch
-'
-```
-
-Open <https://app.foxglove.dev/>, choose **Open connection**, and use:
-
-```text
-ws://localhost:8765
-```
-
-The main 3D topics are `/sapphire/pgo/map`, `/sapphire/deskewed`,
-`/sapphire/trajectory`, `/sapphire/odometry`, and `/sapphire/pgo/graph`.
-
-### ROS 1 + HILTI
-
-These handheld sequences are currently available:
-
-```text
-site1_handheld_1
-site1_handheld_2
-site1_handheld_3
-site1_handheld_4
-site1_handheld_5
-site2_handheld_4
-site2_handheld_5
-site2_handheld_6
-```
-
-Select one sequence and run:
-
-```bash
-cd /home/bindeer/git/sapphire_ws
-SEQ=site1_handheld_1
-OUT=/workspace/results/dataset_replay/ros1/hilti_2023/$SEQ
-
-docker exec -it sapphire_ros1_dev bash -lc "
-  source /opt/ros/noetic/setup.bash
-  source /workspace/devel_ros1/setup.bash
-  mkdir -p '$OUT'
-  roslaunch sapphire_ros1 hilti_2023_handheld.launch \
-    config_file:=/workspace/src/sapphire/cfg/sapphire_hilti_2023_handheld.toml \
-    bag:=/datasets/hilti-2023/rosbags/$SEQ.bag \
-    rate:=1.0 \
-    rviz:=true \
-    rviz_config:=/workspace/src/sapphire_ros1/launch/display.rviz \
-    bag_required:=true \
-    trajectory_output:='$OUT/trajectory.tum' \
-    2>&1 | tee '$OUT/run.log'
-"
-```
-
-Start screen recording before this command. The RViz window closes automatically
-when the bag ends.
-
-### ROS 1 + S3E
-
-S3E is distributed as ROS 2 bags, so convert one selected S3E sequence to ROS 1
-before recording:
-
-```bash
-cd /home/bindeer/git/sapphire_ws
-SEQ=S3E_Dormitory_1
-AGENT=Alpha
-BAG=/workspace/ros1_s3e/${SEQ}_${AGENT}.bag
-
+mkdir -p "$OUT/converted"
 docker run --rm \
-  -v /mnt/e/dataset/s3e:/datasets/s3e:ro \
-  -v /home/bindeer/git/sapphire_ws/.cache/sapphire_dataset_replay:/workspace \
+  -v "$S3E_DIR":/datasets/s3e:ro \
+  -v "$OUT/converted":/out \
   sapphire-bag-convert:0.11.9 \
-  --src /datasets/s3e/$SEQ \
-  --dst "$BAG" \
+  --src /datasets/s3e/S3E_Dormitory_1 \
+  --dst /out/S3E_Dormitory_1_Alpha.bag \
   --src-typestore ros2_humble \
   --dst-typestore ros1_noetic \
-  --include-topic /$AGENT/velodyne_points \
-  --include-topic /$AGENT/imu/data
+  --include-topic /Alpha/velodyne_points \
+  --include-topic /Alpha/imu/data
 ```
-
-Use two terminals.
-
-Terminal A starts Sapphire and RViz:
-
-```bash
-cd /home/bindeer/git/sapphire_ws
-SEQ=S3E_Dormitory_1
-AGENT=Alpha
-OUT=/workspace/results/dataset_replay/ros1/s3e/$SEQ
-
-docker exec -it sapphire_ros1_dev bash -lc "
-  source /opt/ros/noetic/setup.bash
-  source /workspace/devel_ros1/setup.bash
-  mkdir -p '$OUT'
-  roslaunch sapphire_ros1 sapphire.launch \
-    config_file:=/workspace/src/sapphire/cfg/sapphire_s3e_${AGENT,,}.toml \
-    lidar_topic:=/$AGENT/velodyne_points \
-    imu_topic:=/$AGENT/imu/data \
-    pose_frame:=lidar \
-    use_sim_time:=true \
-    rviz:=true \
-    rviz_config:=/workspace/src/sapphire_ros1/launch/display.rviz \
-    trajectory_output:='$OUT/trajectory.tum' \
-    2>&1 | tee '$OUT/run.log'
-"
-```
-
-Terminal B replays the converted bag:
-
-```bash
-cd /home/bindeer/git/sapphire_ws
-SEQ=S3E_Dormitory_1
-AGENT=Alpha
-BAG=/workspace/.cache/sapphire_dataset_replay/ros1_s3e/${SEQ}_${AGENT}.bag
-
-docker exec -it sapphire_ros1_dev bash -lc "
-  source /opt/ros/noetic/setup.bash
-  rosbag play --clock --delay 2.0 \
-    --topics /$AGENT/velodyne_points /$AGENT/imu/data \
-    --bags "$BAG"
-"
-```
-
-Start recording, then start Terminal B. Press `Ctrl-C` in Terminal A after the
-bag ends so the final TUM file is written.
-
-Available S3E sequences with complete `.db3` data:
-
-```text
-S3E_Campus_Road_3
-S3E_Dormitory_1
-S3E_Laboratory_1
-S3E_Laboratory_2
-S3E_Laboratory_3
-S3E_Laboratory_4
-S3E_Library_1
-S3E_Library_2
-S3E_Square_1
-S3E_Square_3
-S3E_Teaching_Building_1
-S3E_Tunnel_1
-```
-
-`S3E_Campus_Road_1` and `S3E_Campus_Road_2` currently have only metadata, not a
-complete `.db3`.
-
----
-
-## Batch 2: ROS 2 Humble
-
-### Start and build
-
-ROS 2 must be visible to colcon, so remove the local catkin marker:
-
-```bash
-cd /home/bindeer/git/sapphire_ws
-rm -f src/sapphire_ros2/CATKIN_IGNORE
-docker compose up -d --force-recreate
-
-docker exec sapphire_ros_dev bash -lc '
-  source /opt/ros/humble/setup.bash
-  cd /workspace
-  colcon build --symlink-install --packages-select sapphire_ros2
-'
-```
-
-### ROS 2 + S3E
 
 Use two terminals.
 
 Terminal A:
 
 ```bash
-cd /home/bindeer/git/sapphire_ws
-SEQ=S3E_Dormitory_1
-AGENT=Alpha
-OUT=/workspace/results/dataset_replay/ros2/s3e/$SEQ
+mkdir -p "$OUT/ros1/s3e/S3E_Dormitory_1/Alpha"
+roslaunch sapphire_ros1 sapphire.launch \
+  config_file:=/path/to/sapphire/cfg/sapphire_s3e_alpha.toml \
+  lidar_topic:=/Alpha/velodyne_points \
+  imu_topic:=/Alpha/imu/data \
+  pose_frame:=lidar \
+  use_sim_time:=true \
+  rviz:=false \
+  trajectory_output:="$OUT/ros1/s3e/S3E_Dormitory_1/Alpha/trajectory.tum"
+```
 
-docker exec -it sapphire_ros_dev bash -lc "
-  source /opt/ros/humble/setup.bash
-  source /workspace/install/setup.bash
-  mkdir -p '$OUT'
-  ros2 launch sapphire_ros2 sapphire.launch.py \
-    config_file:=/workspace/src/sapphire/cfg/sapphire_s3e_${AGENT,,}.toml \
-    lidar_topic:=/$AGENT/velodyne_points \
-    imu_topic:=/$AGENT/imu/data \
-    pose_frame:=lidar \
-    use_sim_time:=true \
-    rviz:=true \
-    trajectory_output:='$OUT/trajectory.tum' \
-    2>&1 | tee '$OUT/run.log'
-"
+Terminal B, after the node has logged that it is ready:
+
+```bash
+rosbag play --clock --delay 2.0 \
+  --topics /Alpha/velodyne_points /Alpha/imu/data \
+  "$OUT/converted/S3E_Dormitory_1_Alpha.bag"
+```
+
+For Bob or Carol, change the topic prefix, the config
+(`sapphire_s3e_bob.toml` or `sapphire_s3e_carol.toml`), and the output
+directory together. The three configs differ by robot, not by sequence.
+
+### Foxglove
+
+The base Noetic image does not install `foxglove_bridge`. Install
+`ros-noetic-foxglove-bridge`, or build `sapphire_ros1/docker/Dockerfile.foxglove`
+on top of `sapphire:noetic`. Then:
+
+```bash
+roslaunch sapphire_ros1 foxglove.launch
+```
+
+Open <https://app.foxglove.dev/>, choose **Open connection**, and use
+`ws://localhost:8765`. The bridge port is 8765.
+
+## ROS 2 Humble
+
+S3E can be played directly. Terminal A:
+
+```bash
+mkdir -p "$OUT/ros2/s3e/S3E_Dormitory_1/Alpha"
+ros2 launch sapphire_ros2 sapphire.launch.py \
+  config_file:=/path/to/sapphire/cfg/sapphire_s3e_alpha.toml \
+  lidar_topic:=/Alpha/velodyne_points \
+  imu_topic:=/Alpha/imu/data \
+  pose_frame:=lidar \
+  use_sim_time:=true \
+  rviz:=false \
+  trajectory_output:="$OUT/ros2/s3e/S3E_Dormitory_1/Alpha/trajectory.tum"
 ```
 
 Terminal B:
 
 ```bash
-cd /home/bindeer/git/sapphire_ws
-SEQ=S3E_Dormitory_1
-AGENT=Alpha
-
-docker exec -it sapphire_ros_dev bash -lc "
-  source /opt/ros/humble/setup.bash
-  ros2 bag play /datasets/s3e/$SEQ \
-    --clock \
-    --delay 2.0 \
-    --topics /$AGENT/velodyne_points /$AGENT/imu/data
-"
+ros2 bag play "$S3E_DIR/S3E_Dormitory_1" \
+  --clock \
+  --delay 2.0 \
+  --topics /Alpha/velodyne_points /Alpha/imu/data
 ```
 
-Start recording before Terminal B. After playback, press `Ctrl-C` in Terminal A
-to save the final TUM.
-
-### ROS 2 + HILTI
-
-Convert the selected ROS 1 HILTI bag to ROS 2 first:
+HILTI 2023 handheld bags are ROS 1. Convert the two sensor topics first:
 
 ```bash
-cd /home/bindeer/git/sapphire_ws
-SEQ=site1_handheld_1
-BAG_OUT=/workspace/ros2_hilti/$SEQ
-
+mkdir -p "$OUT/converted"
 docker run --rm \
-  -v /mnt/e/dataset/hilti-2023:/datasets/hilti-2023:ro \
-  -v /home/bindeer/git/sapphire_ws/.cache/sapphire_dataset_replay:/workspace \
+  -v "$HILTI_DIR":/datasets/hilti-2023:ro \
+  -v "$OUT/converted":/out \
   sapphire-bag-convert:0.11.9 \
-  --src /datasets/hilti-2023/rosbags/$SEQ.bag \
-  --dst "$BAG_OUT" \
+  --src /datasets/hilti-2023/rosbags/site1_handheld_1.bag \
+  --dst /out/site1_handheld_1 \
   --src-typestore ros1_noetic \
   --dst-typestore ros2_humble \
   --include-topic /hesai/pandar \
   --include-topic /alphasense/imu
 ```
 
-If the destination already exists, remove only that exact sequence directory
-before converting again.
-
-Use two terminals.
-
 Terminal A:
 
 ```bash
-cd /home/bindeer/git/sapphire_ws
-SEQ=site1_handheld_1
-OUT=/workspace/results/dataset_replay/ros2/hilti_2023/$SEQ
-
-docker exec -it sapphire_ros_dev bash -lc "
-  source /opt/ros/humble/setup.bash
-  source /workspace/install/setup.bash
-  mkdir -p '$OUT'
-  ros2 launch sapphire_ros2 sapphire.launch.py \
-    config_file:=/workspace/src/sapphire/cfg/sapphire_hilti_2023_handheld.toml \
-    lidar_topic:=/hesai/pandar \
-    imu_topic:=/alphasense/imu \
-    lidar_frame:=PandarXT-32 \
-    imu_frame:=imu_sensor_frame \
-    pose_frame:=imu \
-    lidar_time_offset:=0.0015846550361175184 \
-    use_sim_time:=true \
-    rviz:=true \
-    trajectory_output:='$OUT/trajectory.tum' \
-    2>&1 | tee '$OUT/run.log'
-"
+mkdir -p "$OUT/ros2/hilti_2023/site1_handheld_1"
+ros2 launch sapphire_ros2 sapphire.launch.py \
+  config_file:=/path/to/sapphire/cfg/sapphire_hilti_2023_handheld.toml \
+  lidar_topic:=/hesai/pandar \
+  imu_topic:=/alphasense/imu \
+  lidar_frame:=PandarXT-32 \
+  imu_frame:=imu_sensor_frame \
+  pose_frame:=imu \
+  lidar_time_offset:=0.0015846550361175184 \
+  use_sim_time:=true \
+  rviz:=false \
+  trajectory_output:="$OUT/ros2/hilti_2023/site1_handheld_1/trajectory.tum"
 ```
 
 Terminal B:
 
 ```bash
-cd /home/bindeer/git/sapphire_ws
-SEQ=site1_handheld_1
-
-docker exec -it sapphire_ros_dev bash -lc "
-  source /opt/ros/humble/setup.bash
-  ros2 bag play /workspace/.cache/sapphire_dataset_replay/ros2_hilti/$SEQ \
-    --clock \
-    --delay 2.0 \
-    --topics /hesai/pandar /alphasense/imu
-"
+ros2 bag play "$OUT/converted/site1_handheld_1" \
+  --clock \
+  --delay 2.0 \
+  --topics /hesai/pandar /alphasense/imu
 ```
 
-## Recording checklist
+The time offset is the handheld calibration value used by
+`sapphire_ros1/launch/hilti_2023_handheld.launch`. ROS 2 has no equivalent
+launch file, so the same value is passed on the command line.
 
-Before each clip:
+## Profiles
 
-1. Start the visualizer and wait until `/sapphire/deskewed` is populated.
-2. Start the screen recorder.
-3. Start bag playback.
-4. Stop recording after the trajectory has visibly developed.
-5. Press `Ctrl-C` in the visualizer terminal so `trajectory.tum` is flushed.
-6. Keep the keyframe in `results/dataset_replay/...` for the later GIF step.
+| Recording | Config | LiDAR topic | IMU topic |
+|---|---|---|---|
+| HILTI 2023 handheld | `cfg/sapphire_hilti_2023_handheld.toml` | `/hesai/pandar` | `/alphasense/imu` |
+| HILTI 2022 handheld | `cfg/sapphire_hilti_2022_handheld.toml` | `/hesai/pandar` | `/alphasense/imu` |
 
-Do not run the ROS 1 and ROS 2 batches at the same time. Both use host
-networking and similar topic names.
+`sapphire_ros1/launch/hilti_2022_handheld.launch` uses those two topics.
+Unlike the 2023 handheld launch, its LiDAR time offset defaults to 0.
+| S3E Alpha / Bob / Carol | `cfg/sapphire_s3e_alpha.toml` and the Bob and Carol files | `/<Robot>/velodyne_points` | `/<Robot>/imu/data` |
+| Newer College 2020 | `cfg/sapphire_newer_college.toml` | `/os1_cloud_node/points` | `/os1_cloud_node/imu` |
+
+Published ATE for these datasets is defined in
+[benchmarks/benchmark_table.md](benchmarks/benchmark_table.md), including which
+runs are left out of the headline mean.

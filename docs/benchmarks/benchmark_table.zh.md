@@ -1,30 +1,47 @@
 # 基准结果
 
-ATE 是完成时间关联和 SE(3) Umeyama 对齐后的平移 RMSE，不做尺度修正。
-数值越低越好。
+ATE 是时间关联和 SE(3) Umeyama 对齐之后的位置误差 RMSE，不做尺度修正。
+数值越低越好。汇总里的平均值和中位数按轨迹条数等权计算，不按路径长度加权，
+也不是把所有位姿合在一起再算一次 RMSE。
 
-HILTI 2022 和 HILTI 2023 使用稀疏测量控制点，最大时间关联间隔为 2.0 s；
-S3E 和 Newer College 使用连续 GT，最大时间关联间隔为 0.1 s。因此稀疏控制点
-与连续 GT 的结果不能视为完全相同的评估协议。
+两套关联方式不能当成同一种协议：
 
-汇总统计采用各数据集明确声明的纳入范围；部分覆盖的结果保留并标记为
-`partial`；本地没有完整数据包的序列标记为 `未评估`。Newer College 的五条
-有效轨迹全部纳入统计，不根据 ATE 高低剔除结果。
+- HILTI 2022 和 HILTI 2023 使用稀疏测量控制点，最大间隔 2.0 s。HILTI 2023
+  的参考朝向是常数，所以只评平移。Site 1 每条结果用 3 或 4 个控制点。
+  这些行里的「GT 覆盖」是控制点连成的折线长度，短于控制点之间的传感器路径。
+- S3E 和 Newer College 的最大间隔是 0.1 s。Dormitory 1、Library 1、Square 1
+  的真值四元数也是常数。Library 2、Square 3、Campus Road 3 带朝向。
+
+汇总纳入规则：
+
+- HILTI 2022：控制点全部匹配上的 10 条，合计 103 个点。`exp10` 和 `exp16`
+  中途丢失跟踪，表中保留为部分覆盖，不进入均值、中位数和这 103 个点。
+  `exp15`、`exp18`、`exp21`、`exp23` 没有回放。`exp03` 和 `exp11` 是完整重跑；
+  更早的批量轨迹 2.021 m 和 0.437 m 不是这里公布的数字。`exp09` 的 1.810 m
+  把均值拉到了明显高于中位数的位置。
+- HILTI 2023：只含 Site 1 手持 1–5。Site 2 也评过，列在表后，不进入 0.058 m
+  这个均值。
+- S3E：逐序列表中的 18 条，包含 Campus Road 3 的 Bob。Laboratory 1–4 只有
+  起终点真值，不是 ATE。Teaching Building 1 不混入，因为控制路径只有几十米，
+  估计轨迹约 600 m。Tunnel 1 已经跑过，但在确认估计和真值是同一条轨迹之前
+  不进入均值。Campus Road 1 和 Campus Road 2 不在本表中。
+- Newer College：五条都进入均值，包括真值覆盖 81.6% 的 Dynamic Spinning。
+  对齐前，估计位姿从 Ouster 雷达系变到数据集 base 系，也就是左相机中心，
+  该刚体变换的杆臂为 0.1012 m。汇总使用每条 RMSE 的完整精度。
 
 ## 汇总结果
 
 | 数据集 | 纳入轨迹 | 纳入 GT 覆盖 | 平均 ATE (m) | ATE 中位数 (m) |
 |---|---:|---:|---:|---:|
 | HILTI 2022 | 10 | 103 个控制点 | 0.260 | 0.082 |
-| HILTI 2023 | 5 | 346.4 m 控制点路径 | 0.058 | 0.052 |
-| S3E | 17 | 10.42 km | 1.17 | 1.05 |
+| HILTI 2023 Site 1 手持 | 5 | 346.4 m 控制点路径 | 0.058 | 0.052 |
+| S3E | 18 | 11.39 km | 1.29 | 1.11 |
 | Newer College 2020 | 5 | 5.94 km | 0.2639 | 0.1609 |
 
 ## 逐序列 ATE
 
 HILTI 2022 结果使用数据集专用手持平台配置和稀疏控制点 GT。估计位姿在
-SE(3) 对齐前从 IMU 坐标系转换到测量端点。回放使用 0.5× 序列速率以保证帧
-处理稳定，因此这里反映的是轨迹精度，不代表实时吞吐性能。
+SE(3) 对齐前从 IMU 坐标系转换到测量端点。
 
 | 数据集 | 序列 | 机器人 | GT 覆盖 | 估计轨迹长度 (m) | 指标 | ATE RMSE (m) | 状态 |
 |---|---|---:|---:|---:|---|---:|---|
@@ -47,9 +64,10 @@ SE(3) 对齐前从 IMU 坐标系转换到测量端点。回放使用 0.5× 序�
 | HILTI 2023 | Site 1 · Handheld 1 | reference | 81.32 m | 205.5 | 稀疏 ATE | 0.030 | 完整 |
 | HILTI 2023 | Site 1 · Handheld 2 | reference | 84.39 m | 163.9 | 稀疏 ATE | 0.052 | 完整 |
 | HILTI 2023 | Site 1 · Handheld 3 | reference | 81.89 m | 165.2 | 稀疏 ATE | 0.108 | 完整 |
-| HILTI 2023 | Site 1 · Handheld 4 | reference | 52.88 m | 300.0 | 稀疏 ATE | 0.053 | 完整 |
+| HILTI 2023 | Site 1 · Handheld 4 | reference | 52.88 m | 300.0 | 稀疏 ATE | 0.053 | 完整 · 有一处超过 120 s 的真值间隔 |
 | HILTI 2023 | Site 1 · Handheld 5 | reference | 45.94 m | 150.1 | 稀疏 ATE | 0.045 | 完整 |
 | S3E | Campus Road 3 | Alpha | 983.3 m | 940.0 | ATE | 0.876 | 完整 |
+| S3E | Campus Road 3 | Bob | 967.6 m | 937.4 | ATE | 3.330 | 完整 |
 | S3E | Campus Road 3 | Carol | 986.9 m | 948.9 | ATE | 1.050 | 完整 |
 | S3E | Dormitory 1 | Alpha | 727.0 m | 724.0 | ATE | 0.478 | 完整 |
 | S3E | Dormitory 1 | Bob | 719.3 m | 722.6 | ATE | 1.378 | 完整 |
@@ -66,39 +84,31 @@ SE(3) 对齐前从 IMU 坐标系转换到测量端点。回放使用 0.5× 序�
 | S3E | Square 3 | Alpha | 487.4 m | 463.7 | ATE | 1.835 | 完整 |
 | S3E | Square 3 | Bob | 569.6 m | 559.8 | ATE | 1.932 | 完整 |
 | S3E | Square 3 | Carol | 563.8 m | 541.0 | ATE | 0.912 | 完整 |
-| Newer College | Short Experiment | reference | 1609.4 m · 98.1% | 1421.9 | ATE | 0.473 | 完整 |
-| Newer College | Long Experiment | reference | 3063.4 m · 97.5% | 2599.8 | ATE | 0.460 | 完整 |
-| Newer College | Quad with Dynamics | reference | 479.0 m · 98.0% | 474.9 | ATE | 0.133 | 完整 |
-| Newer College | Dynamic Spinning | reference | 97.20 m · 81.6% | 77.10 | ATE | 0.093 | 最新重跑 · 部分覆盖 |
-| Newer College | Parkland Mound | reference | 695.7 m · 96.0% | 654.9 | ATE | 0.161 | 完整 |
+| Newer College | Short Experiment | reference | 1609.4 m · 98.1% | 1421.9 | ATE | 0.4729 | 完整 |
+| Newer College | Long Experiment | reference | 3063.4 m · 97.5% | 2599.8 | ATE | 0.4597 | 完整 |
+| Newer College | Quad with Dynamics | reference | 479.0 m · 98.0% | 474.9 | ATE | 0.1332 | 完整 |
+| Newer College | Dynamic Spinning | reference | 97.20 m · 81.6% | 77.10 | ATE | 0.0927 | 纳入 · 覆盖真值的 81.6% |
+| Newer College | Parkland Mound | reference | 695.7 m · 96.0% | 654.9 | ATE | 0.1609 | 完整 |
 
-`exp10` 在约 88 s 后丢跟踪，只覆盖前 3/14 个控制点；`exp16` 在约 156 s 后
-丢跟踪，只覆盖 7/9 个控制点。两条结果的 RMSE 只描述已匹配前缀，不参与完整
-序列汇总。四个未评估序列目前在本地没有完整 ROS bag。
+## 已评估，但不进入汇总
 
-对于稀疏控制点 HILTI，GT 长度是测量控制点折线长度，而估计轨迹长度覆盖完整
-回放过程，因此两列不能直接作为同一口径比较。
+这些结果使用与上表相同的对齐设置，但不进入前面的四个均值。
 
-Newer College 的估计位姿使用 LiDAR 系，而 GT 使用原数据集定义在左相机中心的
-base 系。评估前会应用
-`T_world_base = T_world_lidar * T_lidar_base`，再执行 SE(3) 对齐。根据原版
-Rooster 结构及静态传感器变换，该杆臂长度为 0.1012 m：
+| 数据集 | 序列 | 机器人 | GT 覆盖 | ATE RMSE (m) | 不进入均值的原因 |
+|---|---|---|---|---:|---|
+| HILTI 2023 | Site 2 · Handheld 4 | reference | 6.68 m，2 个控制点 | 0.034 | 只有两个控制点 |
+| HILTI 2023 | Site 2 · Handheld 5 | reference | 53.06 m，4/4 | 14.251 | 这条记录上轨迹发散 |
+| HILTI 2023 | Site 2 · Handheld 6 | reference | — | — | Umeyama 对齐失败：协方差退化 |
+| HILTI 2023 | Site 2 · Robot 2 | reference | 56.62 m，3 个控制点 | 0.058 | 机器人平台，外参不同 |
+| S3E | Tunnel 1 | Alpha | 522.0 m | 40.780 | 暂不发布：时间覆盖完整，但估计路径比真值短 78 m，对应关系尚未确认 |
+| S3E | Tunnel 1 | Bob | 502.4 m | 47.018 | 与 Alpha 同一项待确认 |
+| S3E | Tunnel 1 | Carol | 501.1 m | 3.309 | 同一项待确认；路径比真值短 25 m |
 
-```text
-T_base_lidar =
-[-0.70711  -0.70711  0  -0.084250]
-[ 0.70711  -0.70711  0  -0.025000]
-[ 0         0        1   0.050188]
-[ 0         0        0   1       ]
-```
+Teaching Building 1 也评过（Alpha 0.142 m，Bob 0.840 m，Carol 0.577 m）。
+它的控制路径只有 36–68 m，估计轨迹约 600–740 m，并且有超过 5 s 的间隔，
+所以不与上面的连续轨迹混在一起。Laboratory 1–4 只有起终点真值，不作为 ATE 公布。
 
-`Dynamic Spinning` 最新重跑开头约 4.7 s 用于 IMU 初始化，因此覆盖 81.6% 的
-GT；其他序列覆盖 96.0%–98.1%。
-
-表格采用各序列最新重跑结果，并标注覆盖状态。为便于判断可复现性，`exp03`
-另外两次完整运行的 RMSE 为 0.119 m 和 0.114 m，而更早的批量回放结果为
-2.021 m；`exp11` 早先一次完整运行为 0.437 m，最新完整运行为 0.296 m。
-单独一次最好结果不足以代表运行稳定性，因此这些波动在此明确保留。
+Campus Road 3 的 Bob 已经计入 S3E 均值。这次运行没有生成轨迹图。
 
 ## 轨迹对比
 

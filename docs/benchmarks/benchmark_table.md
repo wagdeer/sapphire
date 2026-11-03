@@ -1,34 +1,58 @@
 # Benchmark results
 
-Translation ATE is computed after timestamp association and SE(3) Umeyama
-alignment, without scale correction. Lower is better.
+Translation ATE is the RMSE of position error after timestamp association and
+SE(3) Umeyama alignment, without scale correction. Lower is better. The mean
+and median in the summary are unweighted across runs. They are not weighted by
+path length, and they are not one RMSE computed on every pose at once.
 
-HILTI 2022 and HILTI 2023 use sparse surveyed control points and a maximum
-association interval of 2.0 s. S3E and Newer College use continuous ground
-truth with a maximum association interval of 0.1 s. The sparse and continuous
-results should therefore not be treated as one identical evaluation protocol.
+Two association settings are in use, so the datasets are not one protocol:
 
-The aggregate uses each dataset's documented inclusion set. Partial results
-are retained and marked as `partial`; unavailable recordings are marked as
-`not evaluated`. All five valid Newer College runs are included regardless of
-their ATE.
+- HILTI 2022 and HILTI 2023 use sparse surveyed control points and a maximum
+  gap of 2.0 s. HILTI 2023 reference orientations are constant, so only
+  translation is scored. Each Site 1 score uses 3 or 4 control points. The
+  "GT coverage" length on those rows is the polyline through the control
+  points. It is shorter than the sensor path between them.
+- S3E and Newer College use a maximum gap of 0.1 s. Dormitory 1, Library 1,
+  and Square 1 also have a constant ground-truth quaternion. Library 2,
+  Square 3, and Campus Road 3 include orientation.
+
+What enters the summary:
+
+- HILTI 2022: the 10 runs whose control points are all matched, 103 points in
+  total. `exp10` and `exp16` lost tracking and stay in the table as partial
+  runs; they are not in the mean, the median, or the 103-point total.
+  `exp15`, `exp18`, `exp21`, and `exp23` were not replayed. `exp03` and
+  `exp11` are repeated full runs. Earlier batch trajectories, 2.021 m and
+  0.437 m, are not the published values. `exp09` at 1.810 m is why the mean
+  sits well above the median.
+- HILTI 2023: Site 1 handheld 1–5 only. Site 2 was also evaluated and is
+  listed after the table. It is not in the 0.058 m mean.
+- S3E: the 18 runs in the per-sequence table, including Campus Road 3 Bob.
+  Laboratory 1–4 only have endpoint ground truth, so they are not ATE.
+  Teaching Building 1 is left out because its control path is a few dozen
+  metres against an estimate of about 600 m. Tunnel 1 was run and is withheld
+  until the estimate and the ground truth are confirmed to be the same
+  trajectory. Campus Road 1 and Campus Road 2 are not in this table.
+- Newer College: all five runs, including Dynamic Spinning at 81.6% ground-truth
+  coverage. Before alignment, the estimate is transformed from the Ouster
+  LiDAR frame into the dataset base frame at the left-camera centre. The lever
+  arm of that rigid transform is 0.1012 m. The summary uses the unrounded
+  RMSE of each run.
 
 ## Aggregate results
 
 | Dataset | Included runs | Included GT coverage | Mean ATE (m) | Median ATE (m) |
 |---|---:|---:|---:|---:|
 | HILTI 2022 | 10 | 103 control points | 0.260 | 0.082 |
-| HILTI 2023 | 5 | 346.4 m control path | 0.058 | 0.052 |
-| S3E | 17 | 10.42 km | 1.17 | 1.05 |
+| HILTI 2023 Site 1 handheld | 5 | 346.4 m control path | 0.058 | 0.052 |
+| S3E | 18 | 11.39 km | 1.29 | 1.11 |
 | Newer College 2020 | 5 | 5.94 km | 0.2639 | 0.1609 |
 
 ## Per-sequence ATE
 
 The HILTI 2022 results use a dataset-specific handheld profile and sparse
 control-point GT. Estimates are transformed from the IMU frame to the
-measurement tip before alignment. Replays used a 0.5x sequence rate for stable
-frame processing, so these results characterize trajectory accuracy rather
-than real-time throughput.
+measurement tip before alignment.
 
 | Dataset | Sequence | Agent | GT coverage | Estimated travel (m) | Metric | ATE RMSE (m) | Status |
 |---|---|---:|---:|---:|---|---:|---|
@@ -51,9 +75,10 @@ than real-time throughput.
 | HILTI 2023 | Site 1 · Handheld 1 | reference | 81.32 m | 205.5 | sparse ATE | 0.030 | complete |
 | HILTI 2023 | Site 1 · Handheld 2 | reference | 84.39 m | 163.9 | sparse ATE | 0.052 | complete |
 | HILTI 2023 | Site 1 · Handheld 3 | reference | 81.89 m | 165.2 | sparse ATE | 0.108 | complete |
-| HILTI 2023 | Site 1 · Handheld 4 | reference | 52.88 m | 300.0 | sparse ATE | 0.053 | complete |
+| HILTI 2023 | Site 1 · Handheld 4 | reference | 52.88 m | 300.0 | sparse ATE | 0.053 | complete · one GT gap over 120 s |
 | HILTI 2023 | Site 1 · Handheld 5 | reference | 45.94 m | 150.1 | sparse ATE | 0.045 | complete |
 | S3E | Campus Road 3 | Alpha | 983.3 m | 940.0 | ATE | 0.876 | complete |
+| S3E | Campus Road 3 | Bob | 967.6 m | 937.4 | ATE | 3.330 | complete |
 | S3E | Campus Road 3 | Carol | 986.9 m | 948.9 | ATE | 1.050 | complete |
 | S3E | Dormitory 1 | Alpha | 727.0 m | 724.0 | ATE | 0.478 | complete |
 | S3E | Dormitory 1 | Bob | 719.3 m | 722.6 | ATE | 1.378 | complete |
@@ -70,47 +95,35 @@ than real-time throughput.
 | S3E | Square 3 | Alpha | 487.4 m | 463.7 | ATE | 1.835 | complete |
 | S3E | Square 3 | Bob | 569.6 m | 559.8 | ATE | 1.932 | complete |
 | S3E | Square 3 | Carol | 563.8 m | 541.0 | ATE | 0.912 | complete |
-| Newer College | Short Experiment | reference | 1609.4 m · 98.1% | 1421.9 | ATE | 0.473 | complete |
-| Newer College | Long Experiment | reference | 3063.4 m · 97.5% | 2599.8 | ATE | 0.460 | complete |
-| Newer College | Quad with Dynamics | reference | 479.0 m · 98.0% | 474.9 | ATE | 0.133 | complete |
-| Newer College | Dynamic Spinning | reference | 97.20 m · 81.6% | 77.10 | ATE | 0.093 | latest rerun · partial |
-| Newer College | Parkland Mound | reference | 695.7 m · 96.0% | 654.9 | ATE | 0.161 | complete |
+| Newer College | Short Experiment | reference | 1609.4 m · 98.1% | 1421.9 | ATE | 0.4729 | complete |
+| Newer College | Long Experiment | reference | 3063.4 m · 97.5% | 2599.8 | ATE | 0.4597 | complete |
+| Newer College | Quad with Dynamics | reference | 479.0 m · 98.0% | 474.9 | ATE | 0.1332 | complete |
+| Newer College | Dynamic Spinning | reference | 97.20 m · 81.6% | 77.10 | ATE | 0.0927 | included · 81.6% of GT |
+| Newer College | Parkland Mound | reference | 695.7 m · 96.0% | 654.9 | ATE | 0.1609 | complete |
 
-The `exp10` result covers only the first 3 of 14 control points before tracking
-is lost after approximately 88 s. The `exp16` result covers 7 of 9 control
-points before tracking is lost after approximately 156 s. Their RMSE values
-describe the matched prefix only and are not used for complete-sequence
-statistics. The four `not evaluated` recordings do not currently have complete
-ROS bags in the local dataset.
+## Evaluated, not in the summary
 
-For sparse-control HILTI runs, GT length is the surveyed control-point
-polyline while estimated travel covers the full replay. The two length columns
-are therefore not directly comparable.
+These runs used the same alignment settings as the table above. They are not
+part of the four headline means.
 
-Newer College estimates are written in the LiDAR frame, while its ground truth
-uses the original dataset's base frame at the left-camera centre. Evaluation
-therefore applies `T_world_base = T_world_lidar * T_lidar_base` before SE(3)
-alignment. The original Rooster layout and static sensor transforms give a
-0.1012 m lever arm:
+| Dataset | Sequence | Agent | GT coverage | ATE RMSE (m) | Why it is outside the mean |
+|---|---|---|---|---:|---|
+| HILTI 2023 | Site 2 · Handheld 4 | reference | 6.68 m, 2 control points | 0.034 | Only two control points |
+| HILTI 2023 | Site 2 · Handheld 5 | reference | 53.06 m, 4/4 | 14.251 | Diverged on this recording |
+| HILTI 2023 | Site 2 · Handheld 6 | reference | — | — | Umeyama alignment failed: degenerate covariance |
+| HILTI 2023 | Site 2 · Robot 2 | reference | 56.62 m, 3 control points | 0.058 | Robot platform, separate extrinsic |
+| S3E | Tunnel 1 | Alpha | 522.0 m | 40.780 | Withheld: full time coverage, but the estimate is 78 m shorter than GT and the pairing is not confirmed |
+| S3E | Tunnel 1 | Bob | 502.4 m | 47.018 | Same withheld check as Alpha |
+| S3E | Tunnel 1 | Carol | 501.1 m | 3.309 | Same withheld check; path is 25 m shorter than GT |
 
-```text
-T_base_lidar =
-[-0.70711  -0.70711  0  -0.084250]
-[ 0.70711  -0.70711  0  -0.025000]
-[ 0         0        1   0.050188]
-[ 0         0        0   1       ]
-```
+Teaching Building 1 was scored as well (Alpha 0.142 m, Bob 0.840 m, Carol
+0.577 m). Its control path is 36–68 m while the estimates are about 600–740 m,
+with gaps longer than 5 s, so those scores are not mixed with the continuous
+runs above. Laboratory 1–4 only provide endpoint ground truth and are not
+reported as ATE.
 
-The `Dynamic Spinning` rerun covers 81.6% of its GT because the first
-approximately 4.7 s are consumed by IMU initialization; the other sequences
-cover 96.0-98.1%.
-
-The latest reruns are reported in the table with their coverage status. For
-reproducibility, two
-additional `exp03` full runs produced 0.119 m and 0.114 m RMSE, while an earlier
-batch replay produced 2.021 m. An earlier `exp11` run produced 0.437 m, while
-the latest complete run produced 0.296 m. These variations indicate that
-run-to-run stability should be considered alongside a single best result.
+Campus Road 3 Bob is inside the S3E mean. A trajectory plot was not produced
+for that run.
 
 ## Trajectory overlays
 

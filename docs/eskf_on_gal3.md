@@ -1,7 +1,8 @@
 # ESKF on Gal(3) for Sapphire Frontend LIO
 
-> 完整的 Error-State Kalman Filter 推导，基于 Gal(3) 等变预积分框架。
-> 目标：替换当前的 Geometric Observer，用协方差感知的滤波融合 IMU 预积分与 ICP 位姿测量。
+> Gal(3) 等变预积分上的误差状态卡尔曼滤波推导。对应实现由配置项
+> `odometry.fusion = "eskf"` 选择；`observer` 仍保留为另一条融合路径。
+> 本文是推导笔记，安装和话题说明见仓库 README。
 >
 > **Document status (v1.1.1):** Approach A 为推荐实现路径。相对 v1.0 已修正：
 > Gal(3) 预积分增量分量顺序、离散过程噪声 $Q_d$ 的 $\Delta t$ 方向、
