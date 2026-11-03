@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sapphire ATE 评估报告</title>
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #64748b;
+      --line: #e2e8f0;
+      --panel: #ffffff;
+      --blue: #2563eb;
+      --cyan: #0891b2;
+      --orange: #ea580c;
+      --green: #059669;
+      --canvas: #f4f7fb;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 8% 0%, #dbeafe 0, transparent 30rem),
+        radial-gradient(circle at 92% 10%, #cffafe 0, transparent 26rem),
+        var(--canvas);
+      font-family: Inter, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+      line-height: 1.55;
+    }
+    main {
+      width: min(1380px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 42px 0 80px;
+    }
+    .hero {
+      padding: 32px 36px;
+      border: 1px solid rgba(255,255,255,.9);
+      border-radius: 24px;
+      color: white;
+      background: linear-gradient(130deg, #0f2f66, #1d4ed8 58%, #0891b2);
+      box-shadow: 0 24px 60px rgba(30,64,175,.18);
+    }
+    .hero p {
+      max-width: 900px;
+      margin-bottom: 0;
+      color: #dbeafe;
+    }
+    .kicker {
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    h1 {
+      margin: 8px 0 10px;
+      font-size: clamp(29px, 4vw, 48px);
+      line-height: 1.08;
+    }
+    h2 { margin: 0; font-size: 26px; }
+    h3 { margin: 3px 0 0; font-size: 20px; }
+    code {
+      font-family: "JetBrains Mono", "Cascadia Code", monospace;
+      font-size: .9em;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin: 20px 0;
+    }
+    .stat, .panel, .trajectory-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: 0 10px 30px rgba(15,23,42,.045);
+    }
+    .stat {
+      border-radius: 17px;
+      padding: 17px 18px;
+    }
+    .stat .label { color: var(--muted); font-size: 12px; font-weight: 700; }
+    .stat .value {
+      margin-top: 5px;
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -.03em;
+    }
+    .stat .detail { color: var(--muted); font-size: 12px; }
+    .callout {
+      margin: 16px 0;
+      padding: 15px 18px;
+      border-radius: 14px;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1e3a8a;
+    }
+    .panel {
+      margin-top: 22px;
+      border-radius: 20px;
+      padding: 24px;
+    }
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 16px;
+    }
+    .panel-head p, .group-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+    }
+    .eyebrow {
+      color: var(--blue);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      font-weight: 800;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    table {
+      width: 100%;
+      min-width: 980px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th {
+      background: #f8fafc;
+      color: #475569;
+      text-align: left;
+      font-size: 11px;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      padding: 12px 11px;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap;
+    }
+    td {
+      padding: 12px 11px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: middle;
+    }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: #f8fbff; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .dataset {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #e0f2fe;
+      color: #075985;
+      font-size: 11px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+    .dataset.s3e { background: #ede9fe; color: #6d28d9; }
+    .dataset.newer { background: #ecfdf5; color: #047857; }
+    .sequence-link {
+      color: #1d4ed8;
+      font-weight: 750;
+      text-decoration: none;
+    }
+    .sequence-link:hover, .jump:hover, .back:hover { text-decoration: underline; }
+    .jump, .back {
+      color: #2563eb;
+      text-decoration: none;
+      white-space: nowrap;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .bar-track {
+      width: 150px;
+      height: 7px;
+      overflow: hidden;
+      border-radius: 99px;
+      background: #e2e8f0;
+    }
+    .bar {
+      height: 100%;
+      min-width: 3px;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #38bdf8, #2563eb);
+    }
+    .group-head {
+      margin-top: 38px;
+      margin-bottom: 14px;
+    }
+    .trajectory-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+    .trajectory-card {
+      scroll-margin-top: 18px;
+      border-radius: 20px;
+      padding: 20px;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .trajectory-card:target {
+      border-color: #60a5fa;
+      box-shadow: 0 0 0 4px rgba(37,99,235,.10), 0 16px 40px rgba(15,23,42,.08);
+    }
+    .section-heading {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+    .plot-link {
+      display: block;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+    }
+    .plot-link img {
+      display: block;
+      width: 100%;
+      height: auto;
+      transition: transform .2s;
+    }
+    .plot-link:hover img { transform: scale(1.012); }
+    .card-meta {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .card-meta strong { color: var(--ink); }
+    footer {
+      margin-top: 34px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    @media (max-width: 900px) {
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .hero, .panel, .trajectory-card { padding: 20px; border-radius: 16px; }
+      .panel-head { align-items: start; flex-direction: column; }
+      .trajectory-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="kicker">Sapphire · ATE evaluation</div>
+    <h1>轨迹精度与对应轨迹图</h1>
+    <p>
+      汇总当前 <code>README.md</code> 中纳入统计的 25 条轨迹。ATE 为时间关联
+      （误差不超过 0.1 s）和 SE(3) Umeyama 对齐后的平移 RMSE，不做尺度修正。
+    </p>
+  </header>
+
+  <section class="stats" aria-label="总体统计">
+    <div class="stat">
+      <div class="label">纳入轨迹</div>
+      <div class="value">25</div>
+      <div class="detail">3 个数据集</div>
+    </div>
+    <div class="stat">
+      <div class="label">HILTI 平均 ATE</div>
+      <div class="value">0.058 m</div>
+      <div class="detail">5 条 · 中位数 0.052 m</div>
+    </div>
+    <div class="stat">
+      <div class="label">S3E 平均 ATE</div>
+      <div class="value">1.17 m</div>
+      <div class="detail">17 条 · 中位数 1.05 m</div>
+    </div>
+    <div class="stat">
+      <div class="label">Newer College 平均 ATE</div>
+      <div class="value">0.143 m</div>
+      <div class="detail">3 条 · 中位数 0.148 m</div>
+    </div>
+  </section>
+
+  <div class="callout">
+    下表严格采用 README 的纳入范围。Newer College 的 Short Experiment 与
+    Long Experiment 保留在完整详细表中，但不计入这里的 3 条摘要轨迹。
+  </div>
+
+  <section class="panel" id="summary">
+    <div class="panel-head">
+      <div>
+        <span class="eyebrow">README snapshot</span>
+        <h2>基准汇总</h2>
+        <p>与当前 README 的 Benchmark snapshot 保持一致。</p>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>数据集</th>
+            <th class="num">纳入轨迹</th>
+            <th class="num">纳入 GT 覆盖</th>
+            <th class="num">平均 ATE</th>
+            <th class="num">ATE 中位数</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="dataset">HILTI 2023</span></td>
+            <td class="num">5</td>
+            <td class="num">346.4 m 控制点路径</td>
+            <td class="num">0.058 m</td>
+            <td class="num">0.052 m</td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td class="num">17</td>
+            <td class="num">10.42 km</td>
+            <td class="num">1.17 m</td>
+            <td class="num">1.05 m</td>
+          </tr>
+          <tr>
+            <td><span class="dataset newer">Newer College 2020</span></td>
+            <td class="num">3</td>
+            <td class="num">1.27 km</td>
+            <td class="num">0.143 m</td>
+            <td class="num">0.148 m</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" id="results">
+    <div class="panel-head">
+      <div>
+        <span class="eyebrow">Per-sequence results</span>
+        <h2>逐序列 ATE 指标</h2>
+        <p>点击序列名或“查看轨迹”跳到下方对应图。RMSE 条形统一按 0–2 m 显示。</p>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>数据集</th>
+            <th>序列</th>
+            <th>机器人</th>
+            <th class="num">GT 长度 (m)</th>
+            <th class="num">估计长度 (m)</th>
+            <th class="num">ATE RMSE (m)</th>
+            <th>RMSE 对比</th>
+            <th>轨迹</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="dataset">HILTI</span></td>
+            <td><a class="sequence-link" href="#traj-hilti-site1-handheld-1">Site 1 · Handheld 1</a></td>
+            <td>reference</td><td class="num">81.32</td><td class="num">205.5</td>
+            <td class="num">0.030</td><td><div class="bar-track"><div class="bar" style="width:1.5%"></div></div></td>
+            <td><a class="jump" href="#traj-hilti-site1-handheld-1">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset">HILTI</span></td>
+            <td><a class="sequence-link" href="#traj-hilti-site1-handheld-2">Site 1 · Handheld 2</a></td>
+            <td>reference</td><td class="num">84.39</td><td class="num">163.9</td>
+            <td class="num">0.052</td><td><div class="bar-track"><div class="bar" style="width:2.6%"></div></div></td>
+            <td><a class="jump" href="#traj-hilti-site1-handheld-2">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset">HILTI</span></td>
+            <td><a class="sequence-link" href="#traj-hilti-site1-handheld-3">Site 1 · Handheld 3</a></td>
+            <td>reference</td><td class="num">81.89</td><td class="num">165.2</td>
+            <td class="num">0.108</td><td><div class="bar-track"><div class="bar" style="width:5.4%"></div></div></td>
+            <td><a class="jump" href="#traj-hilti-site1-handheld-3">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset">HILTI</span></td>
+            <td><a class="sequence-link" href="#traj-hilti-site1-handheld-4">Site 1 · Handheld 4</a></td>
+            <td>reference</td><td class="num">52.88</td><td class="num">300.0</td>
+            <td class="num">0.053</td><td><div class="bar-track"><div class="bar" style="width:2.7%"></div></div></td>
+            <td><a class="jump" href="#traj-hilti-site1-handheld-4">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset">HILTI</span></td>
+            <td><a class="sequence-link" href="#traj-hilti-site1-handheld-5">Site 1 · Handheld 5</a></td>
+            <td>reference</td><td class="num">45.94</td><td class="num">150.1</td>
+            <td class="num">0.045</td><td><div class="bar-track"><div class="bar" style="width:2.3%"></div></div></td>
+            <td><a class="jump" href="#traj-hilti-site1-handheld-5">查看轨迹 ↓</a></td>
+          </tr>
+
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-campus-road-3-alpha">Campus Road 3 · Alpha</a></td>
+            <td>Alpha</td><td class="num">983.3</td><td class="num">940.0</td>
+            <td class="num">0.876</td><td><div class="bar-track"><div class="bar" style="width:43.8%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-campus-road-3-alpha">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-campus-road-3-carol">Campus Road 3 · Carol</a></td>
+            <td>Carol</td><td class="num">986.9</td><td class="num">948.9</td>
+            <td class="num">1.050</td><td><div class="bar-track"><div class="bar" style="width:52.5%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-campus-road-3-carol">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-dormitory-1-alpha">Dormitory 1 · Alpha</a></td>
+            <td>Alpha</td><td class="num">727.0</td><td class="num">724.0</td>
+            <td class="num">0.478</td><td><div class="bar-track"><div class="bar" style="width:23.9%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-dormitory-1-alpha">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-dormitory-1-bob">Dormitory 1 · Bob</a></td>
+            <td>Bob</td><td class="num">719.3</td><td class="num">722.6</td>
+            <td class="num">1.378</td><td><div class="bar-track"><div class="bar" style="width:68.9%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-dormitory-1-bob">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-dormitory-1-carol">Dormitory 1 · Carol</a></td>
+            <td>Carol</td><td class="num">721.9</td><td class="num">738.0</td>
+            <td class="num">0.804</td><td><div class="bar-track"><div class="bar" style="width:40.2%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-dormitory-1-carol">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-library-1-alpha">Library 1 · Alpha</a></td>
+            <td>Alpha</td><td class="num">507.6</td><td class="num">520.4</td>
+            <td class="num">0.988</td><td><div class="bar-track"><div class="bar" style="width:49.4%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-library-1-alpha">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-library-1-bob">Library 1 · Bob</a></td>
+            <td>Bob</td><td class="num">517.2</td><td class="num">530.6</td>
+            <td class="num">1.671</td><td><div class="bar-track"><div class="bar" style="width:83.6%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-library-1-bob">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-library-1-carol">Library 1 · Carol</a></td>
+            <td>Carol</td><td class="num">498.9</td><td class="num">508.1</td>
+            <td class="num">1.339</td><td><div class="bar-track"><div class="bar" style="width:67.0%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-library-1-carol">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-library-2-alpha">Library 2 · Alpha</a></td>
+            <td>Alpha</td><td class="num">521.6</td><td class="num">505.0</td>
+            <td class="num">1.238</td><td><div class="bar-track"><div class="bar" style="width:61.9%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-library-2-alpha">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-library-2-bob">Library 2 · Bob</a></td>
+            <td>Bob</td><td class="num">523.9</td><td class="num">505.5</td>
+            <td class="num">1.683</td><td><div class="bar-track"><div class="bar" style="width:84.2%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-library-2-bob">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-library-2-carol">Library 2 · Carol</a></td>
+            <td>Carol</td><td class="num">520.3</td><td class="num">505.8</td>
+            <td class="num">0.923</td><td><div class="bar-track"><div class="bar" style="width:46.2%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-library-2-carol">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-square-1-alpha">Square 1 · Alpha</a></td>
+            <td>Alpha</td><td class="num">546.0</td><td class="num">542.7</td>
+            <td class="num">1.166</td><td><div class="bar-track"><div class="bar" style="width:58.3%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-square-1-alpha">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-square-1-bob">Square 1 · Bob</a></td>
+            <td>Bob</td><td class="num">496.5</td><td class="num">495.9</td>
+            <td class="num">0.748</td><td><div class="bar-track"><div class="bar" style="width:37.4%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-square-1-bob">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-square-1-carol">Square 1 · Carol</a></td>
+            <td>Carol</td><td class="num">529.2</td><td class="num">531.7</td>
+            <td class="num">0.866</td><td><div class="bar-track"><div class="bar" style="width:43.3%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-square-1-carol">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-square-3-alpha">Square 3 · Alpha</a></td>
+            <td>Alpha</td><td class="num">487.4</td><td class="num">463.7</td>
+            <td class="num">1.835</td><td><div class="bar-track"><div class="bar" style="width:91.8%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-square-3-alpha">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-square-3-bob">Square 3 · Bob</a></td>
+            <td>Bob</td><td class="num">569.6</td><td class="num">559.8</td>
+            <td class="num">1.932</td><td><div class="bar-track"><div class="bar" style="width:96.6%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-square-3-bob">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset s3e">S3E</span></td>
+            <td><a class="sequence-link" href="#traj-s3e-square-3-carol">Square 3 · Carol</a></td>
+            <td>Carol</td><td class="num">563.8</td><td class="num">541.0</td>
+            <td class="num">0.912</td><td><div class="bar-track"><div class="bar" style="width:45.6%"></div></div></td>
+            <td><a class="jump" href="#traj-s3e-square-3-carol">查看轨迹 ↓</a></td>
+          </tr>
+
+          <tr>
+            <td><span class="dataset newer">Newer College</span></td>
+            <td><a class="sequence-link" href="#traj-newer-dynamic-spinning">Dynamic Spinning</a></td>
+            <td>reference</td><td class="num">97.20</td><td class="num">71.48</td>
+            <td class="num">0.100</td><td><div class="bar-track"><div class="bar" style="width:5.0%"></div></div></td>
+            <td><a class="jump" href="#traj-newer-dynamic-spinning">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset newer">Newer College</span></td>
+            <td><a class="sequence-link" href="#traj-newer-parkland-mound">Parkland Mound</a></td>
+            <td>reference</td><td class="num">695.7</td><td class="num">654.8</td>
+            <td class="num">0.182</td><td><div class="bar-track"><div class="bar" style="width:9.1%"></div></div></td>
+            <td><a class="jump" href="#traj-newer-parkland-mound">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset newer">Newer College</span></td>
+            <td><a class="sequence-link" href="#traj-newer-quad-with-dynamics">Quad with Dynamics</a></td>
+            <td>reference</td><td class="num">479.0</td><td class="num">476.0</td>
+            <td class="num">0.148</td><td><div class="bar-track"><div class="bar" style="width:7.4%"></div></div></td>
+            <td><a class="jump" href="#traj-newer-quad-with-dynamics">查看轨迹 ↓</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="group-head">
+    <span class="eyebrow">Trajectory evidence</span>
+    <h2>HILTI 2023 · 对应轨迹</h2>
+    <p>蓝色实线为 Sapphire，橙色虚线为 GT，叉号表示 HILTI 控制点。</p>
+  </div>
+  <section class="trajectory-grid">
+    <article class="trajectory-card" id="traj-hilti-site1-handheld-1">
+      <div class="section-heading">
+        <div><span class="eyebrow">HILTI 01</span><h3>Site 1 · Handheld 1</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/hilti_site1_handheld_1.png" target="_blank">
+        <img src="trajectories/hilti_site1_handheld_1.png" alt="HILTI Site 1 Handheld 1 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.030 m</strong> · GT 81.32 m · 估计 205.5 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-hilti-site1-handheld-2">
+      <div class="section-heading">
+        <div><span class="eyebrow">HILTI 02</span><h3>Site 1 · Handheld 2</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/hilti_site1_handheld_2.png" target="_blank">
+        <img src="trajectories/hilti_site1_handheld_2.png" alt="HILTI Site 1 Handheld 2 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.052 m</strong> · GT 84.39 m · 估计 163.9 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-hilti-site1-handheld-3">
+      <div class="section-heading">
+        <div><span class="eyebrow">HILTI 03</span><h3>Site 1 · Handheld 3</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/hilti_site1_handheld_3.png" target="_blank">
+        <img src="trajectories/hilti_site1_handheld_3.png" alt="HILTI Site 1 Handheld 3 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.108 m</strong> · GT 81.89 m · 估计 165.2 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-hilti-site1-handheld-4">
+      <div class="section-heading">
+        <div><span class="eyebrow">HILTI 04</span><h3>Site 1 · Handheld 4</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/hilti_site1_handheld_4.png" target="_blank">
+        <img src="trajectories/hilti_site1_handheld_4.png" alt="HILTI Site 1 Handheld 4 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.053 m</strong> · GT 52.88 m · 估计 300.0 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-hilti-site1-handheld-5">
+      <div class="section-heading">
+        <div><span class="eyebrow">HILTI 05</span><h3>Site 1 · Handheld 5</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/hilti_site1_handheld_5.png" target="_blank">
+        <img src="trajectories/hilti_site1_handheld_5.png" alt="HILTI Site 1 Handheld 5 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.045 m</strong> · GT 45.94 m · 估计 150.1 m</div>
+    </article>
+  </section>
+
+  <div class="group-head">
+    <span class="eyebrow">S3E · three agents</span>
+    <h2>S3E · 对应轨迹</h2>
+    <p>同一序列下按 Alpha、Bob、Carol 三个机器人分别展示。</p>
+  </div>
+  <section class="trajectory-grid">
+    <article class="trajectory-card" id="traj-s3e-campus-road-3-alpha">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 01</span><h3>Campus Road 3 · Alpha</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_campus_road_3_alpha.png" target="_blank">
+        <img src="trajectories/s3e_campus_road_3_alpha.png" alt="S3E Campus Road 3 Alpha 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.876 m</strong> · GT 983.3 m · 估计 940.0 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-campus-road-3-carol">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 02</span><h3>Campus Road 3 · Carol</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_campus_road_3_carol.png" target="_blank">
+        <img src="trajectories/s3e_campus_road_3_carol.png" alt="S3E Campus Road 3 Carol 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>1.050 m</strong> · GT 986.9 m · 估计 948.9 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-dormitory-1-alpha">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 03</span><h3>Dormitory 1 · Alpha</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_dormitory_1_alpha.png" target="_blank">
+        <img src="trajectories/s3e_dormitory_1_alpha.png" alt="S3E Dormitory 1 Alpha 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.478 m</strong> · GT 727.0 m · 估计 724.0 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-dormitory-1-bob">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 04</span><h3>Dormitory 1 · Bob</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_dormitory_1_bob.png" target="_blank">
+        <img src="trajectories/s3e_dormitory_1_bob.png" alt="S3E Dormitory 1 Bob 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>1.378 m</strong> · GT 719.3 m · 估计 722.6 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-dormitory-1-carol">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 05</span><h3>Dormitory 1 · Carol</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_dormitory_1_carol.png" target="_blank">
+        <img src="trajectories/s3e_dormitory_1_carol.png" alt="S3E Dormitory 1 Carol 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.804 m</strong> · GT 721.9 m · 估计 738.0 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-library-1-alpha">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 06</span><h3>Library 1 · Alpha</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_library_1_alpha.png" target="_blank">
+        <img src="trajectories/s3e_library_1_alpha.png" alt="S3E Library 1 Alpha 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.988 m</strong> · GT 507.6 m · 估计 520.4 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-library-1-bob">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 07</span><h3>Library 1 · Bob</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_library_1_bob.png" target="_blank">
+        <img src="trajectories/s3e_library_1_bob.png" alt="S3E Library 1 Bob 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>1.671 m</strong> · GT 517.2 m · 估计 530.6 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-library-1-carol">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 08</span><h3>Library 1 · Carol</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_library_1_carol.png" target="_blank">
+        <img src="trajectories/s3e_library_1_carol.png" alt="S3E Library 1 Carol 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>1.339 m</strong> · GT 498.9 m · 估计 508.1 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-library-2-alpha">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 09</span><h3>Library 2 · Alpha</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_library_2_alpha.png" target="_blank">
+        <img src="trajectories/s3e_library_2_alpha.png" alt="S3E Library 2 Alpha 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>1.238 m</strong> · GT 521.6 m · 估计 505.0 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-library-2-bob">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 10</span><h3>Library 2 · Bob</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_library_2_bob.png" target="_blank">
+        <img src="trajectories/s3e_library_2_bob.png" alt="S3E Library 2 Bob 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>1.683 m</strong> · GT 523.9 m · 估计 505.5 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-library-2-carol">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 11</span><h3>Library 2 · Carol</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_library_2_carol.png" target="_blank">
+        <img src="trajectories/s3e_library_2_carol.png" alt="S3E Library 2 Carol 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.923 m</strong> · GT 520.3 m · 估计 505.8 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-square-1-alpha">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 12</span><h3>Square 1 · Alpha</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_square_1_alpha.png" target="_blank">
+        <img src="trajectories/s3e_square_1_alpha.png" alt="S3E Square 1 Alpha 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>1.166 m</strong> · GT 546.0 m · 估计 542.7 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-square-1-bob">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 13</span><h3>Square 1 · Bob</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_square_1_bob.png" target="_blank">
+        <img src="trajectories/s3e_square_1_bob.png" alt="S3E Square 1 Bob 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.748 m</strong> · GT 496.5 m · 估计 495.9 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-square-1-carol">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 14</span><h3>Square 1 · Carol</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_square_1_carol.png" target="_blank">
+        <img src="trajectories/s3e_square_1_carol.png" alt="S3E Square 1 Carol 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.866 m</strong> · GT 529.2 m · 估计 531.7 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-square-3-alpha">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 15</span><h3>Square 3 · Alpha</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_square_3_alpha.png" target="_blank">
+        <img src="trajectories/s3e_square_3_alpha.png" alt="S3E Square 3 Alpha 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>1.835 m</strong> · GT 487.4 m · 估计 463.7 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-square-3-bob">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 16</span><h3>Square 3 · Bob</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_square_3_bob.png" target="_blank">
+        <img src="trajectories/s3e_square_3_bob.png" alt="S3E Square 3 Bob 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>1.932 m</strong> · GT 569.6 m · 估计 559.8 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-s3e-square-3-carol">
+      <div class="section-heading">
+        <div><span class="eyebrow">S3E 17</span><h3>Square 3 · Carol</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/s3e_square_3_carol.png" target="_blank">
+        <img src="trajectories/s3e_square_3_carol.png" alt="S3E Square 3 Carol 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.912 m</strong> · GT 563.8 m · 估计 541.0 m</div>
+    </article>
+  </section>
+
+  <div class="group-head">
+    <span class="eyebrow">Newer College · included runs</span>
+    <h2>Newer College 2020 · 对应轨迹</h2>
+    <p>仅展示 README 中纳入平均 ATE 的 3 条轨迹。</p>
+  </div>
+  <section class="trajectory-grid">
+    <article class="trajectory-card" id="traj-newer-dynamic-spinning">
+      <div class="section-heading">
+        <div><span class="eyebrow">Newer 01</span><h3>Dynamic Spinning</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/newer_college_06_dynamic_spinning.png" target="_blank">
+        <img src="trajectories/newer_college_06_dynamic_spinning.png" alt="Newer College Dynamic Spinning 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.100 m</strong> · GT 97.20 m · 估计 71.48 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-newer-parkland-mound">
+      <div class="section-heading">
+        <div><span class="eyebrow">Newer 02</span><h3>Parkland Mound</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/newer_college_07_parkland_mound.png" target="_blank">
+        <img src="trajectories/newer_college_07_parkland_mound.png" alt="Newer College Parkland Mound 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.182 m</strong> · GT 695.7 m · 估计 654.8 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-newer-quad-with-dynamics">
+      <div class="section-heading">
+        <div><span class="eyebrow">Newer 03</span><h3>Quad with Dynamics</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/newer_college_05_quad_with_dynamics.png" target="_blank">
+        <img src="trajectories/newer_college_05_quad_with_dynamics.png" alt="Newer College Quad with Dynamics 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.148 m</strong> · GT 479.0 m · 估计 476.0 m</div>
+    </article>
+  </section>
+
+  <footer>
+    Sapphire ATE evaluation · 指标来源：README.md 与 benchmark_table.zh.md ·
+    轨迹图来源：docs/benchmarks/trajectories/
+  </footer>
+</main>
+</body>
+</html>
