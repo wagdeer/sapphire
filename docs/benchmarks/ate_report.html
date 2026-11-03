@@ -21,14 +21,14 @@ main{width:min(1380px,calc(100% - 36px));margin:auto;padding:42px 0 80px}.hero{p
 <div class="stat"><div class="label">HILTI 2022 平均 ATE</div><div class="value">0.260 m</div><div class="detail">10 条 · 中位数 0.082 m</div></div>
 <div class="stat"><div class="label">HILTI 2023 平均 ATE</div><div class="value">0.058 m</div><div class="detail">5 条 · 中位数 0.052 m</div></div>
 <div class="stat"><div class="label">S3E 平均 ATE</div><div class="value">1.17 m</div><div class="detail">17 条 · 中位数 1.05 m</div></div>
-<div class="stat"><div class="label">Newer College 平均 ATE</div><div class="value">0.2846 m</div><div class="detail">5 条 · 中位数 0.1817 m</div></div>
+<div class="stat"><div class="label">Newer College 平均 ATE</div><div class="value">0.2639 m</div><div class="detail">5 条 · 中位数 0.1609 m</div></div>
 </section>
-<div class="callout">部分覆盖结果只描述已匹配区间。Newer College 的五条有效轨迹全部纳入，不按 ATE 高低剔除；其中 Dynamic Spinning 最新重跑覆盖 81.6%。HILTI 2022 回放使用 0.5× 速率，反映轨迹精度而非实时吞吐。</div>
+<div class="callout">Newer College 的估计位姿先从 LiDAR 系转换到数据集 base 系（左相机中心）再评估，转换杆臂为 0.1012 m。五条有效轨迹全部纳入；其中 Dynamic Spinning 最新重跑覆盖 81.6%。HILTI 2022 回放使用 0.5× 速率。</div>
 <section class="panel" id="summary"><div class="panel-head"><div><span class="eyebrow">README snapshot</span><h2>基准汇总</h2><p>数值与 README 和中英文 benchmark table 保持一致。</p></div></div><div class="table-wrap"><table><thead><tr><th>数据集</th><th class="num">纳入轨迹</th><th class="num">纳入 GT 覆盖</th><th class="num">平均 ATE</th><th class="num">ATE 中位数</th></tr></thead><tbody>
 <tr><td><span class="dataset hilti22">HILTI 2022</span></td><td class="num">10</td><td class="num">103 个控制点</td><td class="num">0.260 m</td><td class="num">0.082 m</td></tr>
 <tr><td><span class="dataset hilti23">HILTI 2023</span></td><td class="num">5</td><td class="num">346.4 m 控制点路径</td><td class="num">0.058 m</td><td class="num">0.052 m</td></tr>
 <tr><td><span class="dataset s3e">S3E</span></td><td class="num">17</td><td class="num">10.42 km</td><td class="num">1.17 m</td><td class="num">1.05 m</td></tr>
-<tr><td><span class="dataset newer">Newer College 2020</span></td><td class="num">5</td><td class="num">5.94 km</td><td class="num">0.2846 m</td><td class="num">0.1817 m</td></tr>
+<tr><td><span class="dataset newer">Newer College 2020</span></td><td class="num">5</td><td class="num">5.94 km</td><td class="num">0.2639 m</td><td class="num">0.1609 m</td></tr>
 </tbody></table></div></section>
 <section class="panel" id="results"><div class="panel-head"><div><span class="eyebrow">Per-sequence results</span><h2>逐序列 ATE 指标</h2><p>点击“查看轨迹”跳到下方对应图。HILTI 2022 的 4 条未评估序列因本地缺少完整 ROS bag 而保留为空项。</p></div></div><div class="table-wrap"><table><thead><tr><th>数据集</th><th>序列</th><th>机器人</th><th>指标</th><th class="num">ATE RMSE (m)</th><th>RMSE 对比</th><th class="num">GT 覆盖</th><th>状态</th><th>轨迹</th></tr></thead><tbody>
 <tr><td><span class="dataset hilti22">HILTI 2022</span></td><td>exp01_construction_ground_level</td><td>reference</td><td>稀疏 ATE</td><td class="num">0.016</td><td><div class="bar-track"><div class="bar " style="width:1.5%"></div></div><div class="bar-note">中位数 0.015 · P95 0.022 · 最大 0.023</div></td><td class="num">13/13</td><td>完整</td><td><a class="jump" href="#traj-hilti-2022-exp01-construction-ground-level">查看轨迹 ↓</a></td></tr>
@@ -69,11 +69,11 @@ main{width:min(1380px,calc(100% - 36px));margin:auto;padding:42px 0 80px}.hero{p
 <tr><td><span class="dataset s3e">S3E</span></td><td>Square 3</td><td>Alpha</td><td>ATE</td><td class="num">1.835</td><td><div class="bar-track"><div class="bar " style="width:91.8%"></div></div><div class="bar-note"></div></td><td class="num">487.4 m</td><td>完整</td><td><a class="jump" href="#traj-s3e-square-3-alpha">查看轨迹 ↓</a></td></tr>
 <tr><td><span class="dataset s3e">S3E</span></td><td>Square 3</td><td>Bob</td><td>ATE</td><td class="num">1.932</td><td><div class="bar-track"><div class="bar " style="width:96.6%"></div></div><div class="bar-note"></div></td><td class="num">569.6 m</td><td>完整</td><td><a class="jump" href="#traj-s3e-square-3-bob">查看轨迹 ↓</a></td></tr>
 <tr><td><span class="dataset s3e">S3E</span></td><td>Square 3</td><td>Carol</td><td>ATE</td><td class="num">0.912</td><td><div class="bar-track"><div class="bar " style="width:45.6%"></div></div><div class="bar-note"></div></td><td class="num">563.8 m</td><td>完整</td><td><a class="jump" href="#traj-s3e-square-3-carol">查看轨迹 ↓</a></td></tr>
-<tr><td><span class="dataset newer">Newer College 2020</span></td><td>Short Experiment</td><td>reference</td><td>ATE</td><td class="num">0.502</td><td><div class="bar-track"><div class="bar " style="width:25.1%"></div></div><div class="bar-note"></div></td><td class="num">1609.4 m</td><td>完整</td><td><a class="jump" href="#traj-newer-college-short-experiment">查看轨迹 ↓</a></td></tr>
-<tr><td><span class="dataset newer">Newer College 2020</span></td><td>Long Experiment</td><td>reference</td><td>ATE</td><td class="num">0.494</td><td><div class="bar-track"><div class="bar " style="width:24.7%"></div></div><div class="bar-note"></div></td><td class="num">3063.4 m</td><td>完整</td><td><a class="jump" href="#traj-newer-college-long-experiment">查看轨迹 ↓</a></td></tr>
-<tr><td><span class="dataset newer">Newer College 2020</span></td><td>Quad with Dynamics</td><td>reference</td><td>ATE</td><td class="num">0.148</td><td><div class="bar-track"><div class="bar " style="width:7.4%"></div></div><div class="bar-note"></div></td><td class="num">479.0 m</td><td>完整</td><td><a class="jump" href="#traj-newer-college-quad-with-dynamics">查看轨迹 ↓</a></td></tr>
-<tr><td><span class="dataset newer">Newer College 2020</span></td><td>Dynamic Spinning</td><td>reference</td><td>ATE</td><td class="num">0.098</td><td><div class="bar-track"><div class="bar partial" style="width:4.9%"></div></div><div class="bar-note">最新重跑 · 匹配 81.6% GT</div></td><td class="num">97.20 m · 81.6%</td><td>部分覆盖</td><td><a class="jump" href="#traj-newer-college-dynamic-spinning">查看轨迹 ↓</a></td></tr>
-<tr><td><span class="dataset newer">Newer College 2020</span></td><td>Parkland Mound</td><td>reference</td><td>ATE</td><td class="num">0.182</td><td><div class="bar-track"><div class="bar " style="width:9.1%"></div></div><div class="bar-note"></div></td><td class="num">695.7 m</td><td>完整</td><td><a class="jump" href="#traj-newer-college-parkland-mound">查看轨迹 ↓</a></td></tr>
+<tr><td><span class="dataset newer">Newer College 2020</span></td><td>Short Experiment</td><td>reference</td><td>ATE</td><td class="num">0.473</td><td><div class="bar-track"><div class="bar " style="width:23.6%"></div></div><div class="bar-note">LiDAR → base</div></td><td class="num">1609.4 m · 98.1%</td><td>完整</td><td><a class="jump" href="#traj-newer-college-short-experiment">查看轨迹 ↓</a></td></tr>
+<tr><td><span class="dataset newer">Newer College 2020</span></td><td>Long Experiment</td><td>reference</td><td>ATE</td><td class="num">0.460</td><td><div class="bar-track"><div class="bar " style="width:23.0%"></div></div><div class="bar-note">LiDAR → base</div></td><td class="num">3063.4 m · 97.5%</td><td>完整</td><td><a class="jump" href="#traj-newer-college-long-experiment">查看轨迹 ↓</a></td></tr>
+<tr><td><span class="dataset newer">Newer College 2020</span></td><td>Quad with Dynamics</td><td>reference</td><td>ATE</td><td class="num">0.133</td><td><div class="bar-track"><div class="bar " style="width:6.7%"></div></div><div class="bar-note">LiDAR → base</div></td><td class="num">479.0 m · 98.0%</td><td>完整</td><td><a class="jump" href="#traj-newer-college-quad-with-dynamics">查看轨迹 ↓</a></td></tr>
+<tr><td><span class="dataset newer">Newer College 2020</span></td><td>Dynamic Spinning</td><td>reference</td><td>ATE</td><td class="num">0.093</td><td><div class="bar-track"><div class="bar partial" style="width:4.6%"></div></div><div class="bar-note">最新重跑 · LiDAR → base</div></td><td class="num">97.20 m · 81.6%</td><td>部分覆盖</td><td><a class="jump" href="#traj-newer-college-dynamic-spinning">查看轨迹 ↓</a></td></tr>
+<tr><td><span class="dataset newer">Newer College 2020</span></td><td>Parkland Mound</td><td>reference</td><td>ATE</td><td class="num">0.161</td><td><div class="bar-track"><div class="bar " style="width:8.0%"></div></div><div class="bar-note">LiDAR → base</div></td><td class="num">695.7 m · 96.0%</td><td>完整</td><td><a class="jump" href="#traj-newer-college-parkland-mound">查看轨迹 ↓</a></td></tr>
 </tbody></table></div></section>
   <div class="group-head"><span class="eyebrow">HILTI 2022 · 稀疏控制点</span><h2>HILTI 2022 · 稀疏控制点 · 对应轨迹</h2><p>施工场地、楼梯、穹顶、画廊与地下室；部分覆盖图已明确标记。</p></div>
   <section class="trajectory-grid">
@@ -254,32 +254,32 @@ main{width:min(1380px,calc(100% - 36px));margin:auto;padding:42px 0 80px}.hero{p
       <div class="card-meta">RMSE <strong>0.912 m</strong> · GT 563.8 m · 估计 541.0 m</div>
     </article>
   </section>
-  <div class="group-head"><span class="eyebrow">Newer College 2020 · 连续 GT</span><h2>Newer College 2020 · 连续 GT · 对应轨迹</h2><p>五条有效轨迹全部纳入，不按 ATE 高低剔除。</p></div>
+  <div class="group-head"><span class="eyebrow">Newer College 2020 · 连续 GT</span><h2>Newer College 2020 · 连续 GT · 对应轨迹</h2><p>LiDAR 轨迹先转换到原数据集 base 系（左相机中心），再执行 SE(3) 对齐。五条有效轨迹全部纳入。</p></div>
   <section class="trajectory-grid">
     <article class="trajectory-card " id="traj-newer-college-short-experiment">
       <div class="section-heading"><div><span class="eyebrow">Newer College · Short Experiment</span><h3>Short Experiment</h3></div><a class="back" href="#results">返回表格 ↑</a></div>
       <a class="plot-link" href="trajectories/newer_college_01_short_experiment.png" target="_blank"><img src="trajectories/newer_college_01_short_experiment.png" alt="Newer College · Short Experiment 轨迹对比" loading="lazy"></a>
-      <div class="card-meta">RMSE <strong>0.502 m</strong> · GT 1609.4 m · 估计 1422.7 m</div>
+      <div class="card-meta">RMSE <strong>0.473 m</strong> · GT 1609.4 m · 估计 1421.9 m · GT 覆盖 98.1%</div>
     </article>
     <article class="trajectory-card " id="traj-newer-college-long-experiment">
       <div class="section-heading"><div><span class="eyebrow">Newer College · Long Experiment</span><h3>Long Experiment</h3></div><a class="back" href="#results">返回表格 ↑</a></div>
       <a class="plot-link" href="trajectories/newer_college_02_long_experiment.png" target="_blank"><img src="trajectories/newer_college_02_long_experiment.png" alt="Newer College · Long Experiment 轨迹对比" loading="lazy"></a>
-      <div class="card-meta">RMSE <strong>0.494 m</strong> · GT 3063.4 m · 估计 2603.4 m</div>
+      <div class="card-meta">RMSE <strong>0.460 m</strong> · GT 3063.4 m · 估计 2599.8 m · GT 覆盖 97.5%</div>
     </article>
     <article class="trajectory-card " id="traj-newer-college-quad-with-dynamics">
       <div class="section-heading"><div><span class="eyebrow">Newer College · Quad with Dynamics</span><h3>Quad with Dynamics</h3></div><a class="back" href="#results">返回表格 ↑</a></div>
       <a class="plot-link" href="trajectories/newer_college_05_quad_with_dynamics.png" target="_blank"><img src="trajectories/newer_college_05_quad_with_dynamics.png" alt="Newer College · Quad with Dynamics 轨迹对比" loading="lazy"></a>
-      <div class="card-meta">RMSE <strong>0.148 m</strong> · GT 479.0 m · 估计 476.0 m</div>
+      <div class="card-meta">RMSE <strong>0.133 m</strong> · GT 479.0 m · 估计 474.9 m · GT 覆盖 98.0%</div>
     </article>
     <article class="trajectory-card partial" id="traj-newer-college-dynamic-spinning">
       <div class="section-heading"><div><span class="eyebrow">Newer College · Dynamic Spinning</span><h3>Dynamic Spinning</h3></div><a class="back" href="#results">返回表格 ↑</a></div>
       <a class="plot-link" href="trajectories/newer_college_06_dynamic_spinning.png" target="_blank"><img src="trajectories/newer_college_06_dynamic_spinning.png" alt="Newer College · Dynamic Spinning 轨迹对比" loading="lazy"></a>
-      <div class="card-meta">RMSE <strong>0.098 m</strong> · GT 97.20 m · 估计 71.01 m · GT 覆盖 81.6%</div>
+      <div class="card-meta">RMSE <strong>0.093 m</strong> · GT 97.20 m · 估计 77.10 m · GT 覆盖 81.6%</div>
     </article>
     <article class="trajectory-card " id="traj-newer-college-parkland-mound">
       <div class="section-heading"><div><span class="eyebrow">Newer College · Parkland Mound</span><h3>Parkland Mound</h3></div><a class="back" href="#results">返回表格 ↑</a></div>
       <a class="plot-link" href="trajectories/newer_college_07_parkland_mound.png" target="_blank"><img src="trajectories/newer_college_07_parkland_mound.png" alt="Newer College · Parkland Mound 轨迹对比" loading="lazy"></a>
-      <div class="card-meta">RMSE <strong>0.182 m</strong> · GT 695.7 m · 估计 654.8 m</div>
+      <div class="card-meta">RMSE <strong>0.161 m</strong> · GT 695.7 m · 估计 654.9 m · GT 覆盖 96.0%</div>
     </article>
   </section>
 <footer>Sapphire ATE evaluation · 数据来源：README.md、benchmark_table.zh.md 与本地评估结果 · 37 条纳入统计轨迹 + 2 条 HILTI 2022 部分覆盖轨迹</footer>

@@ -23,7 +23,7 @@ is standalone C++17; ROS 1 and ROS 2 are provided by thin wrappers.
 | HILTI 2022 | 10 | 103 control points | 0.260 m | 0.082 m |
 | HILTI 2023 | 5 | 346.4 m control path | 0.058 m | 0.052 m |
 | S3E | 17 | 10.42 km | 1.17 m | 1.05 m |
-| Newer College 2020 | 5 | 5.94 km | 0.2846 m | 0.1817 m |
+| Newer College 2020 | 5 | 5.94 km | 0.2639 m | 0.1609 m |
 
 ATE is translation RMSE after timestamp association and SE(3) Umeyama
 alignment, without scale correction. HILTI 2022 and HILTI 2023 use sparse
@@ -33,9 +33,10 @@ Complete runs enter the aggregate statistics; partial and unavailable results
 are documented in the detailed table rather than silently dropped. All five
 valid Newer College runs are included regardless of their ATE.
 
-The latest `Dynamic Spinning` rerun produced 0.098 m ATE over 81.6% of the GT
-trajectory; the previous run produced 0.100 m over 91.1% under the same current
-evaluator. The coverage difference is retained in the detailed results.
+Newer College estimates are exported in the LiDAR frame and transformed to the
+dataset's base frame (the left-camera centre) before evaluation. The transform
+has a 0.101 m lever arm. The latest `Dynamic Spinning` rerun reports 0.093 m ATE
+over 81.6% of the GT trajectory; coverage is retained in the detailed results.
 
 Reproduction:
 

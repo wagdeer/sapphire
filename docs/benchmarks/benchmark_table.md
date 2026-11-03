@@ -20,7 +20,7 @@ their ATE.
 | HILTI 2022 | 10 | 103 control points | 0.260 | 0.082 |
 | HILTI 2023 | 5 | 346.4 m control path | 0.058 | 0.052 |
 | S3E | 17 | 10.42 km | 1.17 | 1.05 |
-| Newer College 2020 | 5 | 5.94 km | 0.2846 | 0.1817 |
+| Newer College 2020 | 5 | 5.94 km | 0.2639 | 0.1609 |
 
 ## Per-sequence ATE
 
@@ -70,11 +70,11 @@ than real-time throughput.
 | S3E | Square 3 | Alpha | 487.4 m | 463.7 | ATE | 1.835 | complete |
 | S3E | Square 3 | Bob | 569.6 m | 559.8 | ATE | 1.932 | complete |
 | S3E | Square 3 | Carol | 563.8 m | 541.0 | ATE | 0.912 | complete |
-| Newer College | Short Experiment | reference | 1609.4 m | 1422.7 | ATE | 0.502 | complete |
-| Newer College | Long Experiment | reference | 3063.4 m | 2603.4 | ATE | 0.494 | complete |
-| Newer College | Quad with Dynamics | reference | 479.0 m | 476.0 | ATE | 0.148 | complete |
-| Newer College | Dynamic Spinning | reference | 97.20 m · 81.6% | 71.01 | ATE | 0.098 | latest rerun · partial |
-| Newer College | Parkland Mound | reference | 695.7 m | 654.8 | ATE | 0.182 | complete |
+| Newer College | Short Experiment | reference | 1609.4 m · 98.1% | 1421.9 | ATE | 0.473 | complete |
+| Newer College | Long Experiment | reference | 3063.4 m · 97.5% | 2599.8 | ATE | 0.460 | complete |
+| Newer College | Quad with Dynamics | reference | 479.0 m · 98.0% | 474.9 | ATE | 0.133 | complete |
+| Newer College | Dynamic Spinning | reference | 97.20 m · 81.6% | 77.10 | ATE | 0.093 | latest rerun · partial |
+| Newer College | Parkland Mound | reference | 695.7 m · 96.0% | 654.9 | ATE | 0.161 | complete |
 
 The `exp10` result covers only the first 3 of 14 control points before tracking
 is lost after approximately 88 s. The `exp16` result covers 7 of 9 control
@@ -87,11 +87,23 @@ For sparse-control HILTI runs, GT length is the surveyed control-point
 polyline while estimated travel covers the full replay. The two length columns
 are therefore not directly comparable.
 
-The latest `Dynamic Spinning` rerun covers 81.6% of the GT trajectory because
-the first approximately 4.7 s are consumed by IMU initialization. Its ATE is
-0.0979 m. Under the same current evaluator, the previous trajectory covers
-91.1% and reports 0.1004 m. The latest result is therefore a small improvement
-on a shorter matched interval, not a like-for-like full-coverage comparison.
+Newer College estimates are written in the LiDAR frame, while its ground truth
+uses the original dataset's base frame at the left-camera centre. Evaluation
+therefore applies `T_world_base = T_world_lidar * T_lidar_base` before SE(3)
+alignment. The original Rooster layout and static sensor transforms give a
+0.1012 m lever arm:
+
+```text
+T_base_lidar =
+[-0.70711  -0.70711  0  -0.084250]
+[ 0.70711  -0.70711  0  -0.025000]
+[ 0         0        1   0.050188]
+[ 0         0        0   1       ]
+```
+
+The `Dynamic Spinning` rerun covers 81.6% of its GT because the first
+approximately 4.7 s are consumed by IMU initialization; the other sequences
+cover 96.0-98.1%.
 
 The latest reruns are reported in the table with their coverage status. For
 reproducibility, two

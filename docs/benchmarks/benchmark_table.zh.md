@@ -18,7 +18,7 @@ S3E 和 Newer College 使用连续 GT，最大时间关联间隔为 0.1 s。因�
 | HILTI 2022 | 10 | 103 个控制点 | 0.260 | 0.082 |
 | HILTI 2023 | 5 | 346.4 m 控制点路径 | 0.058 | 0.052 |
 | S3E | 17 | 10.42 km | 1.17 | 1.05 |
-| Newer College 2020 | 5 | 5.94 km | 0.2846 | 0.1817 |
+| Newer College 2020 | 5 | 5.94 km | 0.2639 | 0.1609 |
 
 ## 逐序列 ATE
 
@@ -66,11 +66,11 @@ SE(3) 对齐前从 IMU 坐标系转换到测量端点。回放使用 0.5× 序�
 | S3E | Square 3 | Alpha | 487.4 m | 463.7 | ATE | 1.835 | 完整 |
 | S3E | Square 3 | Bob | 569.6 m | 559.8 | ATE | 1.932 | 完整 |
 | S3E | Square 3 | Carol | 563.8 m | 541.0 | ATE | 0.912 | 完整 |
-| Newer College | Short Experiment | reference | 1609.4 m | 1422.7 | ATE | 0.502 | 完整 |
-| Newer College | Long Experiment | reference | 3063.4 m | 2603.4 | ATE | 0.494 | 完整 |
-| Newer College | Quad with Dynamics | reference | 479.0 m | 476.0 | ATE | 0.148 | 完整 |
-| Newer College | Dynamic Spinning | reference | 97.20 m · 81.6% | 71.01 | ATE | 0.098 | 最新重跑 · 部分覆盖 |
-| Newer College | Parkland Mound | reference | 695.7 m | 654.8 | ATE | 0.182 | 完整 |
+| Newer College | Short Experiment | reference | 1609.4 m · 98.1% | 1421.9 | ATE | 0.473 | 完整 |
+| Newer College | Long Experiment | reference | 3063.4 m · 97.5% | 2599.8 | ATE | 0.460 | 完整 |
+| Newer College | Quad with Dynamics | reference | 479.0 m · 98.0% | 474.9 | ATE | 0.133 | 完整 |
+| Newer College | Dynamic Spinning | reference | 97.20 m · 81.6% | 77.10 | ATE | 0.093 | 最新重跑 · 部分覆盖 |
+| Newer College | Parkland Mound | reference | 695.7 m · 96.0% | 654.9 | ATE | 0.161 | 完整 |
 
 `exp10` 在约 88 s 后丢跟踪，只覆盖前 3/14 个控制点；`exp16` 在约 156 s 后
 丢跟踪，只覆盖 7/9 个控制点。两条结果的 RMSE 只描述已匹配前缀，不参与完整
@@ -79,10 +79,21 @@ SE(3) 对齐前从 IMU 坐标系转换到测量端点。回放使用 0.5× 序�
 对于稀疏控制点 HILTI，GT 长度是测量控制点折线长度，而估计轨迹长度覆盖完整
 回放过程，因此两列不能直接作为同一口径比较。
 
-`Dynamic Spinning` 最新重跑覆盖 81.6% 的 GT 轨迹，开头约 4.7 s 用于 IMU
-初始化，ATE 为 0.0979 m。使用同一版当前评估器重算时，上一版轨迹覆盖 91.1%，
-ATE 为 0.1004 m。因此本次是较短匹配区间上的小幅改善，不能视为完整覆盖率下
-的直接对比。
+Newer College 的估计位姿使用 LiDAR 系，而 GT 使用原数据集定义在左相机中心的
+base 系。评估前会应用
+`T_world_base = T_world_lidar * T_lidar_base`，再执行 SE(3) 对齐。根据原版
+Rooster 结构及静态传感器变换，该杆臂长度为 0.1012 m：
+
+```text
+T_base_lidar =
+[-0.70711  -0.70711  0  -0.084250]
+[ 0.70711  -0.70711  0  -0.025000]
+[ 0         0        1   0.050188]
+[ 0         0        0   1       ]
+```
+
+`Dynamic Spinning` 最新重跑开头约 4.7 s 用于 IMU 初始化，因此覆盖 81.6% 的
+GT；其他序列覆盖 96.0%–98.1%。
 
 表格采用各序列最新重跑结果，并标注覆盖状态。为便于判断可复现性，`exp03`
 另外两次完整运行的 RMSE 为 0.119 m 和 0.114 m，而更早的批量回放结果为
