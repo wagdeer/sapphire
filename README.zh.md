@@ -34,8 +34,7 @@ ATE 是完成时间关联（误差不超过 0.1 s）和 SE(3) Umeyama 对齐后�
 2. 按 [数据回放说明](docs/DATASET_REPLAY.md) 以 1× 回放并导出 TUM 轨迹。
 3. 对估计与 GT 做时间关联，执行无尺度修正的 SE(3) 对齐，并计算平移 RMSE。
 
-[完整逐序列结果](docs/benchmarks/benchmark_table.zh.md) ·
-[全部轨迹对比图](docs/benchmarks/trajectory_gallery.zh.md)
+[完整逐序列结果与轨迹图](docs/benchmarks/benchmark_table.zh.md)
 
 ## 编译
 
@@ -78,8 +77,7 @@ ros2 launch sapphire_ros2 sapphire.launch.py \
 
 - [架构与设计](docs/DESIGN.md)
 - [数据回放与可视化](docs/DATASET_REPLAY.md)
-- [完整基准表](docs/benchmarks/benchmark_table.zh.md)
-- [轨迹对比图](docs/benchmarks/trajectory_gallery.md)
+- [完整基准结果与轨迹图](docs/benchmarks/benchmark_table.zh.md)
 
 ## 致谢
 

@@ -39,8 +39,7 @@ Reproduction:
 3. Associate estimate and GT timestamps, apply SE(3) alignment without scale,
    and compute translation RMSE.
 
-[Full per-sequence results](docs/benchmarks/benchmark_table.md) ·
-[All trajectory plots](docs/benchmarks/trajectory_gallery.md)
+[Full results and trajectory plots](docs/benchmarks/benchmark_table.md)
 
 ## Build
 
@@ -84,8 +83,7 @@ Published topics include `/sapphire/odometry`, `/sapphire/deskewed`,
 
 - [Architecture and design](docs/DESIGN.md)
 - [Dataset replay and visualization](docs/DATASET_REPLAY.md)
-- [Detailed benchmark table](docs/benchmarks/benchmark_table.md)
-- [Trajectory overlays](docs/benchmarks/trajectory_gallery.md)
+- [Detailed benchmark results and trajectory plots](docs/benchmarks/benchmark_table.md)
 
 ## Credits
 
