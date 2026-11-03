@@ -19,19 +19,25 @@ C++17 实现，ROS 1 和 ROS 2 由轻量封装接入。
 
 | 数据集 | 纳入轨迹 | 纳入 GT 覆盖 | 平均 ATE | ATE 中位数 |
 |---|---:|---:|---:|---:|
+| HILTI 2022 | 10 | 103 个控制点 | 0.260 m | 0.082 m |
 | HILTI 2023 | 5 | 346.4 m 控制点路径 | 0.058 m | 0.052 m |
 | S3E | 17 | 10.42 km | 1.17 m | 1.05 m |
-| Newer College 2020 | 5 | 5.94 km | 0.285 m | 0.182 m |
+| Newer College 2020 | 5 | 5.94 km | 0.2846 m | 0.1817 m |
 
-ATE 是完成时间关联（误差不超过 0.1 s）和 SE(3) Umeyama 对齐后的平移 RMSE，
-不做尺度修正。HILTI 使用稀疏控制点 GT；S3E 与 Newer College 使用连续 GT。
-已知数据或 GT 异常的结果不进入摘要，但保留在详细表中。Newer College 的五条
-有效轨迹全部纳入统计，不根据 ATE 高低剔除结果。
+ATE 是完成时间关联和 SE(3) Umeyama 对齐后的平移 RMSE，不做尺度修正。
+HILTI 2022 和 HILTI 2023 使用稀疏测量控制点，最大时间关联间隔为 2.0 s；
+S3E 和 Newer College 使用连续 GT，最大时间关联间隔为 0.1 s。完整轨迹进入
+汇总统计，部分覆盖和未评估结果在详细表中明确保留，不会静默丢弃。Newer
+College 的五条有效轨迹全部纳入统计，不根据 ATE 高低剔除结果。
+
+`Dynamic Spinning` 最新重跑的 ATE 为 0.098 m，覆盖 81.6% 的 GT 轨迹；上一版
+结果在同一评估器下为 0.100 m，覆盖 91.1%。覆盖范围差异保留在详细结果中。
 
 复现步骤：
 
 1. 按下方命令编译核心库和 ROS 封装。
-2. 按 [数据回放说明](docs/DATASET_REPLAY.md) 以 1× 回放并导出 TUM 轨迹。
+2. 按 [数据回放说明](docs/DATASET_REPLAY.md) 回放并导出 TUM 轨迹；一般使用
+   1×，HILTI 2022 按结果文档使用 0.5×。
 3. 对估计与 GT 做时间关联，执行无尺度修正的 SE(3) 对齐，并计算平移 RMSE。
 
 [完整逐序列结果与轨迹图](docs/benchmarks/benchmark_table.zh.md)

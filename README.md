@@ -20,20 +20,28 @@ is standalone C++17; ROS 1 and ROS 2 are provided by thin wrappers.
 
 | Dataset | Included runs | Included GT coverage | Mean ATE | Median ATE |
 |---|---:|---:|---:|---:|
+| HILTI 2022 | 10 | 103 control points | 0.260 m | 0.082 m |
 | HILTI 2023 | 5 | 346.4 m control path | 0.058 m | 0.052 m |
 | S3E | 17 | 10.42 km | 1.17 m | 1.05 m |
-| Newer College 2020 | 5 | 5.94 km | 0.285 m | 0.182 m |
+| Newer College 2020 | 5 | 5.94 km | 0.2846 m | 0.1817 m |
 
-ATE is translation RMSE after timestamp association (≤0.1 s) and SE(3)
-Umeyama alignment, without scale correction. HILTI uses sparse control-point
-GT; S3E and Newer College use continuous GT. Known data/GT anomalies are
-excluded from the summary and retained in the detailed table. All five valid
-Newer College runs are included; runs are not excluded based on ATE.
+ATE is translation RMSE after timestamp association and SE(3) Umeyama
+alignment, without scale correction. HILTI 2022 and HILTI 2023 use sparse
+surveyed control points with a 2.0 s maximum association interval. S3E and
+Newer College use continuous GT with a 0.1 s maximum association interval.
+Complete runs enter the aggregate statistics; partial and unavailable results
+are documented in the detailed table rather than silently dropped. All five
+valid Newer College runs are included regardless of their ATE.
+
+The latest `Dynamic Spinning` rerun produced 0.098 m ATE over 81.6% of the GT
+trajectory; the previous run produced 0.100 m over 91.1% under the same current
+evaluator. The coverage difference is retained in the detailed results.
 
 Reproduction:
 
 1. Build the core and ROS wrapper with the commands below.
-2. Replay a sequence at 1× and export its TUM trajectory using
+2. Replay a sequence at 1× (0.5× for HILTI 2022 as documented in the results)
+   and export its TUM trajectory using
    [DATASET_REPLAY.md](docs/DATASET_REPLAY.md).
 3. Associate estimate and GT timestamps, apply SE(3) alignment without scale,
    and compute translation RMSE.
