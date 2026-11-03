@@ -3,8 +3,8 @@
 ATE 是完成时间关联（误差不超过 0.1 s）和 SE(3) Umeyama 对齐后的平移 RMSE，
 不做尺度修正。数值越低越好。
 
-HILTI 使用稀疏控制点 GT；S3E 与 Newer College 使用连续 GT。README 的基准快照
-剔除了两条 ATE 约为 0.5 m 的较长 Newer College 轨迹，这里保留完整明细。
+HILTI 使用稀疏控制点 GT；S3E 与 Newer College 使用连续 GT。Newer College
+的五条有效轨迹全部纳入统计，不根据 ATE 高低剔除结果。
 
 ## 逐序列 ATE
 

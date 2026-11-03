@@ -22,14 +22,13 @@ is standalone C++17; ROS 1 and ROS 2 are provided by thin wrappers.
 |---|---:|---:|---:|---:|
 | HILTI 2023 | 5 | 346.4 m control path | 0.058 m | 0.052 m |
 | S3E | 17 | 10.42 km | 1.17 m | 1.05 m |
-| Newer College 2020 | 3 | 1.27 km | 0.143 m | 0.148 m |
+| Newer College 2020 | 5 | 5.94 km | 0.285 m | 0.182 m |
 
 ATE is translation RMSE after timestamp association (≤0.1 s) and SE(3)
 Umeyama alignment, without scale correction. HILTI uses sparse control-point
 GT; S3E and Newer College use continuous GT. Known data/GT anomalies are
-excluded from the summary and retained in the detailed table. The Newer
-College summary also omits two longer runs whose ATE is about 0.5 m while the
-three retained runs are 0.10–0.18 m.
+excluded from the summary and retained in the detailed table. All five valid
+Newer College runs are included; runs are not excluded based on ATE.
 
 Reproduction:
 

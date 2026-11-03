@@ -250,7 +250,7 @@
     <div class="kicker">Sapphire · ATE evaluation</div>
     <h1>轨迹精度与对应轨迹图</h1>
     <p>
-      汇总当前 <code>README.md</code> 中纳入统计的 25 条轨迹。ATE 为时间关联
+      汇总当前 <code>README.md</code> 中纳入统计的 27 条轨迹。ATE 为时间关联
       （误差不超过 0.1 s）和 SE(3) Umeyama 对齐后的平移 RMSE，不做尺度修正。
     </p>
   </header>
@@ -258,7 +258,7 @@
   <section class="stats" aria-label="总体统计">
     <div class="stat">
       <div class="label">纳入轨迹</div>
-      <div class="value">25</div>
+      <div class="value">27</div>
       <div class="detail">3 个数据集</div>
     </div>
     <div class="stat">
@@ -273,14 +273,13 @@
     </div>
     <div class="stat">
       <div class="label">Newer College 平均 ATE</div>
-      <div class="value">0.143 m</div>
-      <div class="detail">3 条 · 中位数 0.148 m</div>
+      <div class="value">0.285 m</div>
+      <div class="detail">5 条 · 中位数 0.182 m</div>
     </div>
   </section>
 
   <div class="callout">
-    下表严格采用 README 的纳入范围。Newer College 的 Short Experiment 与
-    Long Experiment 保留在完整详细表中，但不计入这里的 3 条摘要轨迹。
+    Newer College 的五条有效轨迹全部纳入统计，不根据 ATE 高低剔除结果。
   </div>
 
   <section class="panel" id="summary">
@@ -319,10 +318,10 @@
           </tr>
           <tr>
             <td><span class="dataset newer">Newer College 2020</span></td>
-            <td class="num">3</td>
-            <td class="num">1.27 km</td>
-            <td class="num">0.143 m</td>
-            <td class="num">0.148 m</td>
+            <td class="num">5</td>
+            <td class="num">5.94 km</td>
+            <td class="num">0.285 m</td>
+            <td class="num">0.182 m</td>
           </tr>
         </tbody>
       </table>
@@ -508,6 +507,20 @@
             <td><a class="jump" href="#traj-s3e-square-3-carol">查看轨迹 ↓</a></td>
           </tr>
 
+          <tr>
+            <td><span class="dataset newer">Newer College</span></td>
+            <td><a class="sequence-link" href="#traj-newer-short-experiment">Short Experiment</a></td>
+            <td>reference</td><td class="num">1609.4</td><td class="num">1422.7</td>
+            <td class="num">0.502</td><td><div class="bar-track"><div class="bar" style="width:25.1%"></div></div></td>
+            <td><a class="jump" href="#traj-newer-short-experiment">查看轨迹 ↓</a></td>
+          </tr>
+          <tr>
+            <td><span class="dataset newer">Newer College</span></td>
+            <td><a class="sequence-link" href="#traj-newer-long-experiment">Long Experiment</a></td>
+            <td>reference</td><td class="num">3063.4</td><td class="num">2603.4</td>
+            <td class="num">0.494</td><td><div class="bar-track"><div class="bar" style="width:24.7%"></div></div></td>
+            <td><a class="jump" href="#traj-newer-long-experiment">查看轨迹 ↓</a></td>
+          </tr>
           <tr>
             <td><span class="dataset newer">Newer College</span></td>
             <td><a class="sequence-link" href="#traj-newer-dynamic-spinning">Dynamic Spinning</a></td>
@@ -773,12 +786,32 @@
   <div class="group-head">
     <span class="eyebrow">Newer College · included runs</span>
     <h2>Newer College 2020 · 对应轨迹</h2>
-    <p>仅展示 README 中纳入平均 ATE 的 3 条轨迹。</p>
+    <p>展示 README 中全部 5 条有效轨迹。</p>
   </div>
   <section class="trajectory-grid">
+    <article class="trajectory-card" id="traj-newer-short-experiment">
+      <div class="section-heading">
+        <div><span class="eyebrow">Newer 01</span><h3>Short Experiment</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/newer_college_01_short_experiment.png" target="_blank">
+        <img src="trajectories/newer_college_01_short_experiment.png" alt="Newer College Short Experiment 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.502 m</strong> · GT 1609.4 m · 估计 1422.7 m</div>
+    </article>
+    <article class="trajectory-card" id="traj-newer-long-experiment">
+      <div class="section-heading">
+        <div><span class="eyebrow">Newer 02</span><h3>Long Experiment</h3></div>
+        <a class="back" href="#results">返回表格 ↑</a>
+      </div>
+      <a class="plot-link" href="trajectories/newer_college_02_long_experiment.png" target="_blank">
+        <img src="trajectories/newer_college_02_long_experiment.png" alt="Newer College Long Experiment 轨迹对比" loading="lazy">
+      </a>
+      <div class="card-meta">ATE RMSE <strong>0.494 m</strong> · GT 3063.4 m · 估计 2603.4 m</div>
+    </article>
     <article class="trajectory-card" id="traj-newer-dynamic-spinning">
       <div class="section-heading">
-        <div><span class="eyebrow">Newer 01</span><h3>Dynamic Spinning</h3></div>
+        <div><span class="eyebrow">Newer 03</span><h3>Dynamic Spinning</h3></div>
         <a class="back" href="#results">返回表格 ↑</a>
       </div>
       <a class="plot-link" href="trajectories/newer_college_06_dynamic_spinning.png" target="_blank">
@@ -788,7 +821,7 @@
     </article>
     <article class="trajectory-card" id="traj-newer-parkland-mound">
       <div class="section-heading">
-        <div><span class="eyebrow">Newer 02</span><h3>Parkland Mound</h3></div>
+        <div><span class="eyebrow">Newer 04</span><h3>Parkland Mound</h3></div>
         <a class="back" href="#results">返回表格 ↑</a>
       </div>
       <a class="plot-link" href="trajectories/newer_college_07_parkland_mound.png" target="_blank">
@@ -798,7 +831,7 @@
     </article>
     <article class="trajectory-card" id="traj-newer-quad-with-dynamics">
       <div class="section-heading">
-        <div><span class="eyebrow">Newer 03</span><h3>Quad with Dynamics</h3></div>
+        <div><span class="eyebrow">Newer 05</span><h3>Quad with Dynamics</h3></div>
         <a class="back" href="#results">返回表格 ↑</a>
       </div>
       <a class="plot-link" href="trajectories/newer_college_05_quad_with_dynamics.png" target="_blank">

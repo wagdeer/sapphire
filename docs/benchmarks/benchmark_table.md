@@ -4,9 +4,8 @@ Translation ATE is computed after timestamp association (≤0.1 s) and SE(3)
 Umeyama alignment, without scale correction. Lower is better.
 
 HILTI uses sparse control-point ground truth; S3E and Newer College use
-continuous ground truth. The README benchmark snapshot excludes two longer
-Newer College runs with about 0.5 m ATE. Those runs remain in this detailed
-table.
+continuous ground truth. All five valid Newer College runs are included; runs
+are not excluded based on ATE.
 
 ## Per-sequence ATE
 
