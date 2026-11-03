@@ -1,0 +1,148 @@
+# HILTI SLAM Challenge 2022 handheld platform.
+# Sensors: Hesai PandarXT-32 + Alphasense Core IMU
+#
+# Extrinsics and measurement-tip geometry come from:
+#   calibration/calibration_files/lidar_calibration.yaml
+#
+# IMU noise values are estimated from the static 89-minute
+# calibration/imu_noise_calibration.bag using its approximately 399 Hz samples.
+
+[imu]
+gravity = 9.80665
+
+[imu.init]
+convergence_gyro_std = 0.0065
+convergence_accel_std = 0.05
+timeout_sec = 5.0
+check_interval_sec = 0.5
+min_samples = 100
+
+[imu.noise]
+accel_noise_density = 0.001125
+gyro_noise_density = 0.0001884
+accel_random_walk = 0.000243
+gyro_random_walk = 0.00000452
+accel_bias_rw_sigma = 0.000243
+gyro_bias_rw_sigma = 0.00000452
+
+[odometry]
+voxel_size = 0.05
+fusion = "eskf"
+
+[odometry.crop_box]
+min_x = -1.0
+min_y = -1.0
+min_z = -1.0
+max_x = 1.0
+max_y = 1.0
+max_z = 1.0
+
+[odometry.observer]
+position_gain = 4.5
+velocity_gain = 11.25
+orientation_gain = 4.0
+accel_bias_gain = 2.25
+gyro_bias_gain = 1.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
+
+[odometry.eskf]
+sigma_rotation = 0.02
+sigma_translation = 0.05
+icp_covariance_scale = 25.0
+use_hessian = true
+hessian_min_information = 1e-6
+hessian_max_condition = 10000.0
+hessian_degenerate_sigma = 1.0
+hessian_max_sigma = 10.0
+mahalanobis_threshold = -1.0
+inject_full_pose = false
+inject_directional_pose = true
+velocity_correction_gain = 8.0
+bias_update_scale = 0.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
+init_sigma_theta = 0.1
+init_sigma_velocity = 0.5
+init_sigma_position = 0.5
+
+[odometry.submap]
+splitting_distance = 0.75
+splitting_rotation = 0.02
+max_keyframes = 5
+voxel_size = 0.05
+
+[registration]
+type = "VGICP"
+
+[registration.gicp]
+max_iterations = 32
+transformation_epsilon = 0.01
+rotation_epsilon = 0.01
+max_correspondence_dist = 0.5
+k_correspondences = 16
+min_num_points = 64
+max_correction_trans = 1.0
+max_correction_rot_deg = 20.0
+
+[registration.vgicp]
+voxel_resolution = 0.25
+
+[pgo]
+enabled = true
+keyframe_distance = 0.5
+keyframe_rotation = 0.3
+loop_min_time_separation = 30.0
+loop_min_travel_distance = 30.0
+loop_max_rotation = 3.14
+loop_search_radius = 30.0
+loop_search_stride = 1
+target_frame_count = 50
+source_voxel_size = 0.4
+target_voxel_size = 0.4
+source_travel_radius_m = 10.0
+source_max_range_m = 20.0
+source_max_frames = 256
+lidar_min_inliers = 64
+lidar_max_iterations = 64
+lidar_max_correspondence_m = 2.0
+lidar_min_overlap = 0.5
+lidar_max_fitness_m2 = 0.5
+lidar_translation_sigma_m = 0.2
+lidar_rotation_sigma_rad = 0.1
+max_constraint_error_sigma = 3.0
+update_period_sec = 1.0
+map_frame_stride = 3
+map_voxel_size = 0.8
+
+[pgo.occupancy]
+enabled = false
+resolution = 0.1
+h_clearance = 1.0
+ground_margin = 0.2
+clear_height_eps = 0.1
+d_max = 6.0
+occ_threshold = 0.3
+usable_range = 40.0
+min_range = 0.5
+cloud_voxel_size = 0.4
+margin = 5.0
+
+[sensor.lidar]
+time_field = "timestamp"
+time_unit = "s"
+time_ref = "absolute"
+max_scan_duration = 0.2
+header_tolerance = 0.5
+require_point_time = true
+
+[sensor.imu]
+accel_unit = "m_s2"
+
+[extrinsics.T_imu_lidar]
+translation = [-0.001, -0.00855, 0.055]
+rotation_xyzw = [0.7071068, -0.7071068, 0.0, 0.0]
+
+[output]
+trajectory_dir = "/workspace/results/hilti_2022/handheld"
+trajectory_file = "trajectory.tum"

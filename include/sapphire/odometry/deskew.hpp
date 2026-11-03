@@ -9,7 +9,10 @@
 
 namespace sapphire {
 
-inline constexpr std::size_t kImuBufferCapacity = 500;
+// Keep enough history to survive a long pose-graph/loop-closure update. At
+// 400 Hz, 20000 samples cover 50 seconds, so a blocked LiDAR callback cannot
+// advance the buffer past its previous scan timestamp.
+inline constexpr std::size_t kImuBufferCapacity = 20000;
 using ImuBuffer = RingBuffer<ImuData, kImuBufferCapacity>;
 
 enum class DeskewStatus {
