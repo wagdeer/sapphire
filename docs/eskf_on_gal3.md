@@ -4,7 +4,7 @@
 > `odometry.fusion = "eskf"` 选择；`observer` 仍保留为另一条融合路径。
 > 本文是推导笔记，安装和话题说明见仓库 README。
 >
-> **Document status (v1.1.1):** Approach A 为推荐实现路径。相对 v1.0 已修正：
+> **Document status (v1.1.2):** Approach A 为推荐实现路径。相对 v1.0 已修正：
 > Gal(3) 预积分增量分量顺序、离散过程噪声 $Q_d$ 的 $\Delta t$ 方向、
 > ICP 观测残差与测量雅可比的坐标系一致性。Approach B（完整 TG 协方差映射）
 > 标为 *future / unverified*，暂不作为实现依据。启用 ESKF 时须在配置里打开非零 bias random walk。
@@ -170,11 +170,14 @@ $$\delta x = \hat{x} \boxminus \bar{x} = \begin{bmatrix}
 
 $$P = \mathbb{E}[\delta x \cdot \delta x^T] \in \mathbb{R}^{15 \times 15}$$
 
-Initialized based on IMU stationary calibration uncertainty:
+Initialized from the configured IMU noise model:
 - $\sigma_\theta \approx 1^\circ$ (gravity alignment residual)
-- $\sigma_v = 0.01$ m/s (assumed stationary)
-- $\sigma_p = 0.01$ m (assumed at origin)
-- $\sigma_{b_a}, \sigma_{b_g}$ from IMU initialization variance estimates
+- $\sigma_v$ and $\sigma_p$ come from `init_sigma_velocity` and
+  `init_sigma_position`
+- $\sigma_{b_a}$ and $\sigma_{b_g}$ come from
+  `ImuNoiseConfig::accel_bias_sigma` and `gyro_bias_sigma`, with a
+  $10^{-6}$ floor; they are not taken from the stationary initializer
+  sample variance
 
 ---
 
@@ -204,21 +207,22 @@ $$\dot{b}_a(t) = \eta_{ba}(t), \quad \eta_{ba} \sim \mathcal{N}(0, \sigma_{ba}^2
 $$\dot{b}_g(t) = \eta_{bg}(t), \quad \eta_{bg} \sim \mathcal{N}(0, \sigma_{bg}^2 I)$$
 
 **Bias random walk (implementation note):**
-current `ImuNoiseConfig` defaults are
+the raw `ImuNoiseConfig` defaults are
 
 ```cpp
 accel_bias_rw_sigma = 0.0;
 gyro_bias_rw_sigma  = 0.0;
 ```
 
-If ESKF builds $Q_c$ from these zeros, the bias covariance blocks never grow, so the filter effectively **does not estimate bias online** and degenerates toward a fixed-bias propagator plus pose-only corrections. That is worse than the geometric observer, which at least applies heuristic bias gains.
-
-For ESKF bring-up, set these in the TOML / runtime config to the DLIO defaults in §9.1:
+`Eskf::biasRwAccel()` and `Eskf::biasRwGyro()` interpret a non-positive
+raw value as "use the general IMU random-walk parameter". The effective
+defaults are therefore:
 
 - `accel_bias_rw_sigma = 1.65e-4`  (m/s²·√s)
 - `gyro_bias_rw_sigma  = 6.55e-5`  (rad/s·√s)
 
-No change to the `ImuNoiseConfig` struct itself is required — only non-zero config values when `odometry.fusion = "eskf"`.
+An explicit positive `*_bias_rw_sigma` overrides this fallback. The raw zero
+does not freeze the bias covariance blocks.
 
 ### 3.3 Nominal State Kinematics
 
@@ -311,6 +315,11 @@ where $\bar{\chi}_i$ is the nominal state at the last correction time $i$, and
 
 $$\text{Gamma}(dt) = \begin{bmatrix} I & g_w \cdot dt & -\frac{1}{2}g_w \cdot dt^2 \\ 0 & 1 & -dt \\ 0 & 0 & 1 \end{bmatrix}$$
 
+The baseline must satisfy $\bar{\chi}_i.s = 0$. Otherwise the homogeneous
+time slot injects $g_w\,dt\,\bar{\chi}_i.s$ into position.
+`recoverWorldState` enforces this contract and rejects a non-zero initial
+time component.
+
 #### Covariance Propagation
 
 Discretize the continuous linearized error dynamics at each IMU step $k$ with interval $\Delta t_k$:
@@ -399,7 +408,9 @@ If a body-frame translational residual is preferred later, redefine both $z$ and
 
 `small_gicp::RegistrationResult::H` / `getFinalHessian()` is the final information matrix of the GICP cost. A practical measurement covariance is:
 
-$$R = \sigma_{icp}^{2}\, H_{\text{gicp}}^{-1} \in \mathbb{R}^{6\times6}$$
+$$R = \sigma_{icp}^{2}\, H_{\text{gicp}}^{-1}
+    + \operatorname{diag}(\sigma_r^2 I_3,\;\sigma_t^2 I_3)
+  \in \mathbb{R}^{6\times6}$$
 
 with safeguards:
 
@@ -408,7 +419,10 @@ with safeguards:
 3. Inflate by $\sigma_{icp}^{2}$ (typical $5\sim25$) because scan-to-submap ICP covariances are optimistic and correlated with the map.
 4. Optional: detect near-null eigenvalues and further inflate those axes.
 
-If the Hessian is unavailable or ill-conditioned, fall back to a diagonal covariance:
+The diagonal term is a physical noise floor, not only an unavailable-Hessian
+fallback. It avoids treating a very sharp ICP Hessian as absolute certainty.
+If the Hessian is unavailable or ill-conditioned, the implementation falls
+back to the diagonal covariance:
 
 $$R = \text{diag}(\sigma_r^2 I_3,\; \sigma_t^2 I_3)$$
 
@@ -454,7 +468,12 @@ Error-state update:
 
 $$\delta\hat{x} = K\, \nu$$
 
-Prefer the Joseph form for covariance update (§10.2).
+The production filter can replace rows of $K$ with a deliberately chosen
+`K_effective`: `bias_update_scale` damps bias rows,
+`velocity_correction_gain` replaces velocity rows, directional injection maps
+the pose innovation through Hessian observability, and full-pose injection
+uses an identity pose gain. The Joseph update uses the gain that was actually
+executed (§10.2).
 
 ### 5.5 Outlier Rejection
 
@@ -466,6 +485,14 @@ Use **layered** rejection; do not replace the existing hard gates immediately.
    Reject if $d > \chi^{2}_{6,0.95} \approx 12.59$.
 
 Until $R$ is well calibrated, Mahalanobis alone can mis-accept / mis-reject. Keep both.
+
+When any non-Kalman gain override is active, $P$ describes the uncertainty of
+the executed hybrid update rather than the posterior of an optimal Kalman
+filter. In that case $d=\nu^T S^{-1}\nu$ is only a diagnostic and is not
+$\chi^2_6$-calibrated. NIS is a statistical consistency measure only in pure
+Kalman mode: `inject_full_pose = false`,
+`inject_directional_pose = false`, `velocity_correction_gain = 0`, and
+`bias_update_scale = 1`.
 
 ---
 
@@ -597,11 +624,12 @@ $$P_0 = \text{diag}\left(
 \sigma_{bg_0}^2 I_3
 \right)$$
 
-Typical values:
-- $\sigma_{\theta_0} = 0.017$ rad (1°, from gravity alignment)
-- $\sigma_{v_0} = 0.01$ m/s (assumed stationary)
-- $\sigma_{p_0} = 0.01$ m (assumed at origin)
-- $\sigma_{ba_0}, \sigma_{bg_0}$ from `ImuInitializer` variance output when available
+Parameter sources:
+- $\sigma_{\theta_0}$ comes from `init_sigma_theta`;
+- $\sigma_{v_0}$ and $\sigma_{p_0}$ come from their corresponding
+  `init_sigma_*` parameters;
+- $\sigma_{ba_0}$ and $\sigma_{bg_0}$ come from the configured IMU bias
+  sigmas, floored at $10^{-6}$.
 
 ---
 
@@ -702,6 +730,16 @@ Bring-up order:
 
 ## 12. Changelog
 
+### v1.1.2 — 2026-11-05
+
+- Corrected the effective bias-random-walk fallback; zero raw parameters use
+  the general IMU random-walk values.
+- Documented the actual initial-covariance sources.
+- Documented the combined Hessian covariance and diagonal physical floor.
+- Documented the zero-time baseline contract enforced by
+  `recoverWorldState`.
+- Clarified that NIS is not χ²-calibrated under hybrid gain injection.
+
 ### v1.1.1 — 2026-07-16
 
 - Clarified that the v1.0 $\alpha$/$a$ swap was a documentation bug only; current mean-only integrator is already correct.
@@ -723,6 +761,6 @@ Bring-up order:
 
 ---
 
-*Document version: v1.1.1*
-*Date: 2026-07-16*
+*Document version: v1.1.2*
+*Date: 2026-11-05*
 *Author: Sapphire team*
