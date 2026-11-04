@@ -5,66 +5,222 @@
 #include <Eigen/Geometry>
 
 #include <cmath>
+#include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 
 namespace sapphire {
 namespace {
 
-double requiredNumber(const std::optional<double>& value, const char* name) {
+struct ParseContext {
+    std::unordered_set<std::string> known;
+};
+
+using NodeView = toml::node_view<toml::node>;
+
+void remember(ParseContext& ctx, const char* path) {
+    ctx.known.insert(path);
+}
+
+[[noreturn]] void throwFieldType(
+    const toml::node& node, const char* path, const char* expected)
+{
+    std::ostringstream message;
+    message << "TOML field " << path << " at line " << node.source().begin.line
+            << " must be " << expected;
+    throw std::runtime_error(message.str());
+}
+
+[[noreturn]] void throwUnknownKey(const toml::node& node, const std::string& path)
+{
+    std::ostringstream message;
+    message << "unknown TOML key '" << path << "' at line "
+            << node.source().begin.line;
+    throw std::runtime_error(message.str());
+}
+
+[[noreturn]] void throwMissing(const char* path) {
+    throw std::runtime_error(
+        std::string("missing required TOML field: ") + path);
+}
+
+std::optional<double> optionalNumber(
+    ParseContext& ctx, const NodeView& node, const char* path)
+{
+    remember(ctx, path);
+    if (!node) {
+        return std::nullopt;
+    }
+    if (!node.is_number()) {
+        throwFieldType(*node.node(), path, "a number");
+    }
+    const auto value = node.value<double>();
     if (!value.has_value()) {
-        throw std::runtime_error(
-            std::string("missing or non-numeric TOML field: ") + name);
+        throwFieldType(*node.node(), path, "a number");
+    }
+    return value;
+}
+
+double requiredNumber(
+    ParseContext& ctx, const NodeView& node, const char* path)
+{
+    const auto value = optionalNumber(ctx, node, path);
+    if (!value.has_value()) {
+        throwMissing(path);
     }
     return *value;
 }
 
-Eigen::Vector3d requiredVector3(const toml::array* array, const char* name) {
-    if (array == nullptr || array->size() != 3) {
-        throw std::runtime_error(
-            std::string("TOML field must be a numeric array of length 3: ") + name);
+std::optional<int> optionalInt(
+    ParseContext& ctx, const NodeView& node, const char* path)
+{
+    remember(ctx, path);
+    if (!node) {
+        return std::nullopt;
     }
+    if (!node.is_integer()) {
+        throwFieldType(*node.node(), path, "an integer");
+    }
+    const auto value = node.value_exact<int64_t>();
+    if (!value.has_value()
+        || *value < static_cast<int64_t>(std::numeric_limits<int>::min())
+        || *value > static_cast<int64_t>(std::numeric_limits<int>::max())) {
+        throwFieldType(*node.node(), path, "an integer");
+    }
+    return static_cast<int>(*value);
+}
 
+std::optional<bool> optionalBool(
+    ParseContext& ctx, const NodeView& node, const char* path)
+{
+    remember(ctx, path);
+    if (!node) {
+        return std::nullopt;
+    }
+    if (!node.is_boolean()) {
+        throwFieldType(*node.node(), path, "a boolean");
+    }
+    const auto value = node.value_exact<bool>();
+    if (!value.has_value()) {
+        throwFieldType(*node.node(), path, "a boolean");
+    }
+    return value;
+}
+
+std::optional<std::string> optionalString(
+    ParseContext& ctx, const NodeView& node, const char* path)
+{
+    remember(ctx, path);
+    if (!node) {
+        return std::nullopt;
+    }
+    if (!node.is_string()) {
+        throwFieldType(*node.node(), path, "a string");
+    }
+    const auto value = node.value_exact<std::string>();
+    if (!value.has_value()) {
+        throwFieldType(*node.node(), path, "a string");
+    }
+    return value;
+}
+
+double readNumberElement(const toml::node& element, const char* path) {
+    if (!element.is_number()) {
+        throwFieldType(element, path, "a number");
+    }
+    const auto value = element.value<double>();
+    if (!value.has_value()) {
+        throwFieldType(element, path, "a number");
+    }
+    return *value;
+}
+
+const toml::array& requireNumericArray(
+    ParseContext& ctx, const NodeView& node, const char* path, size_t length)
+{
+    remember(ctx, path);
+    if (!node) {
+        throwMissing(path);
+    }
+    if (!node.is_array() || node.as_array() == nullptr
+        || node.as_array()->size() != length) {
+        std::ostringstream message;
+        message << "TOML field " << path << " at line "
+                << node.node()->source().begin.line
+                << " must be a numeric array of length " << length;
+        throw std::runtime_error(message.str());
+    }
+    return *node.as_array();
+}
+
+Eigen::Vector3d requiredVector3(
+    ParseContext& ctx, const NodeView& node, const char* path)
+{
+    const toml::array& array = requireNumericArray(ctx, node, path, 3);
     Eigen::Vector3d result;
     for (size_t i = 0; i < 3; ++i) {
-        const auto value = (*array)[i].value<double>();
-        if (!value.has_value()) {
-            throw std::runtime_error(
-                std::string("TOML field must contain only numbers: ") + name);
-        }
-        result[static_cast<Eigen::Index>(i)] = *value;
+        result[static_cast<Eigen::Index>(i)] =
+            readNumberElement(array[i], path);
     }
     return result;
 }
 
 Eigen::Quaterniond requiredQuaternionXyzw(
-    const toml::array* array, const char* name)
+    ParseContext& ctx, const NodeView& node, const char* path)
 {
-    if (array == nullptr || array->size() != 4) {
-        throw std::runtime_error(
-            std::string("TOML field must be a numeric array of length 4: ") + name);
-    }
-
+    const toml::array& array = requireNumericArray(ctx, node, path, 4);
     double values[4]{};
     for (size_t i = 0; i < 4; ++i) {
-        const auto value = (*array)[i].value<double>();
-        if (!value.has_value()) {
-            throw std::runtime_error(
-                std::string("TOML field must contain only numbers: ") + name);
-        }
-        values[i] = *value;
+        values[i] = readNumberElement(array[i], path);
     }
 
     Eigen::Quaterniond quaternion(values[3], values[0], values[1], values[2]);
     if (!quaternion.coeffs().allFinite() || quaternion.norm() < 1e-12) {
-        throw std::runtime_error(
-            std::string("TOML quaternion is non-finite or has zero norm: ") + name);
+        std::ostringstream message;
+        message << "TOML field " << path << " at line "
+                << node.node()->source().begin.line
+                << " is non-finite or has zero norm";
+        throw std::runtime_error(message.str());
     }
     quaternion.normalize();
     return quaternion;
+}
+
+bool isKnownTable(const ParseContext& ctx, const std::string& path) {
+    const std::string prefix = path + ".";
+    for (const std::string& field : ctx.known) {
+        if (field.compare(0, prefix.size(), prefix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void rejectUnknownKeys(
+    const ParseContext& ctx,
+    const toml::table& table,
+    const std::string& prefix = {})
+{
+    for (auto&& [key, node] : table) {
+        const std::string path = prefix.empty()
+            ? std::string(key.str())
+            : prefix + "." + std::string(key.str());
+        if (node.is_table()) {
+            if (!isKnownTable(ctx, path)) {
+                throwUnknownKey(node, path);
+            }
+            rejectUnknownKeys(ctx, *node.as_table(), path);
+            continue;
+        }
+        if (ctx.known.count(path) == 0) {
+            throwUnknownKey(node, path);
+        }
+    }
 }
 
 void requireFiniteNonnegative(double value, const char* name) {
@@ -131,417 +287,614 @@ Config loadConfig(const std::filesystem::path& path) {
     }
 
     Config config;
+    ParseContext ctx;
     config.imu.init.gravity_mag = requiredNumber(
-        root["imu"]["gravity"].value<double>(), "imu.gravity");
+        ctx, root["imu"]["gravity"],
+        "imu.gravity");
     if (const auto value =
-            root["imu"]["init"]["convergence_gyro_std"].value<double>()) {
+            optionalNumber(
+                ctx, root["imu"]["init"]["convergence_gyro_std"],
+                "imu.init.convergence_gyro_std")) {
         config.imu.init.convergence_gyro_std = *value;
     }
     if (const auto value =
-            root["imu"]["init"]["convergence_accel_std"].value<double>()) {
+            optionalNumber(
+                ctx, root["imu"]["init"]["convergence_accel_std"],
+                "imu.init.convergence_accel_std")) {
         config.imu.init.convergence_accel_std = *value;
     }
     if (const auto value =
-            root["imu"]["init"]["timeout_sec"].value<double>()) {
+            optionalNumber(
+                ctx, root["imu"]["init"]["timeout_sec"],
+                "imu.init.timeout_sec")) {
         config.imu.init.timeout_sec = *value;
     }
     if (const auto value =
-            root["imu"]["init"]["check_interval_sec"].value<double>()) {
+            optionalNumber(
+                ctx, root["imu"]["init"]["check_interval_sec"],
+                "imu.init.check_interval_sec")) {
         config.imu.init.check_interval_sec = *value;
     }
     if (const auto value =
-            root["imu"]["init"]["min_samples"].value<int>()) {
+            optionalInt(
+                ctx, root["imu"]["init"]["min_samples"],
+                "imu.init.min_samples")) {
         config.imu.init.min_samples = *value;
     }
 
     config.imu.noise.accel_noise_density = requiredNumber(
-        root["imu"]["noise"]["accel_noise_density"].value<double>(),
+        ctx, root["imu"]["noise"]["accel_noise_density"],
         "imu.noise.accel_noise_density");
     config.imu.noise.gyro_noise_density = requiredNumber(
-        root["imu"]["noise"]["gyro_noise_density"].value<double>(),
+        ctx, root["imu"]["noise"]["gyro_noise_density"],
         "imu.noise.gyro_noise_density");
     config.imu.noise.accel_random_walk = requiredNumber(
-        root["imu"]["noise"]["accel_random_walk"].value<double>(),
+        ctx, root["imu"]["noise"]["accel_random_walk"],
         "imu.noise.accel_random_walk");
     config.imu.noise.gyro_random_walk = requiredNumber(
-        root["imu"]["noise"]["gyro_random_walk"].value<double>(),
+        ctx, root["imu"]["noise"]["gyro_random_walk"],
         "imu.noise.gyro_random_walk");
 
     if (const auto voxel_size =
-            root["odometry"]["voxel_size"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["voxel_size"],
+                "odometry.voxel_size")) {
         config.odometry.voxel_size = *voxel_size;
     }
     if (const auto fusion =
-            root["odometry"]["fusion"].value<std::string>()) {
+            optionalString(
+                ctx, root["odometry"]["fusion"],
+                "odometry.fusion")) {
         config.odometry.fusion = *fusion;
     }
     if (const auto value =
-            root["odometry"]["crop_box"]["min_x"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["crop_box"]["min_x"],
+                "odometry.crop_box.min_x")) {
         config.odometry.crop_box.min_x = *value;
     }
     if (const auto value =
-            root["odometry"]["crop_box"]["min_y"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["crop_box"]["min_y"],
+                "odometry.crop_box.min_y")) {
         config.odometry.crop_box.min_y = *value;
     }
     if (const auto value =
-            root["odometry"]["crop_box"]["min_z"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["crop_box"]["min_z"],
+                "odometry.crop_box.min_z")) {
         config.odometry.crop_box.min_z = *value;
     }
     if (const auto value =
-            root["odometry"]["crop_box"]["max_x"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["crop_box"]["max_x"],
+                "odometry.crop_box.max_x")) {
         config.odometry.crop_box.max_x = *value;
     }
     if (const auto value =
-            root["odometry"]["crop_box"]["max_y"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["crop_box"]["max_y"],
+                "odometry.crop_box.max_y")) {
         config.odometry.crop_box.max_y = *value;
     }
     if (const auto value =
-            root["odometry"]["crop_box"]["max_z"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["crop_box"]["max_z"],
+                "odometry.crop_box.max_z")) {
         config.odometry.crop_box.max_z = *value;
     }
     if (const auto velocity_gain =
-            root["odometry"]["observer"]["velocity_gain"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["observer"]["velocity_gain"],
+                "odometry.observer.velocity_gain")) {
         config.odometry.observer.velocity_gain = *velocity_gain;
     }
     if (const auto position_gain =
-            root["odometry"]["observer"]["position_gain"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["observer"]["position_gain"],
+                "odometry.observer.position_gain")) {
         config.odometry.observer.position_gain = *position_gain;
     }
     if (const auto orientation_gain =
-            root["odometry"]["observer"]["orientation_gain"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["observer"]["orientation_gain"],
+                "odometry.observer.orientation_gain")) {
         config.odometry.observer.orientation_gain = *orientation_gain;
     }
     if (const auto accel_bias_gain =
-            root["odometry"]["observer"]["accel_bias_gain"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["observer"]["accel_bias_gain"],
+                "odometry.observer.accel_bias_gain")) {
         config.odometry.observer.accel_bias_gain = *accel_bias_gain;
     }
     if (const auto gyro_bias_gain =
-            root["odometry"]["observer"]["gyro_bias_gain"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["observer"]["gyro_bias_gain"],
+                "odometry.observer.gyro_bias_gain")) {
         config.odometry.observer.gyro_bias_gain = *gyro_bias_gain;
     }
     if (const auto accel_bias_max =
-            root["odometry"]["observer"]["accel_bias_max"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["observer"]["accel_bias_max"],
+                "odometry.observer.accel_bias_max")) {
         config.odometry.observer.accel_bias_max = *accel_bias_max;
     }
     if (const auto gyro_bias_max =
-            root["odometry"]["observer"]["gyro_bias_max"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["observer"]["gyro_bias_max"],
+                "odometry.observer.gyro_bias_max")) {
         config.odometry.observer.gyro_bias_max = *gyro_bias_max;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["sigma_rotation"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["sigma_rotation"],
+                "odometry.eskf.sigma_rotation")) {
         config.odometry.eskf.sigma_rotation = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["sigma_translation"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["sigma_translation"],
+                "odometry.eskf.sigma_translation")) {
         config.odometry.eskf.sigma_translation = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["icp_covariance_scale"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["icp_covariance_scale"],
+                "odometry.eskf.icp_covariance_scale")) {
         config.odometry.eskf.icp_covariance_scale = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["use_hessian"].value<bool>()) {
+            optionalBool(
+                ctx, root["odometry"]["eskf"]["use_hessian"],
+                "odometry.eskf.use_hessian")) {
         config.odometry.eskf.use_hessian = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["hessian_min_information"]
-                .value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["hessian_min_information"],
+                "odometry.eskf.hessian_min_information")) {
         config.odometry.eskf.hessian_min_information = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["hessian_max_condition"]
-                .value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["hessian_max_condition"],
+                "odometry.eskf.hessian_max_condition")) {
         config.odometry.eskf.hessian_max_condition = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["hessian_degenerate_sigma"]
-                .value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["hessian_degenerate_sigma"],
+                "odometry.eskf.hessian_degenerate_sigma")) {
         config.odometry.eskf.hessian_degenerate_sigma = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["hessian_max_sigma"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["hessian_max_sigma"],
+                "odometry.eskf.hessian_max_sigma")) {
         config.odometry.eskf.hessian_max_sigma = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["mahalanobis_threshold"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["mahalanobis_threshold"],
+                "odometry.eskf.mahalanobis_threshold")) {
         config.odometry.eskf.mahalanobis_threshold = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["inject_full_pose"].value<bool>()) {
+            optionalBool(
+                ctx, root["odometry"]["eskf"]["inject_full_pose"],
+                "odometry.eskf.inject_full_pose")) {
         config.odometry.eskf.inject_full_pose = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["inject_directional_pose"].value<bool>()) {
+            optionalBool(
+                ctx, root["odometry"]["eskf"]["inject_directional_pose"],
+                "odometry.eskf.inject_directional_pose")) {
         config.odometry.eskf.inject_directional_pose = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["bias_update_scale"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["bias_update_scale"],
+                "odometry.eskf.bias_update_scale")) {
         config.odometry.eskf.bias_update_scale = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["velocity_correction_gain"]
-                .value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["velocity_correction_gain"],
+                "odometry.eskf.velocity_correction_gain")) {
         config.odometry.eskf.velocity_correction_gain = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["accel_bias_max"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["accel_bias_max"],
+                "odometry.eskf.accel_bias_max")) {
         config.odometry.eskf.accel_bias_max = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["gyro_bias_max"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["gyro_bias_max"],
+                "odometry.eskf.gyro_bias_max")) {
         config.odometry.eskf.gyro_bias_max = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["init_sigma_theta"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["init_sigma_theta"],
+                "odometry.eskf.init_sigma_theta")) {
         config.odometry.eskf.init_sigma_theta = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["init_sigma_velocity"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["init_sigma_velocity"],
+                "odometry.eskf.init_sigma_velocity")) {
         config.odometry.eskf.init_sigma_velocity = *value;
     }
     if (const auto value =
-            root["odometry"]["eskf"]["init_sigma_position"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["eskf"]["init_sigma_position"],
+                "odometry.eskf.init_sigma_position")) {
         config.odometry.eskf.init_sigma_position = *value;
     }
     if (const auto value =
-            root["imu"]["noise"]["accel_bias_rw_sigma"].value<double>()) {
+            optionalNumber(
+                ctx, root["imu"]["noise"]["accel_bias_rw_sigma"],
+                "imu.noise.accel_bias_rw_sigma")) {
         config.imu.noise.accel_bias_rw_sigma = *value;
     }
     if (const auto value =
-            root["imu"]["noise"]["gyro_bias_rw_sigma"].value<double>()) {
+            optionalNumber(
+                ctx, root["imu"]["noise"]["gyro_bias_rw_sigma"],
+                "imu.noise.gyro_bias_rw_sigma")) {
         config.imu.noise.gyro_bias_rw_sigma = *value;
     }
     if (const auto splitting_distance =
-            root["odometry"]["submap"]["splitting_distance"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["submap"]["splitting_distance"],
+                "odometry.submap.splitting_distance")) {
         config.odometry.submap.splitting_distance = *splitting_distance;
     }
     if (const auto splitting_rotation =
-            root["odometry"]["submap"]["splitting_rotation"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["submap"]["splitting_rotation"],
+                "odometry.submap.splitting_rotation")) {
         config.odometry.submap.splitting_rotation = *splitting_rotation;
     }
     if (const auto max_keyframes =
-            root["odometry"]["submap"]["max_keyframes"].value<int>()) {
+            optionalInt(
+                ctx, root["odometry"]["submap"]["max_keyframes"],
+                "odometry.submap.max_keyframes")) {
         config.odometry.submap.max_keyframes = *max_keyframes;
     }
     if (const auto voxel_size =
-            root["odometry"]["submap"]["voxel_size"].value<double>()) {
+            optionalNumber(
+                ctx, root["odometry"]["submap"]["voxel_size"],
+                "odometry.submap.voxel_size")) {
         config.odometry.submap.voxel_size = *voxel_size;
     }
 
-    if (const auto value = root["registration"]["type"].value<std::string>()) {
+    if (const auto value = optionalString(
+        ctx, root["registration"]["type"],
+        "registration.type")) {
         config.registration.type = *value;
     }
     if (const auto value =
-            root["registration"]["gicp"]["max_iterations"].value<int>()) {
+            optionalInt(
+                ctx, root["registration"]["gicp"]["max_iterations"],
+                "registration.gicp.max_iterations")) {
         config.registration.gicp.max_iterations = *value;
     }
     if (const auto value =
-            root["registration"]["gicp"]["transformation_epsilon"].value<double>()) {
+            optionalNumber(
+                ctx, root["registration"]["gicp"]["transformation_epsilon"],
+                "registration.gicp.transformation_epsilon")) {
         config.registration.gicp.transformation_epsilon = *value;
     }
     if (const auto value =
-            root["registration"]["gicp"]["rotation_epsilon"].value<double>()) {
+            optionalNumber(
+                ctx, root["registration"]["gicp"]["rotation_epsilon"],
+                "registration.gicp.rotation_epsilon")) {
         config.registration.gicp.rotation_epsilon = *value;
     }
     if (const auto value =
-            root["registration"]["gicp"]["max_correspondence_dist"].value<double>()) {
+            optionalNumber(
+                ctx, root["registration"]["gicp"]["max_correspondence_dist"],
+                "registration.gicp.max_correspondence_dist")) {
         config.registration.gicp.max_correspondence_dist = *value;
     }
     if (const auto value =
-            root["registration"]["gicp"]["k_correspondences"].value<int>()) {
+            optionalInt(
+                ctx, root["registration"]["gicp"]["k_correspondences"],
+                "registration.gicp.k_correspondences")) {
         config.registration.gicp.k_correspondences = *value;
     }
     if (const auto value =
-            root["registration"]["gicp"]["min_num_points"].value<int>()) {
+            optionalInt(
+                ctx, root["registration"]["gicp"]["min_num_points"],
+                "registration.gicp.min_num_points")) {
         config.registration.gicp.min_num_points = *value;
     }
     if (const auto value =
-            root["registration"]["gicp"]["max_correction_trans"].value<double>()) {
+            optionalNumber(
+                ctx, root["registration"]["gicp"]["max_correction_trans"],
+                "registration.gicp.max_correction_trans")) {
         config.registration.gicp.max_correction_trans = *value;
     }
     if (const auto value =
-            root["registration"]["gicp"]["max_correction_rot_deg"].value<double>()) {
+            optionalNumber(
+                ctx, root["registration"]["gicp"]["max_correction_rot_deg"],
+                "registration.gicp.max_correction_rot_deg")) {
         config.registration.gicp.max_correction_rot_deg = *value;
     }
     if (const auto value =
-            root["registration"]["vgicp"]["voxel_resolution"].value<double>()) {
+            optionalNumber(
+                ctx, root["registration"]["vgicp"]["voxel_resolution"],
+                "registration.vgicp.voxel_resolution")) {
         config.registration.vgicp.voxel_resolution = *value;
     }
-    if (const auto value = root["pgo"]["enabled"].value<bool>()) {
+    if (const auto value = optionalBool(
+        ctx, root["pgo"]["enabled"],
+        "pgo.enabled")) {
         config.pgo.enabled = *value;
     }
-    if (const auto value = root["pgo"]["keyframe_distance"].value<double>()) {
+    if (const auto value = optionalNumber(
+        ctx, root["pgo"]["keyframe_distance"],
+        "pgo.keyframe_distance")) {
         config.pgo.keyframe_distance = *value;
     }
-    if (const auto value = root["pgo"]["keyframe_rotation"].value<double>()) {
+    if (const auto value = optionalNumber(
+        ctx, root["pgo"]["keyframe_rotation"],
+        "pgo.keyframe_rotation")) {
         config.pgo.keyframe_rotation = *value;
     }
     if (const auto value =
-            root["pgo"]["loop_min_time_separation"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["loop_min_time_separation"],
+                "pgo.loop_min_time_separation")) {
         config.pgo.loop_min_time_separation = *value;
     }
     if (const auto value =
-            root["pgo"]["loop_min_travel_distance"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["loop_min_travel_distance"],
+                "pgo.loop_min_travel_distance")) {
         config.pgo.loop_min_travel_distance = *value;
     }
-    if (const auto value = root["pgo"]["loop_max_rotation"].value<double>()) {
+    if (const auto value = optionalNumber(
+        ctx, root["pgo"]["loop_max_rotation"],
+        "pgo.loop_max_rotation")) {
         config.pgo.loop_max_rotation = *value;
     }
-    if (const auto value = root["pgo"]["loop_search_radius"].value<double>()) {
+    if (const auto value = optionalNumber(
+        ctx, root["pgo"]["loop_search_radius"],
+        "pgo.loop_search_radius")) {
         config.pgo.loop_search_radius = *value;
     }
-    if (const auto value = root["pgo"]["loop_search_stride"].value<int>()) {
+    if (const auto value = optionalInt(
+        ctx, root["pgo"]["loop_search_stride"],
+        "pgo.loop_search_stride")) {
         config.pgo.loop_search_stride = *value;
     }
-    if (const auto value = root["pgo"]["target_frame_count"].value<int>()) {
+    if (const auto value = optionalInt(
+        ctx, root["pgo"]["target_frame_count"],
+        "pgo.target_frame_count")) {
         config.pgo.target_frame_count = *value;
     }
-    if (const auto value = root["pgo"]["source_voxel_size"].value<double>()) {
+    if (const auto value = optionalNumber(
+        ctx, root["pgo"]["source_voxel_size"],
+        "pgo.source_voxel_size")) {
         config.pgo.source_voxel_size = *value;
     }
-    if (const auto value = root["pgo"]["target_voxel_size"].value<double>()) {
+    if (const auto value = optionalNumber(
+        ctx, root["pgo"]["target_voxel_size"],
+        "pgo.target_voxel_size")) {
         config.pgo.target_voxel_size = *value;
     }
     if (const auto value =
-            root["pgo"]["source_travel_radius_m"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["source_travel_radius_m"],
+                "pgo.source_travel_radius_m")) {
         config.pgo.source_travel_radius_m = *value;
     }
     if (const auto value =
-            root["pgo"]["source_max_range_m"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["source_max_range_m"],
+                "pgo.source_max_range_m")) {
         config.pgo.source_max_range_m = *value;
     }
-    if (const auto value = root["pgo"]["source_max_frames"].value<int>()) {
+    if (const auto value = optionalInt(
+        ctx, root["pgo"]["source_max_frames"],
+        "pgo.source_max_frames")) {
         config.pgo.source_max_frames = *value;
     }
-    if (const auto value = root["pgo"]["lidar_min_inliers"].value<int>()) {
+    if (const auto value = optionalInt(
+        ctx, root["pgo"]["lidar_min_inliers"],
+        "pgo.lidar_min_inliers")) {
         config.pgo.lidar_min_inliers = *value;
     }
-    if (const auto value = root["pgo"]["lidar_max_iterations"].value<int>()) {
+    if (const auto value = optionalInt(
+        ctx, root["pgo"]["lidar_max_iterations"],
+        "pgo.lidar_max_iterations")) {
         config.pgo.lidar_max_iterations = *value;
     }
     if (const auto value =
-            root["pgo"]["lidar_max_correspondence_m"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["lidar_max_correspondence_m"],
+                "pgo.lidar_max_correspondence_m")) {
         config.pgo.lidar_max_correspondence_m = *value;
     }
-    if (const auto value = root["pgo"]["lidar_min_overlap"].value<double>()) {
+    if (const auto value = optionalNumber(
+        ctx, root["pgo"]["lidar_min_overlap"],
+        "pgo.lidar_min_overlap")) {
         config.pgo.lidar_min_overlap = *value;
     }
     if (const auto value =
-            root["pgo"]["lidar_max_fitness_m2"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["lidar_max_fitness_m2"],
+                "pgo.lidar_max_fitness_m2")) {
         config.pgo.lidar_max_fitness_m2 = *value;
     }
     if (const auto value =
-            root["pgo"]["lidar_translation_sigma_m"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["lidar_translation_sigma_m"],
+                "pgo.lidar_translation_sigma_m")) {
         config.pgo.lidar_translation_sigma_m = *value;
     }
     if (const auto value =
-            root["pgo"]["lidar_rotation_sigma_rad"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["lidar_rotation_sigma_rad"],
+                "pgo.lidar_rotation_sigma_rad")) {
         config.pgo.lidar_rotation_sigma_rad = *value;
     }
     if (const auto value =
-            root["pgo"]["max_constraint_error_sigma"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["max_constraint_error_sigma"],
+                "pgo.max_constraint_error_sigma")) {
         config.pgo.max_constraint_error_sigma = *value;
     }
-    if (const auto value = root["pgo"]["update_period_sec"].value<double>()) {
+    if (const auto value = optionalNumber(
+        ctx, root["pgo"]["update_period_sec"],
+        "pgo.update_period_sec")) {
         config.pgo.update_period_sec = *value;
     }
-    if (const auto value = root["pgo"]["map_frame_stride"].value<int>()) {
+    if (const auto value = optionalInt(
+        ctx, root["pgo"]["map_frame_stride"],
+        "pgo.map_frame_stride")) {
         config.pgo.map_frame_stride = *value;
     }
-    if (const auto value = root["pgo"]["map_voxel_size"].value<double>()) {
+    if (const auto value = optionalNumber(
+        ctx, root["pgo"]["map_voxel_size"],
+        "pgo.map_voxel_size")) {
         config.pgo.map_voxel_size = *value;
     }
-    if (const auto value = root["pgo"]["occupancy"]["enabled"].value<bool>()) {
+    if (const auto value = optionalBool(
+        ctx, root["pgo"]["occupancy"]["enabled"],
+        "pgo.occupancy.enabled")) {
         config.pgo.occupancy.enabled = *value;
     }
     if (const auto value =
-            root["pgo"]["occupancy"]["resolution"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["occupancy"]["resolution"],
+                "pgo.occupancy.resolution")) {
         config.pgo.occupancy.resolution = *value;
     }
     if (const auto value =
-            root["pgo"]["occupancy"]["h_clearance"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["occupancy"]["h_clearance"],
+                "pgo.occupancy.h_clearance")) {
         config.pgo.occupancy.h_clearance = *value;
     }
     if (const auto value =
-            root["pgo"]["occupancy"]["ground_margin"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["occupancy"]["ground_margin"],
+                "pgo.occupancy.ground_margin")) {
         config.pgo.occupancy.ground_margin = *value;
     }
-    if (const auto value = root["pgo"]["occupancy"]["d_max"].value<double>()) {
+    if (const auto value = optionalNumber(
+        ctx, root["pgo"]["occupancy"]["d_max"],
+        "pgo.occupancy.d_max")) {
         config.pgo.occupancy.d_max = *value;
     }
     if (const auto value =
-            root["pgo"]["occupancy"]["clear_height_eps"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["occupancy"]["clear_height_eps"],
+                "pgo.occupancy.clear_height_eps")) {
         config.pgo.occupancy.clear_height_eps = *value;
     }
     if (const auto value =
-            root["pgo"]["occupancy"]["occ_threshold"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["occupancy"]["occ_threshold"],
+                "pgo.occupancy.occ_threshold")) {
         config.pgo.occupancy.occ_threshold = *value;
     }
     if (const auto value =
-            root["pgo"]["occupancy"]["usable_range"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["occupancy"]["usable_range"],
+                "pgo.occupancy.usable_range")) {
         config.pgo.occupancy.usable_range = *value;
     }
     if (const auto value =
-            root["pgo"]["occupancy"]["min_range"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["occupancy"]["min_range"],
+                "pgo.occupancy.min_range")) {
         config.pgo.occupancy.min_range = *value;
     }
     if (const auto value =
-            root["pgo"]["occupancy"]["cloud_voxel_size"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["occupancy"]["cloud_voxel_size"],
+                "pgo.occupancy.cloud_voxel_size")) {
         config.pgo.occupancy.cloud_voxel_size = *value;
     }
     if (const auto value =
-            root["pgo"]["occupancy"]["margin"].value<double>()) {
+            optionalNumber(
+                ctx, root["pgo"]["occupancy"]["margin"],
+                "pgo.occupancy.margin")) {
         config.pgo.occupancy.margin = *value;
     }
 
     if (const auto value =
-            root["sensor"]["lidar"]["time_field"].value<std::string>()) {
+            optionalString(
+                ctx, root["sensor"]["lidar"]["time_field"],
+                "sensor.lidar.time_field")) {
         config.sensor.lidar.time_field = *value;
     }
     if (const auto value =
-            root["sensor"]["lidar"]["time_unit"].value<std::string>()) {
+            optionalString(
+                ctx, root["sensor"]["lidar"]["time_unit"],
+                "sensor.lidar.time_unit")) {
         config.sensor.lidar.time_unit = *value;
     }
     if (const auto value =
-            root["sensor"]["lidar"]["time_ref"].value<std::string>()) {
+            optionalString(
+                ctx, root["sensor"]["lidar"]["time_ref"],
+                "sensor.lidar.time_ref")) {
         config.sensor.lidar.time_ref = *value;
     }
     if (const auto value =
-            root["sensor"]["lidar"]["max_scan_duration"].value<double>()) {
+            optionalNumber(
+                ctx, root["sensor"]["lidar"]["max_scan_duration"],
+                "sensor.lidar.max_scan_duration")) {
         config.sensor.lidar.max_scan_duration = *value;
     }
     if (const auto value =
-            root["sensor"]["lidar"]["header_tolerance"].value<double>()) {
+            optionalNumber(
+                ctx, root["sensor"]["lidar"]["header_tolerance"],
+                "sensor.lidar.header_tolerance")) {
         config.sensor.lidar.header_tolerance = *value;
     }
     if (const auto value =
-            root["sensor"]["lidar"]["require_point_time"].value<bool>()) {
+            optionalBool(
+                ctx, root["sensor"]["lidar"]["require_point_time"],
+                "sensor.lidar.require_point_time")) {
         config.sensor.lidar.require_point_time = *value;
     }
     if (const auto value =
-            root["sensor"]["imu"]["accel_unit"].value<std::string>()) {
+            optionalString(
+                ctx, root["sensor"]["imu"]["accel_unit"],
+                "sensor.imu.accel_unit")) {
         config.sensor.imu.accel_unit = *value;
     }
     if (const auto value =
-            root["output"]["trajectory_dir"].value<std::string>()) {
+            optionalString(
+                ctx, root["output"]["trajectory_dir"],
+                "output.trajectory_dir")) {
         config.output.trajectory_dir = *value;
     }
     if (const auto value =
-            root["output"]["trajectory_file"].value<std::string>()) {
+            optionalString(
+                ctx, root["output"]["trajectory_file"],
+                "output.trajectory_file")) {
         config.output.trajectory_file = *value;
     }
 
     const auto extrinsics = root["extrinsics"]["T_imu_lidar"];
     const Eigen::Vector3d translation = requiredVector3(
-        extrinsics["translation"].as_array(),
+        ctx, extrinsics["translation"],
         "extrinsics.T_imu_lidar.translation");
     const Eigen::Quaterniond rotation = requiredQuaternionXyzw(
-        extrinsics["rotation_xyzw"].as_array(),
+        ctx, extrinsics["rotation_xyzw"],
         "extrinsics.T_imu_lidar.rotation_xyzw");
     config.extrinsics.T_imu_lidar = Isometry3d::Identity();
     config.extrinsics.T_imu_lidar.linear() = rotation.toRotationMatrix();
     config.extrinsics.T_imu_lidar.translation() = translation;
 
+    rejectUnknownKeys(ctx, root);
     validateConfig(config);
     return config;
 }

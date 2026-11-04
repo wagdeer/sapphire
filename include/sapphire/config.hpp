@@ -7,7 +7,9 @@
 namespace sapphire {
 
 /// Load and validate a Sapphire TOML configuration file.
-/// Throws std::runtime_error when the file cannot be parsed or is invalid.
+/// Throws std::runtime_error when the file cannot be parsed, a required field
+/// is missing, a present field has the wrong type, or a key is not recognized.
+/// Throws std::invalid_argument when a value fails validation.
 Config loadConfig(const std::filesystem::path& path);
 
 /// Validate a fully constructed configuration.

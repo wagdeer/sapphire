@@ -352,6 +352,66 @@ void testTrajectoryFileMustStayRelative() {
     expect(threw, "trajectory_file must not escape trajectory_dir");
 }
 
+void expectSchemaError(
+    const std::string& contents,
+    const std::string& filename,
+    const std::string& needle,
+    const std::string& path_in_message,
+    const std::string& detail)
+{
+    const auto path = writeConfig(filename, contents);
+    bool threw = false;
+    std::string message;
+    try {
+        (void)sapphire::loadConfig(path);
+    } catch (const std::runtime_error& error) {
+        threw = true;
+        message = error.what();
+    }
+    std::filesystem::remove(path);
+    expect(threw, needle + " must be rejected");
+    const auto at = contents.find(needle);
+    expect(at != std::string::npos, "fixture must contain " + needle);
+    int line = 1;
+    for (size_t i = 0; i < at; ++i) {
+        if (contents[i] == '\n') {
+            ++line;
+        }
+    }
+    expect(message.find(path_in_message) != std::string::npos,
+           "the error must name " + path_in_message);
+    expect(message.find(detail) != std::string::npos,
+           "the error must say " + detail);
+    expect(message.find("line " + std::to_string(line)) != std::string::npos,
+           "the error must include the TOML line of " + needle);
+}
+
+void testWrongOptionalTypeRejected() {
+    const std::string contents =
+        validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]")
+        + "[pgo]\n"
+          "enabled = \"true\"\n";
+    expectSchemaError(
+        contents,
+        "sapphire_config_pgo_enabled_string.toml",
+        "enabled = \"true\"",
+        "pgo.enabled",
+        "boolean");
+}
+
+void testUnknownKeyRejected() {
+    const std::string contents =
+        validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]")
+        + "[pgo]\n"
+          "enable = true\n";
+    expectSchemaError(
+        contents,
+        "sapphire_config_pgo_enable_typo.toml",
+        "enable = true",
+        "pgo.enable",
+        "unknown TOML key");
+}
+
 void testMissingFieldRejected() {
     const auto path = writeConfig(
         "sapphire_config_missing_field.toml",
@@ -379,6 +439,8 @@ int main() {
     testProjectConfig();
     testQuaternionNormalization();
     testInvalidGravityRejected();
+    testWrongOptionalTypeRejected();
+    testUnknownKeyRejected();
     testMissingFieldRejected();
     std::cout << "All config tests passed\n";
     return EXIT_SUCCESS;
