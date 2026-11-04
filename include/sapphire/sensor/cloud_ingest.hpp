@@ -195,6 +195,7 @@ inline std::string layoutNote(const CloudView& view) {
     if (view.point_step == 0) {
         return "point_step is zero";
     }
+    const size_t step = view.point_step;
     size_t height = 0;
     if (view.width > 0) {
         if (view.point_count % view.width != 0) {
@@ -202,19 +203,31 @@ inline std::string layoutNote(const CloudView& view) {
         }
         height = view.point_count / view.width;
         if (view.row_step != 0
-            && static_cast<size_t>(view.row_step)
-                < view.width * static_cast<size_t>(view.point_step)) {
+            && view.width > static_cast<size_t>(view.row_step) / step) {
             return "row_step is shorter than one row of points";
         }
     }
-    if (view.data_size != 0) {
-        const size_t need = (view.width == 0 || view.row_step == 0)
-            ? view.point_count * static_cast<size_t>(view.point_step)
-            : (height - 1) * static_cast<size_t>(view.row_step)
-                + view.width * static_cast<size_t>(view.point_step);
-        if (view.data_size < need) {
+    // data_size == 0 skips the byte check. Division keeps a wrapping product
+    // from comparing as a small length and then throwing in reserve().
+    if (view.data_size == 0) {
+        return {};
+    }
+    if (view.width == 0 || view.row_step == 0 || height == 0) {
+        if (view.point_count > view.data_size / step) {
             return "point cloud data is shorter than the last point";
         }
+        return {};
+    }
+    const size_t row_step = view.row_step;
+    size_t used = 0;
+    if (height > 1) {
+        if (height - 1 > view.data_size / row_step) {
+            return "point cloud data is shorter than the last point";
+        }
+        used = (height - 1) * row_step;
+    }
+    if (view.width * step > view.data_size - used) {
+        return "point cloud data is shorter than the last point";
     }
     return {};
 }

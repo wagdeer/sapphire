@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <limits>
 #include <string>
 #include <vector>
@@ -151,6 +152,27 @@ void check(bool cond, const std::string& what) {
         std::printf("    FAIL: %s\n", what.c_str());
         ++failures;
     }
+}
+
+void checkRejectedLayout(
+    const CloudView& cloud, const IngestConfig& cfg, const char* name)
+{
+    bool threw = false;
+    IngestResult result;
+    try {
+        result = ingest(cloud, cfg);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    check(!threw, std::string(name) + ": does not throw");
+    if (threw) {
+        return;
+    }
+    check(!result.time.ok, std::string(name) + ": rejected");
+    check(result.points.empty(), std::string(name) + ": yields no points");
+    check(
+        result.time.note.find("shorter") != std::string::npos,
+        std::string(name) + ": reports a short buffer");
 }
 
 void report(
@@ -846,6 +868,37 @@ int main() {
         auto result = ingest(cloud, cfg);
         check(!result.time.ok, "short row_step is rejected");
         check(result.points.empty(), "short row_step yields no points");
+    }
+    {
+        // point_count * point_step wraps to 0, so a multiply against this
+        // 128-byte buffer used to pass and then reserve() threw.
+        static_assert(sizeof(size_t) >= 8, "wrap cases assume a 64-bit size_t");
+        std::vector<uint8_t> bytes(128, 0);
+        CloudView cloud;
+        cloud.fields.push_back({"x", 0, 7, 1});
+        cloud.fields.push_back({"y", 4, 7, 1});
+        cloud.fields.push_back({"z", 8, 7, 1});
+        cloud.data = bytes.data();
+        cloud.data_size = bytes.size();
+        cloud.point_count = size_t{1} << 60;
+        cloud.width = size_t{1} << 30;
+        cloud.point_step = 16;
+        checkRejectedLayout(cloud, cfg, "wrapping packed count");
+    }
+    {
+        // (height - 1) * row_step wraps to a span smaller than 128 bytes.
+        std::vector<uint8_t> bytes(128, 0);
+        CloudView cloud;
+        cloud.fields.push_back({"x", 0, 7, 1});
+        cloud.fields.push_back({"y", 4, 7, 1});
+        cloud.fields.push_back({"z", 8, 7, 1});
+        cloud.data = bytes.data();
+        cloud.data_size = bytes.size();
+        cloud.width = size_t{1} << 27;
+        cloud.point_count = cloud.width * ((size_t{1} << 34) + 1);
+        cloud.point_step = 16;
+        cloud.row_step = uint32_t{1} << 31;
+        checkRejectedLayout(cloud, cfg, "wrapping organized span");
     }
 
     std::printf(
