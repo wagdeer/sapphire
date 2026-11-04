@@ -127,7 +127,8 @@ for that run.
 
 ## Trajectory overlays
 
-Blue is Sapphire, orange dashed is GT, and crosses are HILTI controls.
+Blue is the full Sapphire estimate, orange dashed connects GT control points,
+and crosses mark the controls.
 
 ### HILTI 2022
 

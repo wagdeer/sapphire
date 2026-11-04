@@ -112,7 +112,7 @@ Campus Road 3 的 Bob 已经计入 S3E 均值。这次运行没有生成轨迹�
 
 ## 轨迹对比
 
-蓝色实线为 Sapphire，橙色虚线为 GT，叉号表示 HILTI 控制点。
+蓝色实线为 Sapphire 的完整估计轨迹，橙色虚线连接 GT 控制点，叉号标出控制点。
 
 ### HILTI 2022
 
