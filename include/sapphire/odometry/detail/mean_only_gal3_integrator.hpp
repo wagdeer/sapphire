@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace sapphire {
 namespace detail {
@@ -78,6 +79,14 @@ inline MeanOnlyGal3Integrator::Gal3 recoverWorldState(
     using Mat5 = Gal3::MatrixType;
 
     const double dt = Upsilon.s();
+    // Gamma places the accumulated interval in the homogeneous time slot.
+    // A non-zero initial s would make Gamma * initial_state inject
+    // gravity * dt * s into position, so require a zero-time baseline.
+    if (!std::isfinite(initial_state.s())
+        || std::abs(initial_state.s()) > 1e-12) {
+        throw std::invalid_argument(
+            "recoverWorldState requires initial_state.s() == 0");
+    }
     Mat5 gamma = Mat5::Identity();
     gamma.template block<3, 1>(0, 3) = gravity_world * dt;
     gamma.template block<3, 1>(0, 4) =

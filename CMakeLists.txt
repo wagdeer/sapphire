@@ -157,6 +157,16 @@ if(BUILD_TESTING)
         COMMAND sapphire_mean_only_gal3_integrator_test
     )
 
+    add_executable(sapphire_gal3_independent_test
+        tests/gal3_independent_test.cpp
+    )
+    target_link_libraries(sapphire_gal3_independent_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_gal3_independent_test)
+    add_test(
+        NAME sapphire_gal3_independent_test
+        COMMAND sapphire_gal3_independent_test
+    )
+
     add_executable(sapphire_pipeline_test
         tests/pipeline_test.cpp
     )

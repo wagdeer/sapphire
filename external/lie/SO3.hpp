@@ -149,15 +149,27 @@ class SO3
   [[nodiscard]] static const TMatrixType Gamma2(const VectorType& u)
   {
     FPType ang = u.norm();
-    if (ang < eps_)
+    const FPType ang_p2 = ang * ang;
+    FPType c;
+    FPType d;
+    if (ang < 1.0e-4)
     {
-      return 0.5 * TMatrixType::Identity() - 1 / 6 * wedge(u);
+      const FPType ang_p4 = ang_p2 * ang_p2;
+      c = 0.5 - ang_p2 / 24.0 + ang_p4 / 720.0;
+      d = 1.0 / 24.0 - ang_p2 / 720.0 + ang_p4 / 40320.0;
     }
-    VectorType ax = u / ang;
-    FPType ang_p2 = pow(ang, 2);
-    FPType s = (ang - sin(ang)) / ang_p2;
-    FPType c = (1 - cos(ang)) / ang_p2;
-    return c * TMatrixType::Identity() + s * wedge(ax) + (0.5 - c) * ax * ax.transpose();
+    else
+    {
+      // 2 sin^2(theta/2) avoids cancellation in 1-cos(theta) for small
+      // angles while retaining the closed form for normal rotations.
+      const FPType sin_half = sin(0.5 * ang);
+      c = 2.0 * sin_half * sin_half / ang_p2;
+      d = (0.5 - c) / ang_p2;
+    }
+    const FPType b = ang < 1.0e-4
+        ? 1.0 / 6.0 - ang_p2 / 120.0 + ang_p2 * ang_p2 / 5040.0
+        : (ang - sin(ang)) / (ang_p2 * ang);
+    return c * TMatrixType::Identity() + b * wedge(u) + d * u * u.transpose();
   }
 
   /**
