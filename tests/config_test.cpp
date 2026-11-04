@@ -275,7 +275,9 @@ void testTrajectoryOutputPath() {
         validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]")
             + "[output]\n"
               "trajectory_dir = \"/tmp/estimates\"\n"
-              "trajectory_file = \"sapphire/S3E_Dormitory_1/alpha.tum\"\n");
+              "trajectory_file = \"sapphire/S3E_Dormitory_1/alpha.tum\"\n"
+              "[pgo]\n"
+              "enabled = true\n");
     const auto config = sapphire::loadConfig(path);
     std::filesystem::remove(path);
     expect(config.output.trajectory_dir == "/tmp/estimates",
@@ -288,6 +290,49 @@ void testTrajectoryOutputPath() {
             == std::filesystem::path(
                 "/tmp/estimates/sapphire/S3E_Dormitory_1/alpha.tum"),
         "TUM path joins the configured directory and file");
+}
+
+void testTrajectoryPathRequiresPgo() {
+    const auto path = writeConfig(
+        "sapphire_config_trajectory_without_pgo.toml",
+        validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]")
+            + "[output]\n"
+              "trajectory_dir = \"/tmp/estimates\"\n"
+              "[pgo]\n"
+              "enabled = false\n");
+    bool threw = false;
+    std::string message;
+    try {
+        (void)sapphire::loadConfig(path);
+    } catch (const std::invalid_argument& error) {
+        threw = true;
+        message = error.what();
+    }
+    std::filesystem::remove(path);
+    expect(threw,
+           "trajectory_dir with pgo.enabled = false must be rejected");
+    expect(message.find("trajectory_dir") != std::string::npos
+               && message.find("pgo.enabled") != std::string::npos,
+           "the rejection must name trajectory_dir and pgo.enabled");
+}
+
+void testShippedProfilesLoad() {
+    const std::filesystem::path cfg =
+        std::filesystem::path(SAPPHIRE_SOURCE_DIR) / "cfg";
+    int count = 0;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(cfg)) {
+        if (entry.path().extension() != ".toml") {
+            continue;
+        }
+        try {
+            (void)sapphire::loadConfig(entry.path());
+        } catch (const std::exception& error) {
+            fail(entry.path().filename().string() + ": " + error.what());
+        }
+        ++count;
+    }
+    expect(count == 8, "every shipped profile must load");
 }
 
 void testTrajectoryFileMustStayRelative() {
@@ -328,6 +373,8 @@ int main() {
     testExplicitAccelUnit();
     testInvalidAccelUnitRejected();
     testTrajectoryOutputPath();
+    testTrajectoryPathRequiresPgo();
+    testShippedProfilesLoad();
     testTrajectoryFileMustStayRelative();
     testProjectConfig();
     testQuaternionNormalization();

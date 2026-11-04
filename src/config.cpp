@@ -867,6 +867,12 @@ void validateConfig(const Config& config) {
         "sensor.imu.accel_unit",
         {"auto", "g", "m_s2"});
     requireRelativeTrajectoryFile(config.output.trajectory_file);
+    if (!config.pgo.enabled && !trajectoryOutputPath(config).empty()) {
+        throw std::invalid_argument(
+            "output.trajectory_dir is set but pgo.enabled is false; "
+            "the TUM dump is the pose-graph map trajectory and stays empty "
+            "unless PGO is enabled");
+    }
 
     const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;
     if (!extrinsic.matrix().allFinite()) {

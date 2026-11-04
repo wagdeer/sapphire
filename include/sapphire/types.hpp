@@ -320,9 +320,10 @@ struct Config {
     } sensor;
 
     /// Optional TUM dump written once when the ROS node exits.
-    /// An empty trajectory_dir disables it. trajectory_file is relative to
-    /// that directory and may include dataset folders, for example
-    /// "sapphire/S3E_Dormitory_1/alpha.tum".
+    /// An empty trajectory_dir disables it. The file is the pose-graph map
+    /// trajectory, so a non-empty trajectory_dir requires pgo.enabled.
+    /// trajectory_file is relative to that directory and may include dataset
+    /// folders, for example "sapphire/S3E_Dormitory_1/alpha.tum".
     struct Output {
         std::string trajectory_dir;
         std::string trajectory_file = "trajectory.tum";

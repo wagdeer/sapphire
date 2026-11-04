@@ -34,6 +34,12 @@ The TUM file is written once, on a normal shutdown. After the bag ends, stop
 the launch process with Ctrl-C. `kill -9` and stopping the container do not
 flush the file.
 
+That file is the pose-graph map trajectory, not the frontend odometry. Every
+profile in the table at the bottom of this page sets `pgo.enabled = true`.
+A profile that sets `output.trajectory_dir` while `pgo.enabled` is false is
+rejected at load. `trajectory_output` only replaces the path. It does not
+enable PGO, and with PGO disabled shutdown creates no trajectory file.
+
 Give each robot its own output directory. The examples below put the robot
 name in the path so Alpha, Bob, and Carol do not overwrite one another.
 
