@@ -136,11 +136,62 @@ void testEmptyTrajectoryCreatesNoFile() {
     expect(!std::filesystem::exists(path), "empty trajectory creates no file");
 }
 
+void testSaveStatusKeepsEmptyAndUnconfiguredSuccessful() {
+    const auto unconfigured = sapphire::saveMapTrajectory({}, {});
+    expect(
+        unconfigured.status == sapphire::TrajectorySaveStatus::NotConfigured,
+        "an empty output path is not configured");
+    expect(
+        sapphire::trajectorySaveSucceeded(unconfigured.status),
+        "an unconfigured trajectory output is successful");
+    expect(unconfigured.error.empty(), "an unconfigured save has no error");
+
+    const auto path =
+        std::filesystem::temp_directory_path() / "sapphire_tum_save_empty.tum";
+    std::filesystem::remove(path);
+    const auto empty = sapphire::saveMapTrajectory(path, {});
+    expect(
+        empty.status == sapphire::TrajectorySaveStatus::Empty,
+        "a configured empty trajectory is empty, not an I/O failure");
+    expect(
+        sapphire::trajectorySaveSucceeded(empty.status),
+        "an empty trajectory does not fail the process");
+    expect(!std::filesystem::exists(path), "an empty save creates no file");
+    expect(empty.error.empty(), "an empty save has no error");
+}
+
+void testSaveStatusReportsIoFailure() {
+    const auto blocked =
+        std::filesystem::temp_directory_path() / "sapphire_tum_not_a_directory";
+    std::filesystem::remove_all(blocked);
+    {
+        std::ofstream stream(blocked);
+        expect(static_cast<bool>(stream), "unable to create blocking file");
+        stream << "not a directory\n";
+    }
+    const auto path = blocked / "trajectory.tum";
+
+    sapphire::MapTrajectory trajectory;
+    trajectory.samples.push_back(sampleAt(
+        1.0, Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity()));
+    const auto report = sapphire::saveMapTrajectory(path, trajectory);
+    expect(
+        report.status == sapphire::TrajectorySaveStatus::IoFailure,
+        "a trajectory path under a file is an I/O failure");
+    expect(
+        !sapphire::trajectorySaveSucceeded(report.status),
+        "an I/O failure must fail the process");
+    expect(!report.error.empty(), "an I/O failure keeps the error text");
+    std::filesystem::remove_all(blocked);
+}
+
 }  // namespace
 
 int main() {
     testStandardQuaternionOrder();
     testEmptyTrajectoryCreatesNoFile();
+    testSaveStatusKeepsEmptyAndUnconfiguredSuccessful();
+    testSaveStatusReportsIoFailure();
     std::cout << "All TUM tests passed\n";
     return EXIT_SUCCESS;
 }

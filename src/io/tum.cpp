@@ -3,6 +3,7 @@
 #include <Eigen/Geometry>
 
 #include <cmath>
+#include <exception>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -102,6 +103,28 @@ TumWriteResult writeTumTrajectory(
             + "': " + error.message());
     }
     return result;
+}
+
+TrajectorySaveReport saveMapTrajectory(
+    const std::filesystem::path& path,
+    const MapTrajectory& trajectory)
+{
+    TrajectorySaveReport report;
+    if (path.empty()) {
+        report.status = TrajectorySaveStatus::NotConfigured;
+        return report;
+    }
+
+    try {
+        report.result = writeTumTrajectory(path, trajectory);
+        report.status = report.result.written == 0
+            ? TrajectorySaveStatus::Empty
+            : TrajectorySaveStatus::Written;
+    } catch (const std::exception& error) {
+        report.status = TrajectorySaveStatus::IoFailure;
+        report.error = error.what();
+    }
+    return report;
 }
 
 }  // namespace sapphire
