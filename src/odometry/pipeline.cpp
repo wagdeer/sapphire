@@ -261,12 +261,10 @@ void OdometryPipeline::propagateStateLocked(const ImuData& imu) {
     recoverPropagatedStateLocked(imu.stamp);
 }
 
-void OdometryPipeline::rebasePropagation(
-    const NavigationState& corrected_state,
+void OdometryPipeline::shiftImuBiasLocked(
     const Eigen::Vector3d& accel_bias,
     const Eigen::Vector3d& gyro_bias)
 {
-    std::scoped_lock lock(imu_mutex_, state_mutex_);
     // Buffered samples were corrected with the previous bias. Shift them to
     // the new linearization before replaying from the LiDAR reference time.
     const Eigen::Vector3d accel_correction = accel_bias_ - accel_bias;
@@ -277,23 +275,48 @@ void OdometryPipeline::rebasePropagation(
     }
     accel_bias_ = accel_bias;
     gyro_bias_ = gyro_bias;
+}
+
+void OdometryPipeline::commitEskfBaselineLocked(
+    const NavigationState& state,
+    const Eigen::Vector3d& accel_bias,
+    const Eigen::Vector3d& gyro_bias,
+    const Eskf::Mat15& covariance)
+{
+    // Copy before touching the filter. Callers pass tipCovariance(), which
+    // aliases the covariance setBaseline is about to replace.
+    const Eskf::Mat15 committed_covariance = covariance;
+    shiftImuBiasLocked(accel_bias, gyro_bias);
+    imu_state_ = state;
+    eskf_.setBaseline(
+        state, accel_bias_, gyro_bias_, committed_covariance);
+    eskf_.replayToLatest(imu_buffer_);
+    propagated_state_ = eskf_.tipState();
+    has_first_scan_.store(true, std::memory_order_release);
+}
+
+void OdometryPipeline::rebasePropagation(
+    const NavigationState& corrected_state,
+    const Eigen::Vector3d& accel_bias,
+    const Eigen::Vector3d& gyro_bias)
+{
+    std::scoped_lock lock(imu_mutex_, state_mutex_);
+    shiftImuBiasLocked(accel_bias, gyro_bias);
 
     imu_state_ = corrected_state;
     propagated_state_ = corrected_state;
     has_first_scan_.store(true, std::memory_order_release);
 
     if (useEskf()) {
-        if (!eskf_.initialized()) {
-            eskf_.initialize(
-                corrected_state, accel_bias_, gyro_bias_);
-        } else {
-            // Preserve posterior covariance installed by correctAt / initialize.
-            eskf_.setBaseline(
-                corrected_state,
-                accel_bias_,
-                gyro_bias_,
-                eskf_.baselineCovariance());
+        // Only the first scan reaches this branch, and it has not initialized
+        // the filter yet. Later scans commit tipCovariance() from
+        // processLidarScan; baselineCovariance() is not that posterior.
+        if (eskf_.initialized()) {
+            throw std::logic_error(
+                "OdometryPipeline::rebasePropagation called after ESKF "
+                "initialization; commit the tip posterior instead");
         }
+        eskf_.initialize(corrected_state, accel_bias_, gyro_bias_);
         eskf_.replayToLatest(imu_buffer_);
         propagated_state_ = eskf_.tipState();
         return;
@@ -476,16 +499,6 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
     const Isometry3d T_world_imu_corrected =
         artifacts.result.T_world_lidar
         * config_.extrinsics.T_imu_lidar.inverse();
-    Eigen::Vector3d accel_bias;
-    Eigen::Vector3d gyro_bias;
-    double previous_state_stamp = 0.0;
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        previous_state_stamp = imu_state_.stamp;
-        accel_bias = accel_bias_;
-        gyro_bias = gyro_bias_;
-    }
-
     NavigationState prior_state;
     prior_state.stamp = deskewed.reference_stamp;
     prior_state.T_world_imu = T_world_imu_prior;
@@ -506,9 +519,12 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
         // cannot interleave predicts against a mid-update filter.
         {
             std::scoped_lock lock(imu_mutex_, state_mutex_);
+            // The first scan initializes ESKF before has_first_scan_ is set,
+            // and pushLidar only reaches this function after that flag.
             if (!eskf_.initialized()) {
-                eskf_.initialize(
-                    imu_state_, accel_bias_, gyro_bias_);
+                throw std::logic_error(
+                    "OdometryPipeline::processLidarScan called before ESKF "
+                    "initialization");
             }
             const EskfUpdate eskf_update = eskf_.correctAt(
                 deskewed.reference_stamp,
@@ -521,30 +537,22 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
             fused_accel_bias = eskf_update.accel_bias;
             fused_gyro_bias = eskf_update.gyro_bias;
             fusion_accepted = eskf_update.accepted;
-
-            const Eigen::Vector3d accel_correction =
-                accel_bias_ - fused_accel_bias;
-            const Eigen::Vector3d gyro_correction =
-                gyro_bias_ - fused_gyro_bias;
-            for (ImuData& imu : imu_buffer_) {
-                imu.accel += accel_correction;
-                imu.gyro += gyro_correction;
-            }
-            accel_bias_ = fused_accel_bias;
-            gyro_bias_ = fused_gyro_bias;
-            imu_state_ = fused_state;
-            // Commit baseline only after the buffer has been bias-adjusted.
-            eskf_.setBaseline(
+            commitEskfBaselineLocked(
                 fused_state,
-                accel_bias_,
-                gyro_bias_,
+                fused_accel_bias,
+                fused_gyro_bias,
                 eskf_.tipCovariance());
-            eskf_.replayToLatest(imu_buffer_);
-            propagated_state_ = eskf_.tipState();
-            has_first_scan_.store(true, std::memory_order_release);
         }
-        (void)previous_state_stamp;
     } else {
+        Eigen::Vector3d accel_bias;
+        Eigen::Vector3d gyro_bias;
+        double previous_state_stamp = 0.0;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            previous_state_stamp = imu_state_.stamp;
+            accel_bias = accel_bias_;
+            gyro_bias = gyro_bias_;
+        }
         const ObserverUpdate observer_update = applyGeometricObserver(
             prior_state,
             T_world_imu_corrected,

@@ -139,7 +139,31 @@ private:
     /// state_mutex_ must be held by the caller.
     void propagateStateLocked(const ImuData& imu);
 
-    /// Replace the corrected LiDAR baseline and replay newer buffered IMU data.
+    /// Shift buffered IMU samples from the previous bias onto `accel_bias`
+    /// and `gyro_bias`. imu_mutex_ and state_mutex_ must be held.
+    void shiftImuBiasLocked(
+        const Eigen::Vector3d& accel_bias,
+        const Eigen::Vector3d& gyro_bias);
+
+    /// Shift the IMU buffer onto the new bias, commit `state` as the ESKF
+    /// baseline with the caller-supplied covariance, and replay to the tip.
+    /// imu_mutex_ and state_mutex_ must be held.
+    ///
+    /// `correctAt` leaves the reference posterior in the tip and does not
+    /// commit the baseline. The LiDAR update therefore passes tipCovariance()
+    /// after that call. This is the only ESKF baseline commit after the
+    /// first scan.
+    void commitEskfBaselineLocked(
+        const NavigationState& state,
+        const Eigen::Vector3d& accel_bias,
+        const Eigen::Vector3d& gyro_bias,
+        const Eskf::Mat15& covariance);
+
+    /// Install a corrected baseline and replay buffered IMU.
+    ///
+    /// Used by the first LiDAR scan and by later observer updates. An
+    /// already-initialized ESKF is not committed here; that posterior goes
+    /// through commitEskfBaselineLocked.
     void rebasePropagation(
         const NavigationState& corrected_state,
         const Eigen::Vector3d& accel_bias,
