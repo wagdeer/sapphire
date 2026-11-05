@@ -19,7 +19,6 @@ ATE 是时间关联和 SE(3) Umeyama 对齐之后的位置误差 RMSE，不做�
   like-for-like 汇总继续使用与旧基线相同的 10 条、103 个控制点。
   `exp10` 本次已达到 14/14，但 ATE 为 1.956 m，因此另列当前全部完整结果
   （11 条、117 个控制点）。`exp15`、`exp18`、`exp21`、`exp23` 没有回放。
-  `exp03` 的当前配置两次结果为 0.1317 m 和 0.1333 m。
 - HILTI 2023：只含 Site 1 手持 1–5。Site 2 也评过，列在表后，不进入 0.058 m
   这个均值。
 - S3E：逐序列表中的 18 条，包含 Campus Road 3 的 Bob。Laboratory 1–4 只有
@@ -63,27 +62,6 @@ SE(3) 对齐前从 IMU 坐标系转换到测量端点。
 | HILTI 2022 | exp18_corridor_lower_gallery_2 | reference | — | — | 稀疏 ATE | — | 未评估 |
 | HILTI 2022 | exp21_outside_building | reference | — | — | 稀疏 ATE | — | 未评估 |
 | HILTI 2022 | exp23_the_sheldonian_slam | reference | — | — | 稀疏 ATE | — | 未评估 |
-
-### HILTI 2022 ESKF 消融
-
-生产 profile 保留了 directional pose 注入和基于位置创新的速度观察器。
-改用普通 Kalman pose 行后，两条代表序列都显著退化。
-
-| 序列 | Directional gain 8 | Directional gain 0 | Kalman pose gain 8 | Kalman pose gain 0 |
-|---|---:|---:|---:|---:|
-| `exp03_construction_stairs` | 0.132 m | **0.086 / 0.104 m** | 0.645 m | 35.3% GT 覆盖 |
-| `exp07_long_corridor` | **0.118 m** | 0.165 m | 0.957 m | 7.835 m |
-
-保留 directional pose 后的速度增益扫描：
-
-| 序列 | gain 0 | gain 2 | gain 4 | gain 6 | gain 8 |
-|---|---:|---:|---:|---:|---:|
-| `exp03_construction_stairs` | **0.086 / 0.104 m** | 29.4% 覆盖，两次 | 0.153 m | 0.160 m | 0.132 m |
-| `exp07_long_corridor` | 0.165 m | 0.219 m | 0.156 m | 0.127 m | **0.118 m** |
-
-`exp09_cupola` 在 gain 8 下完整，ATE 为 1.239 m；gain 0 会丢失跟踪，
-仅覆盖 37.5%。gain 2 两次都在约 69 s 后稳定失败。详细实验、日志、
-轨迹和 NIS 讨论位于工作区 `docs/gal3-experiments-2026-11-05/`。
 | HILTI 2023 | Site 1 · Handheld 1 | reference | 81.32 m | 205.5 | 稀疏 ATE | 0.030 | 完整 |
 | HILTI 2023 | Site 1 · Handheld 2 | reference | 84.39 m | 163.9 | 稀疏 ATE | 0.052 | 完整 |
 | HILTI 2023 | Site 1 · Handheld 3 | reference | 81.89 m | 165.2 | 稀疏 ATE | 0.108 | 完整 |

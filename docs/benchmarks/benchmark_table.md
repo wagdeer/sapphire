@@ -25,7 +25,6 @@ What enters the summary:
   `exp10` is now complete at 14/14 points but has a large 1.956 m ATE, so the
   all-complete aggregate uses 11 runs and 117 points and is reported
   separately. `exp15`, `exp18`, `exp21`, and `exp23` were not replayed.
-  `exp03` has two stable current-profile runs at 0.1317 and 0.1333 m.
 - HILTI 2023: Site 1 handheld 1–5 only. Site 2 was also evaluated and is
   listed after the table. It is not in the 0.058 m mean.
 - S3E: the 18 runs in the per-sequence table, including Campus Road 3 Bob.
@@ -74,29 +73,6 @@ measurement tip before alignment.
 | HILTI 2022 | exp18_corridor_lower_gallery_2 | reference | — | — | sparse ATE | — | not evaluated |
 | HILTI 2022 | exp21_outside_building | reference | — | — | sparse ATE | — | not evaluated |
 | HILTI 2022 | exp23_the_sheldonian_slam | reference | — | — | sparse ATE | — | not evaluated |
-
-### HILTI 2022 ESKF ablation
-
-The production profile keeps directional pose injection and a position-based
-velocity observer. Replacing its pose gain with ordinary Kalman pose rows
-degrades both representative sequences substantially.
-
-| Sequence | Directional gain 8 | Directional gain 0 | Kalman pose gain 8 | Kalman pose gain 0 |
-|---|---:|---:|---:|---:|
-| `exp03_construction_stairs` | 0.132 m | **0.086 / 0.104 m** | 0.645 m | 35.3% GT coverage |
-| `exp07_long_corridor` | **0.118 m** | 0.165 m | 0.957 m | 7.835 m |
-
-With directional pose retained, the velocity-gain sweep is:
-
-| Sequence | gain 0 | gain 2 | gain 4 | gain 6 | gain 8 |
-|---|---:|---:|---:|---:|---:|
-| `exp03_construction_stairs` | **0.086 / 0.104 m** | 29.4% coverage, twice | 0.153 m | 0.160 m | 0.132 m |
-| `exp07_long_corridor` | 0.165 m | 0.219 m | 0.156 m | 0.127 m | **0.118 m** |
-
-`exp09_cupola` remains complete at 1.239 m with gain 8, while gain 0 loses
-tracking and reaches only 37.5% coverage. Gain 2 reproducibly fails at about
-69 s in both runs. The detailed experiment, logs, plots, and NIS discussion
-are in `docs/gal3-experiments-2026-11-05/` in the workspace.
 | HILTI 2023 | Site 1 · Handheld 1 | reference | 81.32 m | 205.5 | sparse ATE | 0.030 | complete |
 | HILTI 2023 | Site 1 · Handheld 2 | reference | 84.39 m | 163.9 | sparse ATE | 0.052 | complete |
 | HILTI 2023 | Site 1 · Handheld 3 | reference | 81.89 m | 165.2 | sparse ATE | 0.108 | complete |
