@@ -18,13 +18,14 @@ Two association settings are in use, so the datasets are not one protocol:
 
 What enters the summary:
 
-- HILTI 2022: the 10 runs whose control points are all matched, 103 points in
-  total. `exp10` and `exp16` lost tracking and stay in the table as partial
-  runs; they are not in the mean, the median, or the 103-point total.
-  `exp15`, `exp18`, `exp21`, and `exp23` were not replayed. `exp03` and
-  `exp11` are repeated full runs. Earlier batch trajectories, 2.021 m and
-  0.437 m, are not the published values. `exp09` at 1.810 m is why the mean
-  sits well above the median.
+- HILTI 2022: the current rerun completes 11 of the 12 downloaded sequences;
+  `exp16` remains partial at 7/9 control points. The like-for-like summary
+  uses the same 10 runs and 103 control points as the previous baseline so
+  that the comparison is not changed by newly recovered `exp10` coverage.
+  `exp10` is now complete at 14/14 points but has a large 1.956 m ATE, so the
+  all-complete aggregate uses 11 runs and 117 points and is reported
+  separately. `exp15`, `exp18`, `exp21`, and `exp23` were not replayed.
+  `exp03` has two stable current-profile runs at 0.1317 and 0.1333 m.
 - HILTI 2023: Site 1 handheld 1–5 only. Site 2 was also evaluated and is
   listed after the table. It is not in the 0.058 m mean.
 - S3E: the 18 runs in the per-sequence table, including Campus Road 3 Bob.
@@ -43,7 +44,8 @@ What enters the summary:
 
 | Dataset | Included runs | Included GT coverage | Mean ATE (m) | Median ATE (m) |
 |---|---:|---:|---:|---:|
-| HILTI 2022 | 10 | 103 control points | 0.260 | 0.082 |
+| HILTI 2022 · like-for-like | 10 | 103 control points | 0.197 | 0.077 |
+| HILTI 2022 · current all-complete | 11 | 117 control points | 0.357 | 0.093 |
 | HILTI 2023 Site 1 handheld | 5 | 346.4 m control path | 0.058 | 0.052 |
 | S3E | 18 | 11.39 km | 1.29 | 1.11 |
 | Newer College 2020 | 5 | 5.94 km | 0.2639 | 0.1609 |
@@ -57,21 +59,44 @@ measurement tip before alignment.
 | Dataset | Sequence | Agent | GT coverage | Estimated travel (m) | Metric | ATE RMSE (m) | Status |
 |---|---|---:|---:|---:|---|---:|---|
 | HILTI 2022 | exp01_construction_ground_level | reference | 13/13 | — | sparse ATE | 0.016 | complete |
-| HILTI 2022 | exp02_construction_multilevel | reference | 22/22 | — | sparse ATE | 0.098 | complete |
-| HILTI 2022 | exp03_construction_stairs | reference | 17/17 | — | sparse ATE | 0.113 | complete |
+| HILTI 2022 | exp02_construction_multilevel | reference | 22/22 | — | sparse ATE | 0.093 | complete |
+| HILTI 2022 | exp03_construction_stairs | reference | 17/17 | — | sparse ATE | 0.132 | complete |
 | HILTI 2022 | exp04_construction_upper_level | reference | 7/7 | — | sparse ATE | 0.031 | complete |
 | HILTI 2022 | exp05_construction_upper_level_2 | reference | 6/6 | — | sparse ATE | 0.019 | complete |
-| HILTI 2022 | exp06_construction_upper_level_3 | reference | 7/7 | — | sparse ATE | 0.033 | complete |
-| HILTI 2022 | exp07_long_corridor | reference | 6/6 | — | sparse ATE | 0.114 | complete |
-| HILTI 2022 | exp09_cupola | reference | 16/16 | — | sparse ATE | 1.810 | complete |
-| HILTI 2022 | exp10_cupola_2 | reference | 3/14 | — | sparse ATE | 0.095 | partial |
-| HILTI 2022 | exp11_lower_gallery | reference | 5/5 | — | sparse ATE | 0.296 | complete |
-| HILTI 2022 | exp14_basement_2 | reference | 4/4 | — | sparse ATE | 0.066 | complete |
+| HILTI 2022 | exp06_construction_upper_level_3 | reference | 7/7 | — | sparse ATE | 0.036 | complete |
+| HILTI 2022 | exp07_long_corridor | reference | 6/6 | — | sparse ATE | 0.118 | complete |
+| HILTI 2022 | exp09_cupola | reference | 16/16 | — | sparse ATE | 1.239 | complete |
+| HILTI 2022 | exp10_cupola_2 | reference | 14/14 | — | sparse ATE | 1.956 | complete |
+| HILTI 2022 | exp11_lower_gallery | reference | 5/5 | — | sparse ATE | 0.229 | complete |
+| HILTI 2022 | exp14_basement_2 | reference | 4/4 | — | sparse ATE | 0.060 | complete |
 | HILTI 2022 | exp15_attic_to_upper_gallery | reference | — | — | sparse ATE | — | not evaluated |
-| HILTI 2022 | exp16_attic_to_upper_gallery_2 | reference | 7/9 | — | sparse ATE | 0.320 | partial |
+| HILTI 2022 | exp16_attic_to_upper_gallery_2 | reference | 7/9 | — | sparse ATE | 0.304 | partial |
 | HILTI 2022 | exp18_corridor_lower_gallery_2 | reference | — | — | sparse ATE | — | not evaluated |
 | HILTI 2022 | exp21_outside_building | reference | — | — | sparse ATE | — | not evaluated |
 | HILTI 2022 | exp23_the_sheldonian_slam | reference | — | — | sparse ATE | — | not evaluated |
+
+### HILTI 2022 ESKF ablation
+
+The production profile keeps directional pose injection and a position-based
+velocity observer. Replacing its pose gain with ordinary Kalman pose rows
+degrades both representative sequences substantially.
+
+| Sequence | Directional gain 8 | Directional gain 0 | Kalman pose gain 8 | Kalman pose gain 0 |
+|---|---:|---:|---:|---:|
+| `exp03_construction_stairs` | 0.132 m | **0.086 / 0.104 m** | 0.645 m | 35.3% GT coverage |
+| `exp07_long_corridor` | **0.118 m** | 0.165 m | 0.957 m | 7.835 m |
+
+With directional pose retained, the velocity-gain sweep is:
+
+| Sequence | gain 0 | gain 2 | gain 4 | gain 6 | gain 8 |
+|---|---:|---:|---:|---:|---:|
+| `exp03_construction_stairs` | **0.086 / 0.104 m** | 29.4% coverage, twice | 0.153 m | 0.160 m | 0.132 m |
+| `exp07_long_corridor` | 0.165 m | 0.219 m | 0.156 m | 0.127 m | **0.118 m** |
+
+`exp09_cupola` remains complete at 1.239 m with gain 8, while gain 0 loses
+tracking and reaches only 37.5% coverage. Gain 2 reproducibly fails at about
+69 s in both runs. The detailed experiment, logs, plots, and NIS discussion
+are in `docs/gal3-experiments-2026-11-05/` in the workspace.
 | HILTI 2023 | Site 1 · Handheld 1 | reference | 81.32 m | 205.5 | sparse ATE | 0.030 | complete |
 | HILTI 2023 | Site 1 · Handheld 2 | reference | 84.39 m | 163.9 | sparse ATE | 0.052 | complete |
 | HILTI 2023 | Site 1 · Handheld 3 | reference | 81.89 m | 165.2 | sparse ATE | 0.108 | complete |
@@ -138,7 +163,7 @@ and crosses mark the controls.
 | ![HILTI 2022 · exp03 construction stairs](trajectories/hilti_2022_exp03_construction_stairs.png) | ![HILTI 2022 · exp04 construction upper level](trajectories/hilti_2022_exp04_construction_upper_level.png) |
 | ![HILTI 2022 · exp05 construction upper level 2](trajectories/hilti_2022_exp05_construction_upper_level_2.png) | ![HILTI 2022 · exp06 construction upper level 3](trajectories/hilti_2022_exp06_construction_upper_level_3.png) |
 | ![HILTI 2022 · exp07 long corridor](trajectories/hilti_2022_exp07_long_corridor.png) | ![HILTI 2022 · exp09 cupola](trajectories/hilti_2022_exp09_cupola.png) |
-| ![HILTI 2022 · exp10 cupola 2 partial](trajectories/hilti_2022_exp10_cupola_2.png) | ![HILTI 2022 · exp11 lower gallery](trajectories/hilti_2022_exp11_lower_gallery.png) |
+| ![HILTI 2022 · exp10 cupola 2 recovered full coverage](trajectories/hilti_2022_exp10_cupola_2.png) | ![HILTI 2022 · exp11 lower gallery](trajectories/hilti_2022_exp11_lower_gallery.png) |
 | ![HILTI 2022 · exp14 basement 2](trajectories/hilti_2022_exp14_basement_2.png) | ![HILTI 2022 · exp16 attic to upper gallery 2 partial](trajectories/hilti_2022_exp16_attic_to_upper_gallery_2.png) |
 
 ### HILTI 2023

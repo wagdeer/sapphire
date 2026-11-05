@@ -35,7 +35,7 @@ distance.
 
 | Dataset | Runs in the mean | What the coverage column counts | Mean ATE | Median ATE |
 |---|---:|---|---:|---:|
-| HILTI 2022 | 10 complete | 103 matched control points | 0.260 m | 0.082 m |
+| HILTI 2022 · like-for-like | 10 complete | 103 matched control points | 0.197 m | 0.077 m |
 | HILTI 2023 Site 1 handheld | 5 | 346.4 m of control-point polylines | 0.058 m | 0.052 m |
 | S3E | 18 | 11.39 km of ground-truth path | 1.29 m | 1.11 m |
 | Newer College 2020 | 5 | 5.94 km of ground-truth path | 0.2639 m | 0.1609 m |
@@ -44,6 +44,11 @@ HILTI uses sparse control points and a 2 s association window. S3E and Newer
 College use a 0.1 s window. Partial runs, sequences that were not replayed,
 and runs withheld from the mean are listed on the benchmark page and are not
 folded into this table.
+
+The HILTI 2022 row keeps the same 10 runs as the previous baseline. The
+current rerun completes 11 runs after recovering `exp10`, but its larger
+1.956 m error makes the all-complete aggregate 0.357 m / 0.093 m; both
+aggregates are documented on the benchmark page.
 [Per-sequence results and trajectory plots](docs/benchmarks/benchmark_table.md).
 
 ## Build

@@ -14,11 +14,12 @@ ATE 是时间关联和 SE(3) Umeyama 对齐之后的位置误差 RMSE，不做�
 
 汇总纳入规则：
 
-- HILTI 2022：控制点全部匹配上的 10 条，合计 103 个点。`exp10` 和 `exp16`
-  中途丢失跟踪，表中保留为部分覆盖，不进入均值、中位数和这 103 个点。
-  `exp15`、`exp18`、`exp21`、`exp23` 没有回放。`exp03` 和 `exp11` 是完整重跑；
-  更早的批量轨迹 2.021 m 和 0.437 m 不是这里公布的数字。`exp09` 的 1.810 m
-  把均值拉到了明显高于中位数的位置。
+- HILTI 2022：当前重跑在 12 条已下载序列中完成 11 条，`exp16` 仍为
+  7/9 控制点的部分覆盖。为了不因 `exp10` 新恢复覆盖而改变统计集合，
+  like-for-like 汇总继续使用与旧基线相同的 10 条、103 个控制点。
+  `exp10` 本次已达到 14/14，但 ATE 为 1.956 m，因此另列当前全部完整结果
+  （11 条、117 个控制点）。`exp15`、`exp18`、`exp21`、`exp23` 没有回放。
+  `exp03` 的当前配置两次结果为 0.1317 m 和 0.1333 m。
 - HILTI 2023：只含 Site 1 手持 1–5。Site 2 也评过，列在表后，不进入 0.058 m
   这个均值。
 - S3E：逐序列表中的 18 条，包含 Campus Road 3 的 Bob。Laboratory 1–4 只有
@@ -33,7 +34,8 @@ ATE 是时间关联和 SE(3) Umeyama 对齐之后的位置误差 RMSE，不做�
 
 | 数据集 | 纳入轨迹 | 纳入 GT 覆盖 | 平均 ATE (m) | ATE 中位数 (m) |
 |---|---:|---:|---:|---:|
-| HILTI 2022 | 10 | 103 个控制点 | 0.260 | 0.082 |
+| HILTI 2022 · like-for-like | 10 | 103 个控制点 | 0.197 | 0.077 |
+| HILTI 2022 · 当前全部完整 | 11 | 117 个控制点 | 0.357 | 0.093 |
 | HILTI 2023 Site 1 手持 | 5 | 346.4 m 控制点路径 | 0.058 | 0.052 |
 | S3E | 18 | 11.39 km | 1.29 | 1.11 |
 | Newer College 2020 | 5 | 5.94 km | 0.2639 | 0.1609 |
@@ -46,21 +48,42 @@ SE(3) 对齐前从 IMU 坐标系转换到测量端点。
 | 数据集 | 序列 | 机器人 | GT 覆盖 | 估计轨迹长度 (m) | 指标 | ATE RMSE (m) | 状态 |
 |---|---|---:|---:|---:|---|---:|---|
 | HILTI 2022 | exp01_construction_ground_level | reference | 13/13 | — | 稀疏 ATE | 0.016 | 完整 |
-| HILTI 2022 | exp02_construction_multilevel | reference | 22/22 | — | 稀疏 ATE | 0.098 | 完整 |
-| HILTI 2022 | exp03_construction_stairs | reference | 17/17 | — | 稀疏 ATE | 0.113 | 完整 |
+| HILTI 2022 | exp02_construction_multilevel | reference | 22/22 | — | 稀疏 ATE | 0.093 | 完整 |
+| HILTI 2022 | exp03_construction_stairs | reference | 17/17 | — | 稀疏 ATE | 0.132 | 完整 |
 | HILTI 2022 | exp04_construction_upper_level | reference | 7/7 | — | 稀疏 ATE | 0.031 | 完整 |
 | HILTI 2022 | exp05_construction_upper_level_2 | reference | 6/6 | — | 稀疏 ATE | 0.019 | 完整 |
-| HILTI 2022 | exp06_construction_upper_level_3 | reference | 7/7 | — | 稀疏 ATE | 0.033 | 完整 |
-| HILTI 2022 | exp07_long_corridor | reference | 6/6 | — | 稀疏 ATE | 0.114 | 完整 |
-| HILTI 2022 | exp09_cupola | reference | 16/16 | — | 稀疏 ATE | 1.810 | 完整 |
-| HILTI 2022 | exp10_cupola_2 | reference | 3/14 | — | 稀疏 ATE | 0.095 | 部分覆盖 |
-| HILTI 2022 | exp11_lower_gallery | reference | 5/5 | — | 稀疏 ATE | 0.296 | 完整 |
-| HILTI 2022 | exp14_basement_2 | reference | 4/4 | — | 稀疏 ATE | 0.066 | 完整 |
+| HILTI 2022 | exp06_construction_upper_level_3 | reference | 7/7 | — | 稀疏 ATE | 0.036 | 完整 |
+| HILTI 2022 | exp07_long_corridor | reference | 6/6 | — | 稀疏 ATE | 0.118 | 完整 |
+| HILTI 2022 | exp09_cupola | reference | 16/16 | — | 稀疏 ATE | 1.239 | 完整 |
+| HILTI 2022 | exp10_cupola_2 | reference | 14/14 | — | 稀疏 ATE | 1.956 | 完整 |
+| HILTI 2022 | exp11_lower_gallery | reference | 5/5 | — | 稀疏 ATE | 0.229 | 完整 |
+| HILTI 2022 | exp14_basement_2 | reference | 4/4 | — | 稀疏 ATE | 0.060 | 完整 |
 | HILTI 2022 | exp15_attic_to_upper_gallery | reference | — | — | 稀疏 ATE | — | 未评估 |
-| HILTI 2022 | exp16_attic_to_upper_gallery_2 | reference | 7/9 | — | 稀疏 ATE | 0.320 | 部分覆盖 |
+| HILTI 2022 | exp16_attic_to_upper_gallery_2 | reference | 7/9 | — | 稀疏 ATE | 0.304 | 部分覆盖 |
 | HILTI 2022 | exp18_corridor_lower_gallery_2 | reference | — | — | 稀疏 ATE | — | 未评估 |
 | HILTI 2022 | exp21_outside_building | reference | — | — | 稀疏 ATE | — | 未评估 |
 | HILTI 2022 | exp23_the_sheldonian_slam | reference | — | — | 稀疏 ATE | — | 未评估 |
+
+### HILTI 2022 ESKF 消融
+
+生产 profile 保留了 directional pose 注入和基于位置创新的速度观察器。
+改用普通 Kalman pose 行后，两条代表序列都显著退化。
+
+| 序列 | Directional gain 8 | Directional gain 0 | Kalman pose gain 8 | Kalman pose gain 0 |
+|---|---:|---:|---:|---:|
+| `exp03_construction_stairs` | 0.132 m | **0.086 / 0.104 m** | 0.645 m | 35.3% GT 覆盖 |
+| `exp07_long_corridor` | **0.118 m** | 0.165 m | 0.957 m | 7.835 m |
+
+保留 directional pose 后的速度增益扫描：
+
+| 序列 | gain 0 | gain 2 | gain 4 | gain 6 | gain 8 |
+|---|---:|---:|---:|---:|---:|
+| `exp03_construction_stairs` | **0.086 / 0.104 m** | 29.4% 覆盖，两次 | 0.153 m | 0.160 m | 0.132 m |
+| `exp07_long_corridor` | 0.165 m | 0.219 m | 0.156 m | 0.127 m | **0.118 m** |
+
+`exp09_cupola` 在 gain 8 下完整，ATE 为 1.239 m；gain 0 会丢失跟踪，
+仅覆盖 37.5%。gain 2 两次都在约 69 s 后稳定失败。详细实验、日志、
+轨迹和 NIS 讨论位于工作区 `docs/gal3-experiments-2026-11-05/`。
 | HILTI 2023 | Site 1 · Handheld 1 | reference | 81.32 m | 205.5 | 稀疏 ATE | 0.030 | 完整 |
 | HILTI 2023 | Site 1 · Handheld 2 | reference | 84.39 m | 163.9 | 稀疏 ATE | 0.052 | 完整 |
 | HILTI 2023 | Site 1 · Handheld 3 | reference | 81.89 m | 165.2 | 稀疏 ATE | 0.108 | 完整 |
@@ -122,7 +145,7 @@ Campus Road 3 的 Bob 已经计入 S3E 均值。这次运行没有生成轨迹�
 | ![HILTI 2022 · exp03 施工场地楼梯](trajectories/hilti_2022_exp03_construction_stairs.png) | ![HILTI 2022 · exp04 施工场地上层](trajectories/hilti_2022_exp04_construction_upper_level.png) |
 | ![HILTI 2022 · exp05 施工场地上层 2](trajectories/hilti_2022_exp05_construction_upper_level_2.png) | ![HILTI 2022 · exp06 施工场地上层 3](trajectories/hilti_2022_exp06_construction_upper_level_3.png) |
 | ![HILTI 2022 · exp07 长走廊](trajectories/hilti_2022_exp07_long_corridor.png) | ![HILTI 2022 · exp09 穹顶](trajectories/hilti_2022_exp09_cupola.png) |
-| ![HILTI 2022 · exp10 穹顶 2 部分覆盖](trajectories/hilti_2022_exp10_cupola_2.png) | ![HILTI 2022 · exp11 下层画廊](trajectories/hilti_2022_exp11_lower_gallery.png) |
+| ![HILTI 2022 · exp10 穹顶 2 恢复完整覆盖](trajectories/hilti_2022_exp10_cupola_2.png) | ![HILTI 2022 · exp11 下层画廊](trajectories/hilti_2022_exp11_lower_gallery.png) |
 | ![HILTI 2022 · exp14 地下室 2](trajectories/hilti_2022_exp14_basement_2.png) | ![HILTI 2022 · exp16 阁楼到上层画廊 2 部分覆盖](trajectories/hilti_2022_exp16_attic_to_upper_gallery_2.png) |
 
 ### HILTI 2023
