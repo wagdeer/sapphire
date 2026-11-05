@@ -64,20 +64,19 @@ roslaunch sapphire_ros1 hilti_2023_handheld.launch \
 `sapphire_ros1/launch/display.rviz`. See that package's Docker notes for X11.
 
 S3E is published as ROS 2 bags. Convert one robot's topics to a ROS 1 bag
-before replay. The image is built from this repository:
+before replay. Install the pinned conversion tool once:
 
 ```bash
-docker build \
-  -t sapphire-bag-convert:0.11.9 \
-  tools/bag-convert
+python3 -m pip install --user "rosbags==0.11.9"
+```
 
+Then convert the bag:
+
+```bash
 mkdir -p "$OUT/converted"
-docker run --rm \
-  -v "$S3E_DIR":/datasets/s3e:ro \
-  -v "$OUT/converted":/out \
-  sapphire-bag-convert:0.11.9 \
-  --src /datasets/s3e/S3E_Dormitory_1 \
-  --dst /out/S3E_Dormitory_1_Alpha.bag \
+rosbags-convert \
+  --src "$S3E_DIR/S3E_Dormitory_1" \
+  --dst "$OUT/converted/S3E_Dormitory_1_Alpha.bag" \
   --src-typestore ros2_humble \
   --dst-typestore ros1_noetic \
   --include-topic /Alpha/velodyne_points \
@@ -154,12 +153,9 @@ HILTI 2023 handheld bags are ROS 1. Convert the two sensor topics first:
 
 ```bash
 mkdir -p "$OUT/converted"
-docker run --rm \
-  -v "$HILTI_DIR":/datasets/hilti-2023:ro \
-  -v "$OUT/converted":/out \
-  sapphire-bag-convert:0.11.9 \
-  --src /datasets/hilti-2023/rosbags/site1_handheld_1.bag \
-  --dst /out/site1_handheld_1 \
+rosbags-convert \
+  --src "$HILTI_DIR/rosbags/site1_handheld_1.bag" \
+  --dst "$OUT/converted/site1_handheld_1" \
   --src-typestore ros1_noetic \
   --dst-typestore ros2_humble \
   --include-topic /hesai/pandar \
