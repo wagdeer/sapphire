@@ -2,7 +2,7 @@
 
 LiDAR-inertial odometry with Gal(3) equivariant IMU preintegration.
 
-[中文说明](README.zh.md) · [Design](docs/DESIGN.md)
+[中文说明](README.zh.md)
 
 Sapphire estimates a 6-DoF trajectory from LiDAR and IMU. Scan deskew and IMU
 propagation share one Gal(3) motion model, and an asynchronous pose graph
@@ -108,14 +108,8 @@ live in `cfg/`. A replay walkthrough is in
 
 | Document | What it is |
 |---|---|
-| [docs/DESIGN.md](docs/DESIGN.md) | Pipeline and repository layout |
 | [docs/benchmarks/benchmark_table.md](docs/benchmarks/benchmark_table.md) | Per-run ATE, including runs left out of the table above |
 | [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md) | How to replay a bag and write a TUM trajectory |
-| [docs/eskf_on_gal3.md](docs/eskf_on_gal3.md) | ESKF derivation |
-| [docs/occupancy_grid.md](docs/occupancy_grid.md) | Occupancy-grid design note |
-
-`docs/code-review/` and `skill/` are maintainer notes. They are not the
-install or replay guide.
 
 ## Credits
 

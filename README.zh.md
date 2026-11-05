@@ -2,7 +2,7 @@
 
 基于 Gal(3) 等变 IMU 预积分的 LiDAR-惯性里程计。
 
-[English](README.md) · [设计](docs/DESIGN.md)
+[English](README.md)
 
 Sapphire 从 LiDAR 与 IMU 估计 6-DoF 轨迹。逐点去畸变和 IMU 传播共用同一套
 Gal(3) 运动模型，异步位姿图负责维持地图一致。核心库是独立的 C++17 实现，
@@ -99,13 +99,8 @@ ros2 launch sapphire_ros2 sapphire.launch.py \
 
 | 文档 | 内容 |
 |---|---|
-| [docs/DESIGN.md](docs/DESIGN.md) | 流水线与目录 |
 | [docs/benchmarks/benchmark_table.zh.md](docs/benchmarks/benchmark_table.zh.md) | 逐条 ATE，含未进入上表的结果 |
 | [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md) | 如何回放数据包并写出 TUM 轨迹 |
-| [docs/eskf_on_gal3.md](docs/eskf_on_gal3.md) | ESKF 推导 |
-| [docs/occupancy_grid.md](docs/occupancy_grid.md) | 占据栅格设计笔记 |
-
-`docs/code-review/` 和 `skill/` 是维护者笔记，不是安装或回放说明。
 
 ## 致谢
 

@@ -6,3 +6,10 @@ build/
 __pycache__/
 .vscode/
 .idea/
+
+# Local design notes and review artifacts. Keep them on this machine.
+/docs/DESIGN.md
+/docs/eskf_on_gal3.md
+/docs/occupancy_grid.md
+/docs/code-review/
+/skill/
