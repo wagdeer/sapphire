@@ -187,7 +187,6 @@ public:
     void replayToLatest(const ImuBuffer& imu_buffer);
 
     const NavigationState& tipState() const { return tip_state_; }
-    const NavigationState& baselineState() const { return baseline_state_; }
     Eigen::Vector3d accelBias() const { return accel_bias_; }
     Eigen::Vector3d gyroBias() const { return gyro_bias_; }
     const Mat15& tipCovariance() const { return P_tip_; }

@@ -96,21 +96,6 @@ bool OccupancyGrid::empty() const {
     return grids_.empty();
 }
 
-void OccupancyGrid::ensureBounds(
-    double min_x,
-    double min_y,
-    double max_x,
-    double max_y)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    const double margin = options_.margin;
-    resizeTo(
-        min_x - margin,
-        min_y - margin,
-        max_x + margin,
-        max_y + margin);
-}
-
 void OccupancyGrid::resizeTo(
     double min_x,
     double min_y,

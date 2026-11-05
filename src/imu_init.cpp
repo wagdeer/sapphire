@@ -26,13 +26,6 @@ ImuInitializer::ImuInitializer(
     samples_.reserve(kExpectedMaxSamples);
 }
 
-void ImuInitializer::reset() {
-    state_ = State::WAITING;
-    samples_.clear();
-    start_stamp_ = 0.0;
-    last_check_stamp_ = 0.0;
-}
-
 std::optional<ImuInitializer::Result>
 ImuInitializer::feedImu(double stamp,
                          const Eigen::Vector3d& accel,
@@ -332,12 +325,8 @@ std::optional<ImuInitializer::Result> ImuInitializer::computeResult() {
         .gyro_bias   = gyro_bias,
         .accel_bias  = accel_bias,
         .q_gravity   = q_gravity,
-        .gyro_std    = gyro_std,
         .accel_std   = accel_std,
-        .duration_sec = elapsed,
-        .sample_count = static_cast<int>(samples_.size()),
-        .final_state  = state_,
-        .accel_scale  = *accel_scale,
+        .accel_scale = *accel_scale,
     };
 }
 

@@ -55,7 +55,6 @@ struct DeskewResult {
 /// @param v_world_prev      IMU velocity in world at prev_stamp
 /// @param T_imu_lidar       calibrated LiDAR-to-IMU extrinsic
 /// @param gravity_world     world gravity acceleration, normally (0,0,-g)
-/// @param noise             IMU noise parameters
 DeskewResult deskew(
     const PointCloudConstPtr& scan,
     const ImuBuffer& imu_buf,
@@ -63,8 +62,7 @@ DeskewResult deskew(
     const Isometry3d& T_world_imu_prev,
     const Eigen::Vector3d& v_world_prev,
     const Isometry3d& T_imu_lidar,
-    const Eigen::Vector3d& gravity_world,
-    const ImuNoiseConfig& noise
+    const Eigen::Vector3d& gravity_world
 );
 
 }  // namespace sapphire

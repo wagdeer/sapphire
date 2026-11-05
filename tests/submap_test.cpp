@@ -49,7 +49,7 @@ void testKeyframeThresholds() {
     expect(translation_manager.shouldAddKeyframe(makePose(0.0)),
            "the first accepted scan must become a keyframe");
     expect(translation_manager.addKeyframe(
-               makePose(0.0), makeCloud(0.0f), 1.0),
+               makePose(0.0), makeCloud(0.0f)),
            "the first keyframe must build the target");
 
     expect(!translation_manager.shouldAddKeyframe(makePose(2.0)),
@@ -57,12 +57,12 @@ void testKeyframeThresholds() {
     expect(translation_manager.shouldAddKeyframe(makePose(2.01)),
            "crossing 2 m must add a keyframe");
     translation_manager.addKeyframe(
-        makePose(2.01), makeCloud(2.01f), 2.0);
+        makePose(2.01), makeCloud(2.01f));
     expect(translation_manager.keyframeCount() == 2,
            "a scan crossing 2 m must be retained");
 
     sapphire::SubmapManager rotation_manager(config.odometry.submap);
-    rotation_manager.addKeyframe(makePose(0.0), makeCloud(0.0f), 1.0);
+    rotation_manager.addKeyframe(makePose(0.0), makeCloud(0.0f));
     const double forty_five_degrees = M_PI / 4.0;
     expect(!rotation_manager.shouldAddKeyframe(
                makePose(0.0, forty_five_degrees)),
@@ -72,8 +72,7 @@ void testKeyframeThresholds() {
            "crossing 45 degrees must add a keyframe");
     rotation_manager.addKeyframe(
         makePose(0.0, forty_five_degrees + 1e-3),
-        makeCloud(0.0f),
-        2.0);
+        makeCloud(0.0f));
     expect(rotation_manager.keyframeCount() == 2,
            "a scan crossing 45 degrees must be retained");
 }
@@ -87,7 +86,7 @@ void testNearestSelectionAndStableTarget() {
     for (size_t i = 0; i < 12; ++i) {
         const double x = static_cast<double>(i) * 5.0;
         manager.addKeyframe(
-            makePose(x), makeCloud(static_cast<float>(x)), x);
+            makePose(x), makeCloud(static_cast<float>(x)));
     }
 
     const std::vector<size_t> expected{2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
@@ -119,7 +118,7 @@ void testPrunesStaleKeyframes() {
     for (size_t i = 0; i < 24; ++i) {
         const double x = static_cast<double>(i) * 5.0;
         manager.addKeyframe(
-            makePose(x), makeCloud(static_cast<float>(x)), x);
+            makePose(x), makeCloud(static_cast<float>(x)));
     }
 
     const auto active = manager.activeKeyframeIndices();
@@ -143,7 +142,7 @@ void testPrunePreservesActiveIndices() {
     for (size_t i = 0; i < 8; ++i) {
         const double x = static_cast<double>(i) * 5.0;
         manager.addKeyframe(
-            makePose(x), makeCloud(static_cast<float>(x)), x);
+            makePose(x), makeCloud(static_cast<float>(x)));
     }
 
     // pruning limit = 3×2 = 6, and 8 > 6 so pruning fired.
@@ -167,7 +166,7 @@ void testVoxelDownsampling() {
     auto cloud = std::make_shared<sapphire::PointCloud>();
     cloud->push_back(*makeCloud(0.01f)->begin());
     cloud->push_back(*makeCloud(0.02f)->begin());
-    manager.addKeyframe(makePose(0.0), cloud, 0.0);
+    manager.addKeyframe(makePose(0.0), cloud);
 
     expect(manager.target()->size() == 1,
            "points in one 0.25 m voxel must be downsampled");

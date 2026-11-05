@@ -68,6 +68,20 @@ itself does not call MPI. toml++ 3.4 is used when it is already installed;
 otherwise CMake downloads that release. The test target above works on CMake
 3.16; `ctest --test-dir` needs CMake 3.20.
 
+## Install
+
+```bash
+cmake --install build --prefix /opt/sapphire
+```
+
+A downstream project finds the static library with
+`find_package(sapphire REQUIRED)` and links the `sapphire` target. Put the
+prefix on `CMAKE_PREFIX_PATH`. The consumer also needs Eigen, PCL, GTSAM,
+OpenMP, small_gicp, spdlog, toml++ 3.4, and an MPI C library; this package
+does not ship them. toml++ downloaded while building Sapphire is not part of
+the install. The ROS wrappers below use a sibling checkout and
+`add_subdirectory`, and do not need this prefix.
+
 ## ROS
 
 ROS 1 and ROS 2 are separate packages. Put the core beside the wrapper you

@@ -7,13 +7,6 @@
 
 namespace sapphire {
 
-/// An accepted LiDAR frame retained for local-map construction.
-struct Keyframe {
-    Isometry3d T_world_lidar = Isometry3d::Identity();
-    PointCloudConstPtr cloud_world;
-    double stamp = 0.0;
-};
-
 /// Deterministic, synchronous scan-to-submap manager.
 ///
 /// Keyframe clouds are already expressed in the world frame. The active target
@@ -29,8 +22,7 @@ public:
     /// rebuilt because the active nearest-keyframe set changed.
     bool addKeyframe(
         const Isometry3d& T_world_lidar,
-        const PointCloudConstPtr& cloud_world,
-        double stamp);
+        const PointCloudConstPtr& cloud_world);
 
     size_t keyframeCount() const { return keyframes_.size(); }
     const std::vector<size_t>& activeKeyframeIndices() const {
@@ -45,6 +37,11 @@ private:
         const Eigen::Vector3d& position) const;
     void rebuildTarget();
     void pruneStaleKeyframes();
+
+    struct Keyframe {
+        Isometry3d T_world_lidar = Isometry3d::Identity();
+        PointCloudConstPtr cloud_world;
+    };
 
     Config::Odometry::Submap config_;
     std::vector<Keyframe> keyframes_;

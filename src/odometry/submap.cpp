@@ -36,15 +36,14 @@ bool SubmapManager::shouldAddKeyframe(
 
 bool SubmapManager::addKeyframe(
     const Isometry3d& T_world_lidar,
-    const PointCloudConstPtr& cloud_world,
-    double stamp)
+    const PointCloudConstPtr& cloud_world)
 {
     if (!cloud_world || cloud_world->empty()) {
         throw std::invalid_argument(
             "SubmapManager keyframe cloud must be non-empty");
     }
 
-    keyframes_.push_back({T_world_lidar, cloud_world, stamp});
+    keyframes_.push_back({T_world_lidar, cloud_world});
     stored_point_count_ += cloud_world->size();
     const std::vector<size_t> selected =
         selectNearest(T_world_lidar.translation());

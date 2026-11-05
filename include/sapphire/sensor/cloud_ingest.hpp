@@ -89,7 +89,6 @@ struct TimeDecision {
     TimeRef ref = TimeRef::Relative;
     double span_s = 0.0;
     double t_min_abs = 0.0;
-    double t_max_abs = 0.0;
     double header_offset_s = 0.0;
     bool header_mismatch = false;
     std::string note;
@@ -386,8 +385,6 @@ inline TimeDecision classifyTime(
     decision.ref = absolute ? TimeRef::Absolute : TimeRef::Relative;
 
     decision.t_min_abs = absolute ? raw_min_s : header_stamp + raw_min_s;
-    decision.t_max_abs =
-        absolute ? raw_max * scale : header_stamp + raw_max * scale;
     decision.header_offset_s = decision.t_min_abs - header_stamp;
     decision.header_mismatch =
         std::abs(decision.header_offset_s) > cfg.header_tolerance;

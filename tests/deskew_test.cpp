@@ -15,7 +15,6 @@ using sapphire::DeskewResult;
 using sapphire::DeskewStatus;
 using sapphire::ImuData;
 using sapphire::ImuBuffer;
-using sapphire::ImuNoiseConfig;
 using sapphire::Isometry3d;
 using sapphire::Point;
 using sapphire::PointCloud;
@@ -96,8 +95,7 @@ DeskewResult runDeskew(
         T_world_imu,
         v_world,
         T_imu_lidar,
-        Eigen::Vector3d(0.0, 0.0, -kGravity),
-        ImuNoiseConfig{});
+        Eigen::Vector3d(0.0, 0.0, -kGravity));
 }
 
 void testStaticGravityCancellation() {

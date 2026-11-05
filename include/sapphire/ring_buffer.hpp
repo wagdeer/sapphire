@@ -29,7 +29,6 @@ public:
     RingBuffer() = default;
 
     // ── Capacity ──────────────────────────────────────────────────
-    static constexpr size_type capacity() { return N; }
     size_type size() const { return size_; }
     bool empty() const { return size_ == 0; }
     bool full() const { return size_ == N; }

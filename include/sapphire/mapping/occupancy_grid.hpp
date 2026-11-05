@@ -39,9 +39,6 @@ public:
 
     void clear();
 
-    /// Expand map AABB (with margin) so the given world bounds fit.
-    void ensureBounds(double min_x, double min_y, double max_x, double max_y);
-
     /// Insert one scan. cloud_lidar is in the lidar/body frame; T_map_lidar
     /// is the optimized pose used for projection and plane definition.
     void insertScan(

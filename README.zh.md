@@ -62,6 +62,18 @@ OpenMP、GTSAM 4.3、small_gicp 和 spdlog。配置 PCL 时还需要一套 MPI C
 toml++ 3.4 时直接使用，否则由 CMake 下载这一版本。上面的 `test` 目标在
 CMake 3.16 上可用；`ctest --test-dir` 需要 CMake 3.20。
 
+## 安装
+
+```bash
+cmake --install build --prefix /opt/sapphire
+```
+
+下游工程把该前缀放进 `CMAKE_PREFIX_PATH`，用 `find_package(sapphire REQUIRED)`
+找到静态库，并链接 `sapphire` 目标。消费方自己还要有 Eigen、PCL、GTSAM、
+OpenMP、small_gicp、spdlog、toml++ 3.4 和一套 MPI C 库；这个安装包不带这些
+依赖。编译 Sapphire 时由 CMake 下载的 toml++ 不会装进去。下面的 ROS 封装走
+同级源码和 `add_subdirectory`，不需要这个前缀。
+
 ## ROS
 
 ROS 1 与 ROS 2 是独立的封装包。把核心和要用的封装放在同一工作空间：

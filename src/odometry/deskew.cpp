@@ -304,11 +304,8 @@ DeskewResult deskew(
     const Isometry3d& T_world_imu_prev,
     const Eigen::Vector3d& v_world_prev,
     const Isometry3d& T_imu_lidar,
-    const Eigen::Vector3d& gravity_world,
-    const ImuNoiseConfig& noise)
+    const Eigen::Vector3d& gravity_world)
 {
-    (void)noise;
-
     if (!scan || scan->empty()) {
         spdlog::warn("[deskew] empty scan");
         return makeFallback(

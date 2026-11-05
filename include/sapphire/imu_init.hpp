@@ -24,23 +24,11 @@ namespace sapphire {
 ///     }
 class ImuInitializer {
 public:
-    enum class State {
-        WAITING,      // not enough samples yet
-        CALIBRATING,  // collecting, checking convergence periodically
-        CONVERGED,    // converged — result available
-        TIMEOUT,      // timed out — approximate result available
-        FAILED        // acceleration unit could not be resolved
-    };
-
     struct Result {
         Eigen::Vector3d gyro_bias;    // rad/s
         Eigen::Vector3d accel_bias;   // m/s²
         Eigen::Quaterniond q_gravity; // IMU → world (Z = up in world frame)
-        double gyro_std;              // quality indicator (rad/s)
         double accel_std;             // quality indicator (m/s²)
-        double duration_sec;          // actual calibration duration
-        int    sample_count;
-        State  final_state;           // CONVERGED or TIMEOUT
         /// Multiply a raw specific-force sample to obtain m/s².
         double accel_scale = 1.0;
     };
@@ -57,12 +45,15 @@ public:
                                    const Eigen::Vector3d& accel,
                                    const Eigen::Vector3d& gyro);
 
-    State state() const { return state_; }
-
-    /// Reset to fresh state (for re-initialization)
-    void reset();
-
 private:
+    enum class State {
+        WAITING,      // not enough samples yet
+        CALIBRATING,  // collecting, checking convergence periodically
+        CONVERGED,    // converged — result available
+        TIMEOUT,      // timed out — approximate result available
+        FAILED        // acceleration unit could not be resolved
+    };
+
     struct Sample {
         double stamp;
         Eigen::Vector3d accel;

@@ -61,10 +61,6 @@ public:
         return Upsilon_;
     }
 
-    double deltaT() const {
-        return Upsilon_.s();
-    }
-
 private:
     Gal3 Upsilon_;
 };

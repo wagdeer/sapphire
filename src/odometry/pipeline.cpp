@@ -95,10 +95,6 @@ OdometryResult OdometryPipeline::latestResult() const {
     return applyGlobalCorrection(result, pgo_backend_.T_map_odom());
 }
 
-Isometry3d OdometryPipeline::latestPose() const {
-    return latestResult().T_world_lidar;
-}
-
 PointCloudConstPtr OdometryPipeline::latestDeskewed() const {
     PointCloudConstPtr cloud;
     {
@@ -223,8 +219,7 @@ DeskewResult OdometryPipeline::deskewPointcloud(
         baseline.T_world_imu,
         baseline.v_world,
         config_.extrinsics.T_imu_lidar,
-        gravity_world_,
-        config_.imu.noise);
+        gravity_world_);
 }
 
 void OdometryPipeline::recoverPropagatedStateLocked(double stamp) {
@@ -362,7 +357,7 @@ bool OdometryPipeline::initializeFirstLidarTarget(
         *preprocessed.cloud, *world_scan, T_world_lidar.matrix());
     const PointCloudConstPtr downsampled = downsamplePoints(world_scan);
 
-    submap_manager_.addKeyframe(T_world_lidar, downsampled, stamp);
+    submap_manager_.addKeyframe(T_world_lidar, downsampled);
     registration_.setTarget(submap_manager_.target());
 
     {
@@ -388,7 +383,6 @@ bool OdometryPipeline::initializeFirstLidarTarget(
 }
 
 void OdometryPipeline::maybeUpdateSubmapTarget(
-    const DeskewResult& deskewed,
     const Isometry3d& T_world_lidar,
     const PointCloudConstPtr& cloud)
 {
@@ -397,10 +391,7 @@ void OdometryPipeline::maybeUpdateSubmapTarget(
         return;
     }
 
-    if (!submap_manager_.addKeyframe(
-            T_world_lidar,
-            cloud,
-            deskewed.reference_stamp)) {
+    if (!submap_manager_.addKeyframe(T_world_lidar, cloud)) {
         return;
     }
 
@@ -636,7 +627,7 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
     }
 
     if (fusion_accepted) {
-        maybeUpdateSubmapTarget(deskewed, T_world_lidar_out, cloud_out);
+        maybeUpdateSubmapTarget(T_world_lidar_out, cloud_out);
     }
     {
         std::lock_guard<std::mutex> lock(output_mutex_);

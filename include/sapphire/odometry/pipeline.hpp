@@ -68,9 +68,6 @@ public:
     Eigen::Vector3d accelBias() const;
     Eigen::Vector3d gyroBias() const;
 
-    /// Shorthand for latest pose
-    Isometry3d latestPose() const;
-
     /// Retrieve the most recent deskewed point cloud in the world frame.
     PointCloudConstPtr latestDeskewed() const;
 
@@ -83,7 +80,6 @@ public:
     /// optimization is disabled. History follows each sample's keyframe.
     MapTrajectory mapTrajectory() const { return pgo_backend_.mapTrajectory(); }
 
-    PoseGraphStats poseGraphStats() const { return pgo_backend_.stats(); }
     PoseGraphSnapshot poseGraphSnapshot() const {
         return pgo_backend_.snapshot();
     }
@@ -112,7 +108,6 @@ private:
         double stamp, const PreprocessResult& preprocessed);
     void processLidarScan(const PreprocessResult& preprocessed);
     void maybeUpdateSubmapTarget(
-        const DeskewResult& deskewed,
         const Isometry3d& T_world_lidar,
         const PointCloudConstPtr& cloud);
     void finalizeImuInitialization(
@@ -200,10 +195,6 @@ private:
     std::size_t registration_attempt_count_ = 0;
     std::size_t registration_reject_count_ = 0;
     bool warned_rigid_deskew_ = false;
-
-    // TODO v0.1:
-    //   std::unique_ptr<VoxelMap> voxel_map_;
-    //   std::unique_ptr<RegistrationBackend> registration_;
 };
 
 }  // namespace sapphire
