@@ -412,6 +412,43 @@ void testUnknownKeyRejected() {
         "unknown TOML key");
 }
 
+void testLidarTimeSessionCopiesSchema() {
+    sapphire::Config config;
+    config.sensor.lidar.time_field = "timestamp";
+    config.sensor.lidar.time_unit = "ns";
+    config.sensor.lidar.time_ref = "relative";
+    config.sensor.lidar.max_scan_duration = 0.2;
+    config.sensor.lidar.header_tolerance = 0.25;
+    config.sensor.lidar.require_point_time = true;
+
+    const sapphire::sensor::LidarTimeSession session =
+        sapphire::makeLidarTimeSession(config.sensor.lidar);
+    expect(session.config().time_field == "timestamp",
+           "session copies time_field");
+    expect(session.config().time_unit == "ns",
+           "session copies time_unit");
+    expect(session.config().time_ref == "relative",
+           "session copies time_ref");
+    expectNear(session.config().max_scan_duration, 0.2,
+               "session copies max_scan_duration");
+    expectNear(session.config().header_tolerance, 0.25,
+               "session copies header_tolerance");
+    expect(session.requirePointTime(),
+           "session copies require_point_time");
+    expect(!session.locked(), "a new session is not locked");
+
+    const sapphire::sensor::IngestConfig ingest;
+    const sapphire::Config defaults;
+    expect(ingest.time_field == defaults.sensor.lidar.time_field
+               && ingest.time_unit == defaults.sensor.lidar.time_unit
+               && ingest.time_ref == defaults.sensor.lidar.time_ref,
+           "ingest and schema time strings share defaults");
+    expectNear(ingest.max_scan_duration, defaults.sensor.lidar.max_scan_duration,
+               "ingest and schema share max_scan_duration");
+    expectNear(ingest.header_tolerance, defaults.sensor.lidar.header_tolerance,
+               "ingest and schema share header_tolerance");
+}
+
 void testMissingFieldRejected() {
     const auto path = writeConfig(
         "sapphire_config_missing_field.toml",
@@ -441,6 +478,7 @@ int main() {
     testInvalidGravityRejected();
     testWrongOptionalTypeRejected();
     testUnknownKeyRejected();
+    testLidarTimeSessionCopiesSchema();
     testMissingFieldRejected();
     std::cout << "All config tests passed\n";
     return EXIT_SUCCESS;

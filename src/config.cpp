@@ -366,13 +366,6 @@ constexpr const char* const kFusionChoices[] = {
     "observer", "eskf", nullptr};
 constexpr const char* const kRegistrationChoices[] = {
     "GICP", "VGICP", nullptr};
-constexpr const char* const kTimeFieldChoices[] = {
-    "auto", "none", "offset_time", "t", "timestamp", "time", "time_stamp",
-    nullptr};
-constexpr const char* const kTimeUnitChoices[] = {
-    "auto", "s", "ms", "us", "ns", nullptr};
-constexpr const char* const kTimeRefChoices[] = {
-    "auto", "relative", "absolute", nullptr};
 constexpr const char* const kAccelUnitChoices[] = {
     "auto", "g", "m_s2", nullptr};
 
@@ -561,11 +554,11 @@ const StringField kStrings[] = {
     STR("registration.type", registration.type, kRegistrationChoices,
         "registration.type must be GICP or VGICP"),
     STR("sensor.lidar.time_field", sensor.lidar.time_field,
-        kTimeFieldChoices, nullptr),
+        sensor::timeFieldChoices(), nullptr),
     STR("sensor.lidar.time_unit", sensor.lidar.time_unit,
-        kTimeUnitChoices, nullptr),
+        sensor::timeUnitChoices(), nullptr),
     STR("sensor.lidar.time_ref", sensor.lidar.time_ref,
-        kTimeRefChoices, nullptr),
+        sensor::timeRefChoices(), nullptr),
     STR("sensor.imu.accel_unit", sensor.imu.accel_unit,
         kAccelUnitChoices, nullptr),
     STR("output.trajectory_dir", output.trajectory_dir, nullptr, nullptr),

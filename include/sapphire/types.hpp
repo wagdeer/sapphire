@@ -295,6 +295,9 @@ struct Config {
     ImuConfig imu;
 
     /// Optional LiDAR time classification. Omitted TOML keys stay automatic.
+    /// time_field, time_unit, time_ref, max_scan_duration, and header_tolerance
+    /// match sensor::IngestConfig. makeLidarTimeSession copies those fields
+    /// and require_point_time into the runtime lock.
     struct Sensor {
         struct Lidar {
             std::string time_field = "auto";

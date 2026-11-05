@@ -213,6 +213,192 @@ void report(
 
 constexpr double kHeader = 1779083760.4001343;
 
+void fillTimed(Builder& builder, double header, double t0, double t1) {
+    constexpr size_t n = 8;
+    builder.add("x", 7);
+    builder.add("y", 7);
+    builder.add("z", 7);
+    builder.add("timestamp", 8);
+    builder.alloc(n);
+    builder.header = header;
+    for (size_t i = 0; i < n; ++i) {
+        builder.xyz(i, 1.0, 2.0, 3.0);
+        const double u = static_cast<double>(i) / static_cast<double>(n - 1);
+        builder.set(i, "timestamp", t0 + (t1 - t0) * u);
+    }
+}
+
+void testLidarTimeSession() {
+    std::printf("== lidar time session\n");
+    {
+        TimeUnit unit = TimeUnit::Seconds;
+        check(!parseTimeUnit("auto", unit), "auto is not a time unit");
+        check(!parseTimeUnit("sec", unit), "unknown time unit is rejected");
+        for (const char* const* item = timeUnitChoices(); *item != nullptr; ++item) {
+            if (std::string(*item) == "auto") {
+                continue;
+            }
+            check(parseTimeUnit(*item, unit), std::string(*item) + " parses as a unit");
+        }
+        TimeRef ref = TimeRef::Relative;
+        check(!parseTimeRef("auto", ref), "auto is not a time reference");
+        for (const char* const* item = timeRefChoices(); *item != nullptr; ++item) {
+            if (std::string(*item) == "auto") {
+                continue;
+            }
+            check(parseTimeRef(*item, ref), std::string(*item) + " parses as a reference");
+        }
+        check(timeFieldCandidates().size() == 5, "five searchable time fields");
+        check(timeFieldCandidates().front() == "offset_time",
+              "offset_time stays first");
+        for (const std::string& name : timeFieldCandidates()) {
+            bool listed = false;
+            for (const char* const* item = timeFieldChoices();
+                 *item != nullptr;
+                 ++item) {
+                if (name == *item) {
+                    listed = true;
+                }
+            }
+            check(listed, name + " is a TOML time_field choice");
+        }
+    }
+    {
+        IngestConfig cfg;
+        cfg.max_scan_duration = 2.0;
+        LidarTimeSession session(cfg, false);
+        Builder first;
+        fillTimed(first, kHeader, 0.0, 0.1);
+        const IngestResult first_result = session.ingest(first.view());
+        const LidarTimeSession::Commit first_commit = session.commit(first_result);
+        check(first_commit.accept, "first scan is accepted");
+        check(first_commit.just_locked, "first success locks");
+        check(!first_commit.warn_span_ratio, "lock frame does not warn about span");
+        check(session.locked(), "session remembers the lock");
+        check(session.config().time_field == "timestamp", "lock records the field");
+        check(session.config().time_unit == "s", "lock records seconds");
+        check(session.config().time_ref == "relative", "lock records relative time");
+
+        Builder ambiguous;
+        fillTimed(ambiguous, kHeader, 0.0, 1.5);
+        IngestConfig automatic = cfg;
+        const IngestResult unlocked = ingest(ambiguous.view(), automatic);
+        check(!unlocked.time.ok, "span 1.5 s is ambiguous before the lock");
+        const IngestResult second_result = session.ingest(ambiguous.view());
+        check(second_result.time.ok, "locked seconds accept the ambiguous span");
+        check(second_result.time.unit == TimeUnit::Seconds, "locked unit stays seconds");
+        const LidarTimeSession::Commit second_commit = session.commit(second_result);
+        check(second_commit.accept && !second_commit.just_locked,
+              "later scan does not lock again");
+        check(second_commit.warn_span_ratio, "span ratio above 10 warns once");
+        check(std::abs(second_commit.locked_span_s - 0.1) < 1e-9, "warning keeps the locked span");
+        check(std::abs(second_commit.span_s - 1.5) < 1e-9, "warning reports the new span");
+        const LidarTimeSession::Commit third_commit =
+            session.commit(session.ingest(ambiguous.view()));
+        check(third_commit.accept && !third_commit.warn_span_ratio,
+              "span warning is not repeated");
+    }
+    {
+        IngestConfig cfg;
+        cfg.max_scan_duration = 2.0;
+        LidarTimeSession session(cfg, false);
+        Builder first;
+        fillTimed(first, kHeader, 0.0, 0.1);
+        check(session.commit(session.ingest(first.view())).just_locked,
+              "boundary session locks");
+        Builder ten;
+        fillTimed(ten, kHeader, 0.0, 1.0);
+        const LidarTimeSession::Commit at_ten =
+            session.commit(session.ingest(ten.view()));
+        check(at_ten.accept && !at_ten.warn_span_ratio,
+              "span ratio of exactly 10 does not warn");
+        Builder over;
+        fillTimed(over, kHeader, 0.0, 1.01);
+        check(session.commit(session.ingest(over.view())).warn_span_ratio,
+              "span ratio above 10 warns");
+    }
+    {
+        LidarTimeSession session(IngestConfig{}, true);
+        Builder bare;
+        bare.add("x", 7);
+        bare.add("y", 7);
+        bare.add("z", 7);
+        bare.alloc(4);
+        bare.header = kHeader;
+        for (size_t i = 0; i < 4; ++i) {
+            bare.xyz(i, 1.0, 2.0, 3.0);
+        }
+        const IngestResult rejected = session.ingest(bare.view());
+        const LidarTimeSession::Commit dropped = session.commit(rejected);
+        check(!dropped.accept, "require_point_time drops an unclassified scan");
+        check(dropped.drop_reason == rejected.time.note, "drop reason is the ingest note");
+        check(!session.locked(), "a rejected scan does not lock");
+        check(session.config().time_field == "auto", "rejection leaves the policy automatic");
+
+        Builder good;
+        fillTimed(good, kHeader, 0.0, 1e8);
+        const LidarTimeSession::Commit locked =
+            session.commit(session.ingest(good.view()));
+        check(locked.accept && locked.just_locked,
+              "a later classified scan can still lock");
+        check(session.config().time_unit == "ns", "Livox-sized span locks nanoseconds");
+    }
+    {
+        LidarTimeSession session(IngestConfig{}, false);
+        Builder bare;
+        bare.add("x", 7);
+        bare.add("y", 7);
+        bare.add("z", 7);
+        bare.alloc(4);
+        bare.header = kHeader;
+        for (size_t i = 0; i < 4; ++i) {
+            bare.xyz(i, 1.0, 2.0, 3.0);
+        }
+        const LidarTimeSession::Commit kept = session.commit(session.ingest(bare.view()));
+        check(kept.accept && !kept.just_locked,
+              "unclassified points stay when point time is optional");
+        check(!session.locked(), "optional failure does not lock");
+    }
+    {
+        LidarTimeSession session(IngestConfig{}, false);
+        CloudView empty;
+        empty.header_stamp = kHeader;
+        const LidarTimeSession::Commit dropped =
+            session.commit(session.ingest(empty));
+        check(!dropped.accept, "empty cloud is dropped");
+        check(
+            dropped.drop_reason.find("empty") != std::string::npos,
+            "empty cloud reports the ingest note");
+        check(!session.locked(), "empty cloud does not lock");
+
+        Builder nonfinite;
+        fillTimed(nonfinite, kHeader, 0.0, 0.1);
+        for (size_t i = 0; i < 8; ++i) {
+            nonfinite.set(i, "x", std::numeric_limits<double>::quiet_NaN());
+        }
+        const LidarTimeSession::Commit dropped_points =
+            session.commit(session.ingest(nonfinite.view()));
+        check(!dropped_points.accept, "non-finite points are dropped");
+        check(dropped_points.drop_reason == "no points",
+              "non-finite points use the empty-cloud reason");
+        check(!session.locked(), "dropped points do not lock");
+    }
+    {
+        LidarTimeSession session(IngestConfig{}, false);
+        Builder shifted;
+        fillTimed(shifted, kHeader, kHeader + 2.0, kHeader + 2.1);
+        const LidarTimeSession::Commit first =
+            session.commit(session.ingest(shifted.view()));
+        check(first.accept && first.just_locked, "shifted absolute time locks");
+        check(first.warn_header_mismatch, "header mismatch warns on the lock frame");
+        check(std::abs(first.header_offset_s - 2.0) < 1e-6, "header offset is two seconds");
+        const LidarTimeSession::Commit second =
+            session.commit(session.ingest(shifted.view()));
+        check(second.accept && !second.warn_header_mismatch,
+              "header mismatch warns once");
+    }
+}
+
 int main() {
     const size_t N = 1000;
     IngestConfig cfg;
@@ -900,6 +1086,8 @@ int main() {
         cloud.row_step = uint32_t{1} << 31;
         checkRejectedLayout(cloud, cfg, "wrapping organized span");
     }
+
+    testLidarTimeSession();
 
     std::printf(
         "\n%s (%d failure%s)\n",

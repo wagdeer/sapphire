@@ -69,9 +69,45 @@ inline const char* unitName(TimeUnit unit) {
     return "?";
 }
 
+inline const char* refName(TimeRef ref) {
+    return ref == TimeRef::Absolute ? "absolute" : "relative";
+}
+
+inline bool parseTimeUnit(const std::string& name, TimeUnit& unit) {
+    if (name == "s") {
+        unit = TimeUnit::Seconds;
+        return true;
+    }
+    if (name == "ms") {
+        unit = TimeUnit::Milli;
+        return true;
+    }
+    if (name == "us") {
+        unit = TimeUnit::Micro;
+        return true;
+    }
+    if (name == "ns") {
+        unit = TimeUnit::Nano;
+        return true;
+    }
+    return false;
+}
+
+inline bool parseTimeRef(const std::string& name, TimeRef& ref) {
+    if (name == "relative") {
+        ref = TimeRef::Relative;
+        return true;
+    }
+    if (name == "absolute") {
+        ref = TimeRef::Absolute;
+        return true;
+    }
+    return false;
+}
+
 // time_field / time_unit / time_ref default to automatic classification.
-// require_point_time stays on sapphire::Config and is applied by the ROS
-// wrapper, not by ingest().
+// Defaults match Config::Sensor::Lidar. require_point_time is not an ingest
+// input; LidarTimeSession applies it when a frame is committed.
 struct IngestConfig {
     std::string time_field = "auto";
     std::string time_unit = "auto";
@@ -233,11 +269,48 @@ inline std::string layoutNote(const CloudView& view) {
 
 }  // namespace detail
 
+// Search order is the wrapper order. time_stamp is an extra alias and must
+// not jump ahead of timestamp or t. "auto" and "none" are policy words, not
+// field names. TOML validation uses this same list.
+inline const char* const* timeFieldChoices() {
+    static const char* const names[] = {
+        "auto",
+        "none",
+        "offset_time",
+        "t",
+        "timestamp",
+        "time",
+        "time_stamp",
+        nullptr,
+    };
+    return names;
+}
+
+inline const char* const* timeUnitChoices() {
+    static const char* const names[] = {
+        "auto", "s", "ms", "us", "ns", nullptr};
+    return names;
+}
+
+inline const char* const* timeRefChoices() {
+    static const char* const names[] = {
+        "auto", "relative", "absolute", nullptr};
+    return names;
+}
+
 inline const std::vector<std::string>& timeFieldCandidates() {
-    // Wrapper order first. time_stamp is an extra alias and must not jump
-    // ahead of timestamp or t.
-    static const std::vector<std::string> names = {
-        "offset_time", "t", "timestamp", "time", "time_stamp"};
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> values;
+        for (const char* const* item = timeFieldChoices();
+             *item != nullptr;
+             ++item) {
+            const std::string name(*item);
+            if (name != "auto" && name != "none") {
+                values.push_back(name);
+            }
+        }
+        return values;
+    }();
     return names;
 }
 
@@ -298,15 +371,7 @@ inline TimeDecision classifyTime(
     }
 
     if (cfg.time_unit != "auto") {
-        if (cfg.time_unit == "s") {
-            decision.unit = TimeUnit::Seconds;
-        } else if (cfg.time_unit == "ms") {
-            decision.unit = TimeUnit::Milli;
-        } else if (cfg.time_unit == "us") {
-            decision.unit = TimeUnit::Micro;
-        } else if (cfg.time_unit == "ns") {
-            decision.unit = TimeUnit::Nano;
-        } else {
+        if (!parseTimeUnit(cfg.time_unit, decision.unit)) {
             decision.note = "time_unit must be auto|s|ms|us|ns";
             return decision;
         }
@@ -359,14 +424,12 @@ inline TimeDecision classifyTime(
     const double raw_min_s = raw_min * scale;
     bool absolute = false;
     if (cfg.time_ref != "auto") {
-        if (cfg.time_ref == "absolute") {
-            absolute = true;
-        } else if (cfg.time_ref == "relative") {
-            absolute = false;
-        } else {
+        TimeRef forced = TimeRef::Relative;
+        if (!parseTimeRef(cfg.time_ref, forced)) {
             decision.note = "time_ref must be auto|relative|absolute";
             return decision;
         }
+        absolute = forced == TimeRef::Absolute;
     } else if (std::abs(raw_min_s - header_stamp) <= tol) {
         absolute = true;
     } else if (std::abs(raw_min_s) <= tol) {
@@ -537,5 +600,91 @@ inline IngestResult ingest(const CloudView& view, const IngestConfig& cfg) {
     out.deskewable = out.time.ok && out.points.size() > 1;
     return out;
 }
+
+// Owns the lidar time policy for one stream: the ingest config, whether a
+// failed classification drops the frame, and the lock taken from the first
+// successful classification. Later scans reuse that field, unit, and
+// reference. Callers still turn sensor messages into CloudView and print
+// the Commit flags. ingest() does not mutate the session. commit() is not
+// thread-safe; the caller serializes frames. A non-finite header stamp is
+// the caller's check and must not be committed.
+class LidarTimeSession {
+public:
+    struct Commit {
+        bool accept = false;
+        std::string drop_reason;
+        bool just_locked = false;
+        bool warn_span_ratio = false;
+        bool warn_header_mismatch = false;
+        double locked_span_s = 0.0;
+        double span_s = 0.0;
+        double header_offset_s = 0.0;
+    };
+
+    LidarTimeSession() = default;
+
+    LidarTimeSession(IngestConfig config, bool require_point_time)
+        : config_(std::move(config))
+        , require_point_time_(require_point_time) {}
+
+    const IngestConfig& config() const { return config_; }
+    bool requirePointTime() const { return require_point_time_; }
+    bool locked() const { return locked_; }
+
+    IngestResult ingest(const CloudView& view) const {
+        return sapphire::sensor::ingest(view, config_);
+    }
+
+    Commit commit(const IngestResult& ingested) {
+        Commit decision;
+        if (ingested.points.empty()) {
+            decision.drop_reason = ingested.time.note.empty()
+                ? "no points"
+                : ingested.time.note;
+            return decision;
+        }
+        if (!ingested.time.ok && require_point_time_) {
+            decision.drop_reason = ingested.time.note;
+            return decision;
+        }
+
+        decision.accept = true;
+        decision.span_s = ingested.time.span_s;
+        decision.header_offset_s = ingested.time.header_offset_s;
+        decision.locked_span_s = locked_span_s_;
+        if (ingested.time.ok && !locked_) {
+            config_.time_field = ingested.time.field;
+            config_.time_unit = unitName(ingested.time.unit);
+            config_.time_ref = refName(ingested.time.ref);
+            locked_span_s_ = ingested.time.span_s;
+            locked_ = true;
+            decision.just_locked = true;
+            decision.locked_span_s = locked_span_s_;
+        } else if (
+            ingested.time.ok && locked_ && locked_span_s_ > 0.0
+            && !warned_span_ratio_) {
+            const double ratio = ingested.time.span_s / locked_span_s_;
+            if (ratio > 10.0 || ratio < 0.1) {
+                warned_span_ratio_ = true;
+                decision.warn_span_ratio = true;
+            }
+        }
+        if (
+            ingested.time.ok && ingested.time.header_mismatch
+            && !warned_header_mismatch_) {
+            warned_header_mismatch_ = true;
+            decision.warn_header_mismatch = true;
+        }
+        return decision;
+    }
+
+private:
+    IngestConfig config_;
+    bool require_point_time_ = false;
+    bool locked_ = false;
+    double locked_span_s_ = 0.0;
+    bool warned_span_ratio_ = false;
+    bool warned_header_mismatch_ = false;
+};
 
 }  // namespace sapphire::sensor
