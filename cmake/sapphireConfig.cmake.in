@@ -1,0 +1,19 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# VTK's imported target references MPI::MPI_C. A C++-only consumer does not
+# define that target unless C and MPI are found first.
+enable_language(C)
+find_dependency(MPI COMPONENTS C)
+find_dependency(Eigen3)
+find_dependency(spdlog)
+find_dependency(PCL)
+find_dependency(GTSAM)
+find_dependency(OpenMP)
+find_dependency(small_gicp)
+find_dependency(Threads)
+find_dependency(tomlplusplus 3.4.0)
+
+include("${CMAKE_CURRENT_LIST_DIR}/sapphireTargets.cmake")
+check_required_components(sapphire)

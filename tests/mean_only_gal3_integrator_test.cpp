@@ -1,4 +1,4 @@
-#include <sapphire/odometry/detail/integrate_measurement.hpp>
+#include "integrate_measurement.hpp"
 #include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
 
 #include <SO3.hpp>

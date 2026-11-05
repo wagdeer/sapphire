@@ -78,6 +78,7 @@ target_include_directories(sapphire PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/preintegration>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/lie>
     $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:include/sapphire/external/lie>
 )
 target_link_libraries(sapphire PUBLIC
     Eigen3::Eigen
@@ -233,9 +234,25 @@ endif()
 # TODO: add as modules are implemented:
 #   find_package(TBB)        → submap/odometry parallelism
 # Install
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    cmake/sapphireConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/sapphireConfig.cmake"
+    INSTALL_DESTINATION lib/cmake/sapphire)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/sapphireConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion)
 install(TARGETS sapphire EXPORT sapphireTargets)
 install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY external/lie/
+    DESTINATION include/sapphire/external/lie
+    FILES_MATCHING PATTERN "*.hpp")
 install(DIRECTORY cfg/ DESTINATION share/sapphire/cfg)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/sapphireConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/sapphireConfigVersion.cmake"
+    DESTINATION lib/cmake/sapphire)
 install(EXPORT sapphireTargets
     FILE sapphireTargets.cmake
     DESTINATION lib/cmake/sapphire
