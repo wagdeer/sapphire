@@ -1,6 +1,6 @@
 # 基准结果
 
-本页记录 2026-11-06 的基准重跑。除 Campus Road 3 Carol 外，轨迹图绘制完整估计轨迹。Carol 的图停在 784.746 s，即 3.299 s 无位姿间隔和发散发生前的最后一个位姿；表中的 ATE、路径长度和 GT 覆盖仍按完整运行统计。对齐变换由 GT 匹配点估计，随后应用到整条轨迹。起点用绿色圆点、图末尾用红色方点标记。
+本页记录 2026-11-06 的基准重跑，其中 Campus Road 3 Carol 已用 2026-11-07 的重放结果更新。所有轨迹图都绘制完整估计轨迹。对齐变换由 GT 匹配点估计，随后应用到整条轨迹。起点用绿色圆点、终点用红色方点标记。
 
 HILTI 使用稀疏控制点、2.0 s 关联；S3E 和 Newer College 使用 0.1 s 关联。ATE 为 SE(3) Umeyama 对齐后的平移 RMSE，不做尺度修正。
 
@@ -10,12 +10,12 @@ HILTI 使用稀疏控制点、2.0 s 关联；S3E 和 Newer College 使用 0.1 s 
 |---|---:|---:|---:|
 | HILTI 2022 完整结果 | 9 | 0.225670 | 0.061493 |
 | HILTI 2023 Site 1 Handheld | 5 | 0.068309 | 0.061729 |
-| S3E headline 18 | 18 | 1.939448 | 0.980836 |
+| S3E headline 18 | 18 | 1.303393 | 0.980836 |
 | Newer College | 5 | 0.263176 | 0.158747 |
 
 HILTI 2022 的 `exp03_construction_stairs` 本轮只覆盖 7/17 个控制点，因此未进入完整结果均值；`exp10` 和 `exp16` 也仅部分覆盖。所有有数值的逐条结果仍列在下方，并明确保留 partial 状态。
 
-Campus Road 3 Carol 覆盖整段记录：7,455 个估计位姿全部匹配到时间关联的 GT 样本（100.0%），对应 63,771 个密集 GT 样本中的 7,455 个。轨迹从 784.746 s 起的 3.299 s 无位姿间隔之后发生跳变，因此图只画发散前部分；表中 ATE 和路径长度包含完整运行。
+Campus Road 3 Carol 在 PGO 批量帧摄入更新后重新回放。7,348 个估计位姿全部匹配到时间关联的 GT 样本（100.0%），对应 63,771 个密集 GT 样本中的 7,348 个。轨迹在完整记录中保持连续，最大位姿间隔为 0.796 s，没有发生发散。
 
 ## 逐序列结果
 
@@ -44,7 +44,7 @@ Campus Road 3 Carol 覆盖整段记录：7,455 个估计位姿全部匹配到时
 | Site 2 · Robot 2 | site2_robot_2 | Reference | sparse ATE | — | — | — | — | failed | no | — |
 | Campus Road 3 | S3E_Campus_Road_3 | Alpha | ATE | 0.906 | 100.0% | 940.5 | 983.3 | ok | yes | [plot](trajectories/s3e_campus_road_3_alpha.png) |
 | Campus Road 3 | S3E_Campus_Road_3 | Bob | ATE | 4.420 | 100.0% | 937.6 | 967.6 | ok | yes | [plot](trajectories/s3e_campus_road_3_bob.png) |
-| Campus Road 3 | S3E_Campus_Road_3 | Carol | ATE | 12.660 | 100.0% | 979.2 | 986.9 | warning；完整运行指标；7455/7455 个估计位姿完成关联（对应 7455/63771 个 GT 样本）；图截断于 784.746 s 的发散前位姿 | yes | [plot](trajectories/s3e_campus_road_3_carol.png) |
+| Campus Road 3 | S3E_Campus_Road_3 | Carol | ATE | 1.211 | 100.0% | 948.9 | 986.9 | ok；完整运行；7348/7348 个估计位姿完成关联（对应 7348/63771 个 GT 样本）；最大位姿间隔 0.796 s | yes | [plot](trajectories/s3e_campus_road_3_carol.png) |
 | Dormitory 1 | S3E_Dormitory_1 | Alpha | ATE | 0.490 | 96.1% | 724.0 | 727.0 | ok | yes | [plot](trajectories/s3e_dormitory_1_alpha.png) |
 | Dormitory 1 | S3E_Dormitory_1 | Bob | ATE | 1.474 | 96.2% | 723.2 | 719.3 | ok | yes | [plot](trajectories/s3e_dormitory_1_bob.png) |
 | Dormitory 1 | S3E_Dormitory_1 | Carol | ATE | 0.813 | 95.4% | 737.9 | 721.9 | warning; 3 GT gap(s) exceed 5.000 s; gaps were not interpolated across | yes | [plot](trajectories/s3e_dormitory_1_carol.png) |
@@ -93,7 +93,7 @@ S3E Laboratory 1–4 只有起终点真值，因此使用 endpoint error，不�
 
 ## 轨迹对比
 
-轨迹图按数据集分组；列表也包含未进入汇总均值的运行。Campus Road 3 Carol 的图明确截断在发散前最后一个位姿。
+轨迹图按数据集分组；列表也包含未进入汇总均值的运行。
 
 | 轨迹结果 | 轨迹结果 |
 |---|---|

@@ -37,7 +37,7 @@ distance.
 |---|---:|---|---:|---:|
 | HILTI 2022 · complete results | 9 | 86 matched control points | 0.2257 m | 0.0615 m |
 | HILTI 2023 Site 1 handheld | 5 | 346.4 m of control-point polylines | 0.0683 m | 0.0617 m |
-| S3E | 18 | 11.39 km of ground-truth path | 1.9394 m | 0.9808 m |
+| S3E | 18 | 11.39 km of ground-truth path | 1.3034 m | 0.9808 m |
 | Newer College 2020 | 5 | 5.94 km of ground-truth path | 0.2632 m | 0.1587 m |
 
 HILTI uses sparse control points and a 2 s association window. S3E and Newer

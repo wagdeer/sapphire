@@ -30,6 +30,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -590,22 +591,41 @@ private:
     }
 
     void copyPendingFrames() {
+        const size_t begin = frames_.size();
         std::vector<InputFrame> pending;
         {
             std::lock_guard<std::mutex> lock(input_mutex_);
             pending.assign(
                 input_frames_.begin()
-                    + static_cast<std::ptrdiff_t>(frames_.size()),
+                    + static_cast<std::ptrdiff_t>(begin),
                 input_frames_.end());
         }
+        if (pending.empty()) {
+            return;
+        }
+
+        // Transform the whole batch before committing it. A failure leaves
+        // frames_ unchanged, and the input clouds stay for the next attempt.
+        // The input entries themselves stay: their index is the keyframe id.
+        std::vector<GraphFrame> ingested;
+        ingested.reserve(pending.size());
         for (const InputFrame& input : pending) {
-            frames_.push_back({
+            ingested.push_back({
                 transformedCloud(
                     input.cloud_odom, input.T_odom_lidar.inverse()),
                 input.T_odom_lidar,
                 input.stamp,
                 input.travel_distance,
             });
+        }
+        frames_.insert(
+            frames_.end(),
+            std::make_move_iterator(ingested.begin()),
+            std::make_move_iterator(ingested.end()));
+
+        std::lock_guard<std::mutex> lock(input_mutex_);
+        for (size_t i = 0; i < pending.size(); ++i) {
+            input_frames_[begin + i].cloud_odom.reset();
         }
     }
 

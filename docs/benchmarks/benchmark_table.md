@@ -1,6 +1,6 @@
 # Benchmark results
 
-This page is generated from the 2026-11-06 benchmark run. Most trajectory plots draw the complete estimate from its first to last pose. Campus Road 3 Carol is the exception: its plot stops at 784.746 s immediately before a 3.299 s timestamp gap and divergence. Its ATE, path length, and GT coverage still describe the full run. The alignment is estimated from matched GT points and then applied to the full trajectory. Green circles mark starts and red squares mark the plotted end.
+This page is generated from the 2026-11-06 benchmark run, with Campus Road 3 Carol updated from a 2026-11-07 replay. Every trajectory plot draws the complete estimate from its first to last pose. The alignment is estimated from matched GT points and then applied to the full trajectory. Green circles mark starts and red squares mark ends.
 
 HILTI uses sparse control points and a 2.0 s association window. S3E and Newer College use 0.1 s. ATE is translation-part RMSE after SE(3) Umeyama alignment without scale correction.
 
@@ -10,12 +10,12 @@ HILTI uses sparse control points and a 2.0 s association window. S3E and Newer C
 |---|---:|---:|---:|
 | HILTI 2022 complete results | 9 | 0.225670 | 0.061493 |
 | HILTI 2023 Site 1 Handheld | 5 | 0.068309 | 0.061729 |
-| S3E headline 18 | 18 | 1.939448 | 0.980836 |
+| S3E headline 18 | 18 | 1.303393 | 0.980836 |
 | Newer College | 5 | 0.263176 | 0.158747 |
 
 HILTI 2022 `exp03_construction_stairs` covered only 7/17 control points in this run and is excluded from the complete-result mean. `exp10` and `exp16` were also partial. Every numeric result is still listed below with its actual status.
 
-Campus Road 3 Carol covers the complete recording: 7,455 of 7,455 estimated poses have a timestamp-associated GT sample (100.0%), representing 7,455 of 63,771 dense GT samples. The trajectory jumps after a 3.299 s pose gap beginning at 784.746 s, so the plot omits the post-divergence segment; the reported ATE and path lengths include the full run.
+Campus Road 3 Carol was replayed after the PGO batch-ingest update. All 7,348 estimated poses have a timestamp-associated GT sample (100.0%), representing 7,348 of 63,771 dense GT samples. The estimate remains continuous through the full recording, with a maximum pose gap of 0.796 s and no divergence.
 
 ## Per-sequence results
 
@@ -44,7 +44,7 @@ Campus Road 3 Carol covers the complete recording: 7,455 of 7,455 estimated pose
 | Site 2 · Robot 2 | site2_robot_2 | Reference | sparse ATE | — | — | — | — | failed | no | — |
 | Campus Road 3 | S3E_Campus_Road_3 | Alpha | ATE | 0.906 | 100.0% | 940.5 | 983.3 | ok | yes | [plot](trajectories/s3e_campus_road_3_alpha.png) |
 | Campus Road 3 | S3E_Campus_Road_3 | Bob | ATE | 4.420 | 100.0% | 937.6 | 967.6 | ok | yes | [plot](trajectories/s3e_campus_road_3_bob.png) |
-| Campus Road 3 | S3E_Campus_Road_3 | Carol | ATE | 12.660 | 100.0% | 979.2 | 986.9 | warning; full-run metrics; 7455/7455 associated estimate poses (7455/63771 GT samples); plot truncated at 784.746 s before divergence | yes | [plot](trajectories/s3e_campus_road_3_carol.png) |
+| Campus Road 3 | S3E_Campus_Road_3 | Carol | ATE | 1.211 | 100.0% | 948.9 | 986.9 | ok; full run; 7348/7348 associated estimate poses (7348/63771 GT samples); max pose gap 0.796 s | yes | [plot](trajectories/s3e_campus_road_3_carol.png) |
 | Dormitory 1 | S3E_Dormitory_1 | Alpha | ATE | 0.490 | 96.1% | 724.0 | 727.0 | ok | yes | [plot](trajectories/s3e_dormitory_1_alpha.png) |
 | Dormitory 1 | S3E_Dormitory_1 | Bob | ATE | 1.474 | 96.2% | 723.2 | 719.3 | ok | yes | [plot](trajectories/s3e_dormitory_1_bob.png) |
 | Dormitory 1 | S3E_Dormitory_1 | Carol | ATE | 0.813 | 95.4% | 737.9 | 721.9 | warning; 3 GT gap(s) exceed 5.000 s; gaps were not interpolated across | yes | [plot](trajectories/s3e_dormitory_1_carol.png) |
@@ -93,7 +93,7 @@ S3E Laboratory 1–4 provide endpoint-only ground truth and use endpoint error; 
 
 ## Trajectory overlays
 
-Plots are grouped by dataset and also include runs outside the headline means. The Campus Road 3 Carol plot is explicitly truncated at its pre-divergence pose.
+Plots are grouped by dataset and also include runs outside the headline means.
 
 | 轨迹结果 | 轨迹结果 |
 |---|---|
