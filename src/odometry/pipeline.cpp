@@ -329,9 +329,8 @@ void OdometryPipeline::rebasePropagation(
 }
 
 bool OdometryPipeline::waitForImuCoverage(double end_stamp) {
-    constexpr auto kImuWaitTimeout = std::chrono::milliseconds(500);
     std::unique_lock<std::mutex> lock(imu_mutex_);
-    const bool covered = imu_cv_.wait_for(lock, kImuWaitTimeout, [this, end_stamp]() {
+    const bool covered = imu_cv_.wait_for(lock, kImuCoverageWait, [this, end_stamp]() {
         return !imu_buffer_.empty()
             && imu_buffer_.back().stamp >= end_stamp;
     });

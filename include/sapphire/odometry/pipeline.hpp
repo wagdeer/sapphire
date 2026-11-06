@@ -12,6 +12,7 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -24,9 +25,10 @@ namespace sapphire {
 ///
 /// Lifecycle:
 ///   1. UNINITIALIZED: pushImu feeds raw IMU to ImuInitializer.
-///      pushLidar is silently skipped until initialization converges.
-///   2. INITIALIZED: IMU bias-corrected and buffered. pushLidar
-///      runs full pipeline (deskew → downsample → registration → …).
+///      pushLidar returns until initialization converges.
+///   2. INITIALIZED: IMU is bias-corrected and buffered. The first
+///      scan sets the registration target. Later scans run the full
+///      pipeline and may block for IMU coverage; see pushLidar().
 ///
 /// Zero ROS dependency, pure C++17 + Eigen.
 class OdometryPipeline {
@@ -48,11 +50,29 @@ public:
         return *imu_init_result_;
     }
 
-    /// Feed a LiDAR scan. Silently skipped until IMU is initialized.
+    /// Wall-clock budget for a later scan to wait until buffered IMU covers
+    /// its newest remaining point time. Sensor time and ROS time do not
+    /// extend this wait.
+    static constexpr std::chrono::milliseconds kImuCoverageWait{500};
+
+    /// Feed one LiDAR scan.
+    ///
+    /// Returns immediately, leaving latestResult() unchanged, until IMU
+    /// initialization has completed, or when `points` is null or empty.
+    /// The first accepted scan does not wait.
+    ///
+    /// Each later scan waits until the newest buffered IMU sample reaches
+    /// the latest finite point timestamp kept by preprocessing, for at most
+    /// kImuCoverageWait. The IMU mutex is released while waiting, so
+    /// pushImu() on another thread can satisfy the wait. If it is still
+    /// uncovered at the deadline, the scan is dropped and latestResult()
+    /// stays unchanged. A single-threaded caller must push IMU through
+    /// that scan end before calling pushLidar().
     void pushLidar(double stamp, const PointCloudConstPtr& points);
 
     /// Feed raw IMU data. During initialization, routed to ImuInitializer.
     /// After initialization, scaled to m/s², bias-corrected, and buffered.
+    /// Buffering a sample wakes a pushLidar() waiting for coverage.
     void pushImu(const ImuData& imu);
 
     /// Retrieve the most recent LiDAR result in the map frame. When PGO is
@@ -132,7 +152,9 @@ private:
     /// Motion-compensate a preprocessed scan using buffered IMU data.
     DeskewResult deskewPointcloud(const PointCloudConstPtr& points);
 
-    /// Wait until buffered IMU measurements cover the requested scan end.
+    /// Wait until buffered IMU covers end_stamp, for at most
+    /// kImuCoverageWait. The IMU mutex is released while waiting.
+    /// Timeout returns false and the caller drops the scan.
     bool waitForImuCoverage(double end_stamp);
 
     /// Integrate one new IMU sample from the current corrected LiDAR baseline.
