@@ -24,6 +24,12 @@ public:
         const Isometry3d& T_world_lidar,
         const PointCloudConstPtr& cloud_world);
 
+    /// Replace all local history with one current scan. Used only after the
+    /// active map has repeatedly failed to produce correspondences.
+    void resetKeyframes(
+        const Isometry3d& T_world_lidar,
+        const PointCloudConstPtr& cloud_world);
+
     size_t keyframeCount() const { return keyframes_.size(); }
     const std::vector<size_t>& activeKeyframeIndices() const {
         return active_indices_;

@@ -522,6 +522,8 @@ const IntField kInts[] = {
     INT("imu.init.min_samples", imu.init.min_samples, IntRule::Positive),
     INT("odometry.submap.max_keyframes",
         odometry.submap.max_keyframes, IntRule::Positive),
+    INT("odometry.submap.recovery_after_rejections",
+        odometry.submap.recovery_after_rejections, IntRule::None),
     // None: one message covers the whole integer group.
     INT("registration.gicp.max_iterations",
         registration.gicp.max_iterations, IntRule::None),
@@ -703,6 +705,10 @@ void validateConfig(const Config& config) {
     }
 
     const auto& gicp = config.registration.gicp;
+    if (config.odometry.submap.recovery_after_rejections < 0) {
+        throw std::invalid_argument(
+            "odometry.submap.recovery_after_rejections must be nonnegative");
+    }
     if (gicp.max_iterations <= 0 || gicp.k_correspondences <= 0
         || gicp.min_num_points <= 0) {
         throw std::invalid_argument(

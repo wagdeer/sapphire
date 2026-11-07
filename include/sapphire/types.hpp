@@ -176,6 +176,9 @@ struct Config {
             double splitting_rotation = 0.7853981633974483;  // 45 degrees
             int max_keyframes = 10;
             double voxel_size = 0.25;
+            /// Reset the local registration map after this many consecutive
+            /// rejected scans. Zero disables recovery.
+            int recovery_after_rejections = 0;
         } submap;
         struct Observer {
             // DLIO geometric-observer gains.

@@ -123,6 +123,12 @@ Attempt 2A raised the GICP iteration cap from 32 to 64. It extended one wrong
 `exp09`; it was rejected and reverted. See
 [the Gate 2A report](reports/gate-2a-convergence-budget.md).
 
+Probe 3A added bounded local-map reset after repeated registration failures.
+It restored 10/14 `exp10` control points and improved `exp09` P95 by about 28%,
+but the recovered `exp10` segment still has a multi-metre offset. It is accepted
+as a coverage recovery mechanism with that limitation; see
+[the Gate 3A report](reports/gate-3a-map-reset-recovery.md).
+
 Changes:
 
 - classify registrations as excellent, partial, degenerate, or invalid;

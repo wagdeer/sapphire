@@ -176,6 +176,29 @@ void testVoxelDownsampling() {
            "downsampled points must retain homogeneous coordinate w=1");
 }
 
+void testResetKeyframesStartsNewLocalMap() {
+    sapphire::Config config;
+    config.odometry.submap.voxel_size = 0.01;
+    sapphire::SubmapManager manager(config.odometry.submap);
+    manager.addKeyframe(makePose(0.0), makeCloud(0.0f));
+    manager.addKeyframe(makePose(5.0), makeCloud(5.0f));
+    const size_t revision = manager.targetRevision();
+
+    manager.resetKeyframes(makePose(20.0), makeCloud(20.0f));
+
+    expect(manager.keyframeCount() == 1,
+           "recovery reset must retain exactly the current scan");
+    expect(manager.activeKeyframeIndices()
+               == std::vector<size_t>{0},
+           "recovery reset must activate the new keyframe");
+    expect(manager.storedPointCount() == 1,
+           "recovery reset must discard old keyframe memory");
+    expect(manager.targetRevision() > revision,
+           "recovery reset must rebuild the registration target");
+    expect(manager.target() != nullptr && manager.target()->size() == 1,
+           "recovery reset target must contain the current scan");
+}
+
 }  // namespace
 
 int main() {
@@ -184,6 +207,7 @@ int main() {
     testVoxelDownsampling();
     testPrunesStaleKeyframes();
     testPrunePreservesActiveIndices();
+    testResetKeyframesStartsNewLocalMap();
     std::cout << "All submap tests passed\n";
     return EXIT_SUCCESS;
 }

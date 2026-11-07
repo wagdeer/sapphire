@@ -60,6 +60,17 @@ bool SubmapManager::addKeyframe(
     return target_changed;
 }
 
+void SubmapManager::resetKeyframes(
+    const Isometry3d& T_world_lidar,
+    const PointCloudConstPtr& cloud_world)
+{
+    keyframes_.clear();
+    active_indices_.clear();
+    target_.reset();
+    stored_point_count_ = 0;
+    addKeyframe(T_world_lidar, cloud_world);
+}
+
 std::vector<size_t> SubmapManager::selectNearest(
     const Eigen::Vector3d& position) const
 {

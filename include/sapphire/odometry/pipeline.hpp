@@ -129,7 +129,8 @@ private:
     void processLidarScan(const PreprocessResult& preprocessed);
     void maybeUpdateSubmapTarget(
         const Isometry3d& T_world_lidar,
-        const PointCloudConstPtr& cloud);
+        const PointCloudConstPtr& cloud,
+        bool force_keyframe = false);
     void finalizeImuInitialization(
         ImuInitializer::Result&& result,
         const ImuData& trigger_sample);
@@ -244,6 +245,8 @@ private:
     std::size_t registration_reject_streak_max_ = 0;
     std::size_t registration_accept_streak_ = 0;
     std::size_t map_update_count_ = 0;
+    std::size_t recovery_count_ = 0;
+    int recovery_build_frames_remaining_ = 0;
     bool warned_rigid_deskew_ = false;
 };
 

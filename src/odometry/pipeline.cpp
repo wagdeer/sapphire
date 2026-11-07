@@ -15,6 +15,8 @@ namespace sapphire {
 namespace {
 
 constexpr double kImuGapWarningSec = 0.1;
+constexpr int kRecoveryBuildFrames = 5;
+constexpr std::size_t kMaxRecoveryAttempts = 3;
 
 bool isFiniteImu(const ImuData& imu) {
     return std::isfinite(imu.stamp)
@@ -406,10 +408,12 @@ bool OdometryPipeline::initializeFirstLidarTarget(
 
 void OdometryPipeline::maybeUpdateSubmapTarget(
     const Isometry3d& T_world_lidar,
-    const PointCloudConstPtr& cloud)
+    const PointCloudConstPtr& cloud,
+    bool force_keyframe)
 {
     if (!cloud
-        || !submap_manager_.shouldAddKeyframe(T_world_lidar)) {
+        || (!force_keyframe
+            && !submap_manager_.shouldAddKeyframe(T_world_lidar))) {
         return;
     }
 
@@ -490,6 +494,49 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
             registration_attempt_count_,
             100.0 * static_cast<double>(registration_reject_count_)
                 / static_cast<double>(registration_attempt_count_));
+    }
+
+    const std::size_t recovery_threshold =
+        static_cast<std::size_t>(
+            config_.odometry.submap.recovery_after_rejections);
+    if (!artifacts.result.accepted
+        && recovery_threshold > 0
+        && registration_reject_streak_ >= recovery_threshold
+        && recovery_count_ < kMaxRecoveryAttempts) {
+        const Isometry3d T_world_lidar_recovery =
+            deskewed.T_world_lidar_ref;
+        submap_manager_.resetKeyframes(
+            T_world_lidar_recovery,
+            registration_source);
+        registration_.setTarget(submap_manager_.target());
+        registration_reject_streak_ = 0;
+        recovery_build_frames_remaining_ = kRecoveryBuildFrames;
+        ++recovery_count_;
+        ++map_update_count_;
+        pgo_backend_.addFrame(
+            registration_source,
+            T_world_lidar_recovery,
+            deskewed.reference_stamp);
+        rememberPoseGraphSample(
+            T_world_lidar_recovery,
+            deskewed.v_world_ref,
+            deskewed.reference_stamp);
+        {
+            std::lock_guard<std::mutex> lock(output_mutex_);
+            latest_deskewed_ = registration_source;
+            latest_result_.T_world_lidar = T_world_lidar_recovery;
+            latest_result_.v_world = deskewed.v_world_ref;
+            latest_result_.stamp = deskewed.reference_stamp;
+            latest_result_.converged = false;
+        }
+        spdlog::warn(
+            "[pipeline] reset local registration map after {} consecutive "
+            "rejections at stamp={:.6f}; attempt={}/{}",
+            recovery_threshold,
+            deskewed.reference_stamp,
+            recovery_count_,
+            kMaxRecoveryAttempts);
+        return;
     }
 
     if (artifacts.result.accepted && !useEskf()) {
@@ -613,6 +660,7 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
             "iter={} reg_err={:.6e} rot_min={:.3e} trans_min={:.3e} "
             "rot_cond={:.3e} trans_cond={:.3e} cond_valid={} "
             "reject_streak={} reject_streak_max={} accepts={} map_updates={} "
+            "recoveries={} "
             "acc={} fus={} "
             "try={:.3f}m sens={:.3f}m rot={:.1f}deg inj={:.3f}m "
             "v={:.2f} ({:.2f},{:.2f},{:.2f}) "
@@ -634,6 +682,7 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
             registration_reject_streak_max_,
             registration_accept_streak_,
             map_update_count_,
+            recovery_count_,
             artifacts.result.accepted ? 1 : 0,
             fusion_accepted ? 1 : 0,
             artifacts.result.attempted_trans_m,
@@ -659,9 +708,17 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
 
     if (fusion_accepted) {
         const std::size_t keyframes_before = keyframeCount();
-        maybeUpdateSubmapTarget(T_world_lidar_out, cloud_out);
+        const bool force_keyframe =
+            recovery_build_frames_remaining_ > 0;
+        maybeUpdateSubmapTarget(
+            T_world_lidar_out,
+            cloud_out,
+            force_keyframe);
         if (keyframeCount() > keyframes_before) {
             ++map_update_count_;
+        }
+        if (force_keyframe) {
+            --recovery_build_frames_remaining_;
         }
     }
     {

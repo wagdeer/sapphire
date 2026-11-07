@@ -71,6 +71,7 @@ splitting_distance = 0.75
 splitting_rotation = 0.02
 max_keyframes = 5
 voxel_size = 0.05
+recovery_after_rejections = 5
 
 [registration]
 type = "VGICP"
