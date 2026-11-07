@@ -12,9 +12,11 @@ import statistics
 
 QUALITY_RE = re.compile(
     r"\[registration-quality\].*?accepted=(?P<accepted>\w+) "
+    r"(?:quality=(?P<quality>\d+) map=(?P<map_allowed>\w+) )?"
     r"converged=(?P<converged>\w+) source=(?P<source>\d+) "
     r"inliers=(?P<inliers>\d+) ratio=(?P<ratio>[0-9.eE+-]+) "
     r"iterations=(?P<iterations>\d+) error=(?P<error>[0-9.eE+-]+) "
+    r"(?:error_per_inlier=(?P<error_per_inlier>[A-Za-z0-9.eE+-]+) )?"
     r"rot_min=(?P<rot_min>[0-9.eE+-]+) "
     r"trans_min=(?P<trans_min>[0-9.eE+-]+) "
     r"rot_cond=(?P<rot_cond>[0-9.eE+-]+) "
@@ -61,12 +63,24 @@ def analyze_log(path: Path) -> dict:
             record = match.groupdict()
             quality.append({
                 "accepted": record["accepted"] == "true",
+                "quality": (
+                    int(record["quality"])
+                    if record.get("quality") is not None else None
+                ),
+                "map_allowed": (
+                    record["map_allowed"] == "true"
+                    if record.get("map_allowed") is not None else None
+                ),
                 "converged": record["converged"] == "true",
                 "source": int(record["source"]),
                 "inliers": int(record["inliers"]),
                 "ratio": float(record["ratio"]),
                 "iterations": int(record["iterations"]),
                 "error": float(record["error"]),
+                "error_per_inlier": (
+                    float(record["error_per_inlier"])
+                    if record.get("error_per_inlier") is not None else None
+                ),
                 "rot_min": float(record["rot_min"]),
                 "trans_min": float(record["trans_min"]),
                 "rot_cond": float(record["rot_cond"]),
@@ -123,6 +137,11 @@ def analyze_log(path: Path) -> dict:
         "log": str(path),
         "quality_samples": len(quality),
         "accepted": sum(record["accepted"] for record in quality),
+        "healthy": sum(record["quality"] == 2 for record in quality),
+        "degraded": sum(record["quality"] == 1 for record in quality),
+        "map_updates_allowed": sum(
+            record["map_allowed"] is True for record in quality
+        ),
         "rejected": sum(rejected),
         "zero_inliers": sum(zero_inlier),
         "longest_zero_inlier_run": longest_run(zero_inlier),

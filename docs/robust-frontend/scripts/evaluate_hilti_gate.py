@@ -14,6 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from evo.core import metrics, sync
+from evo.core.geometry import GeometryException
 from evo.core.trajectory import PoseTrajectory3D
 from evo.main_ape import ape as evo_ape
 from scipy.spatial.transform import Rotation
@@ -136,13 +137,18 @@ def evaluate_case(case: dict, run_root: Path, data_root: Path) -> dict:
         record["status"] = "insufficient_matches"
         return record
 
-    result = evo_ape(
-        gt_sync,
-        estimate_sync,
-        metrics.PoseRelation.translation_part,
-        align=True,
-        correct_scale=False,
-    )
+    try:
+        result = evo_ape(
+            gt_sync,
+            estimate_sync,
+            metrics.PoseRelation.translation_part,
+            align=True,
+            correct_scale=False,
+        )
+    except GeometryException as exc:
+        record["status"] = "alignment_failed"
+        record["evaluation_error"] = str(exc)
+        return record
     errors = np.asarray(result.np_arrays["error_array"], dtype=float)
     complete = (
         gt_sync.num_poses == gt.num_poses
