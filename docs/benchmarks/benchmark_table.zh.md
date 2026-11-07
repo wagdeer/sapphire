@@ -17,6 +17,90 @@ HILTI 2022 的 `exp03_construction_stairs` 本轮只覆盖 7/17 个控制点，�
 
 Campus Road 3 Carol 在 PGO 批量帧摄入更新后重新回放。7,348 个估计位姿全部匹配到时间关联的 GT 样本（100.0%），对应 63,771 个密集 GT 样本中的 7,348 个。轨迹在完整记录中保持连续，最大位姿间隔为 0.796 s，没有发生发散。
 
+## 跨管线基线
+
+另一次 evalio 0.6.1 评测（`evalio_20261107`）对 KISS-ICP、DLIO 和 GenZ-ICP
+跑了本地所有具有内置 adapter 的记录，包括 HILTI 2022 的 `basement_2`、
+`attic_to_upper_gallery_2`，以及 Newer College 2020 的全部 5 条序列。
+21 个算法/序列组合中 17 个完整完成，4 个 GenZ-ICP 运行中途停止；部分轨迹和
+指标都保留。HILTI 2023 与 S3E 因 evalio 0.6.1 没有内置 adapter 而未纳入。
+
+### Newer College 2020 · 与 Sapphire 同口径
+
+保存的 evalio 轨迹按 0.1 s 关联后，重新使用 SE(3) Umeyama 对齐、不做尺度修正，
+计算平移 RMSE。这与下方 Sapphire Newer College 结果的指标定义一致，因此 5 条
+序列的汇总可以直接比较。Sapphire 数值来自当前 benchmark，并非在同一个 evalio
+容器内重新回放得到。
+
+| 管线 | 版本 | 完整运行数 | 平均 ATE (m) | 中位数 ATE (m) |
+|---|---|---:|---:|---:|
+| Sapphire | 当前 benchmark | 5/5 | 0.263176 | 0.158747 |
+| DLIO | 1.1.1 | 5/5 | 0.221192 | 0.164614 |
+| KISS-ICP | 1.3.0 | 5/5 | 0.540744 | 0.583880 |
+| GenZ-ICP | 0.3.2 | 1/5 | 0.133740 | 0.133740 |
+
+GenZ-ICP 只完整完成了 `quad_with_dynamics`，所以它的单条均值不能视为 5 条序列
+对比。下方仍保留 GenZ-ICP 的部分结果，但它们不会进入任何完整运行汇总。
+
+### evalio 原始指标
+
+下表保留 evalio 原生口径：最近时间戳关联和 first-pose alignment。它不能与
+Sapphire 表格中的 SE(3) Umeyama 数值混为同一排名。
+
+| 数据集 | 管线 | 版本 | 完整运行数 | 平均 ATE (m) | 中位数 ATE (m) |
+|---|---|---|---:|---:|---:|
+| HILTI 2022 | KISS-ICP | 1.3.0 | 2/2 | 10.552516 | 10.552516 |
+| HILTI 2022 | DLIO | 1.1.1 | 2/2 | 16.817070 | 16.817070 |
+| HILTI 2022 | GenZ-ICP | 0.3.2 | 2/2 | 10.192442 | 10.192442 |
+| Newer College 2020 | KISS-ICP | 1.3.0 | 5/5 | 1.028167 | 0.803811 |
+| Newer College 2020 | DLIO | 1.1.1 | 5/5 | 2.686118 | 2.831087 |
+| Newer College 2020 | GenZ-ICP | 0.3.2 | 1/5 | 0.181977 | 0.181977 |
+
+### evalio 逐序列结果
+
+`SE(3)` 列用上文的 Sapphire 同口径重新计算保存的 Newer College 轨迹。
+标为 `partial` 的数值只覆盖失败运行已保存的前缀，不能作为完整结果参与排名。
+HILTI 在 evalio 中使用的真值是密集 `*_imu.txt`，因此这里不报告对应的
+稀疏控制点 SE(3) 数值。
+
+| 数据集 | 序列 | 管线 | 状态 | 位姿覆盖 | evalio ATE (m) | SE(3) ATE (m) | 轨迹图 |
+|---|---|---|---|---:|---:|---:|---|
+| HILTI 2022 | attic_to_upper_gallery_2 | KISS-ICP | complete | 100.0% | 12.445 | — | [plot](evalio/hilti_2022__attic_to_upper_gallery_2.png) |
+| HILTI 2022 | attic_to_upper_gallery_2 | DLIO | complete | 100.0% | 17.125 | — | [plot](evalio/hilti_2022__attic_to_upper_gallery_2.png) |
+| HILTI 2022 | attic_to_upper_gallery_2 | GenZ-ICP | complete | 100.0% | 20.191 | — | [plot](evalio/hilti_2022__attic_to_upper_gallery_2.png) |
+| HILTI 2022 | basement_2 | KISS-ICP | complete | 100.0% | 8.660 | — | [plot](evalio/hilti_2022__basement_2.png) |
+| HILTI 2022 | basement_2 | DLIO | complete | 100.0% | 16.509 | — | [plot](evalio/hilti_2022__basement_2.png) |
+| HILTI 2022 | basement_2 | GenZ-ICP | complete | 100.0% | 0.194 | — | [plot](evalio/hilti_2022__basement_2.png) |
+| Newer College 2020 | dynamic_spinning | KISS-ICP | complete | 100.0% | 0.804 | 0.584 | [plot](evalio/newer_college_2020__dynamic_spinning.png) |
+| Newer College 2020 | dynamic_spinning | DLIO | complete | 100.0% | 0.115 | 0.095 | [plot](evalio/newer_college_2020__dynamic_spinning.png) |
+| Newer College 2020 | dynamic_spinning | GenZ-ICP | fail; 557/1202 poses | 46.3% | 11.529 | 9.426 partial | [plot](evalio/newer_college_2020__dynamic_spinning.png) |
+| Newer College 2020 | long_experiment | KISS-ICP | complete | 100.0% | 1.924 | 1.057 | [plot](evalio/newer_college_2020__long_experiment.png) |
+| Newer College 2020 | long_experiment | DLIO | complete | 100.0% | 2.831 | 0.377 | [plot](evalio/newer_college_2020__long_experiment.png) |
+| Newer College 2020 | long_experiment | GenZ-ICP | fail; 13088/26560 poses | 49.3% | 0.979 | 0.335 partial | [plot](evalio/newer_college_2020__long_experiment.png) |
+| Newer College 2020 | parkland_mound | KISS-ICP | complete | 100.0% | 0.505 | 0.279 | [plot](evalio/newer_college_2020__parkland_mound.png) |
+| Newer College 2020 | parkland_mound | DLIO | complete | 100.0% | 4.013 | 0.165 | [plot](evalio/newer_college_2020__parkland_mound.png) |
+| Newer College 2020 | parkland_mound | GenZ-ICP | fail; 1630/5009 poses | 32.5% | 1.517 | 1.459 partial | [plot](evalio/newer_college_2020__parkland_mound.png) |
+| Newer College 2020 | quad_with_dynamics | KISS-ICP | complete | 100.0% | 0.247 | 0.187 | [plot](evalio/newer_college_2020__quad_with_dynamics.png) |
+| Newer College 2020 | quad_with_dynamics | DLIO | complete | 100.0% | 1.109 | 0.123 | [plot](evalio/newer_college_2020__quad_with_dynamics.png) |
+| Newer College 2020 | quad_with_dynamics | GenZ-ICP | complete | 100.0% | 0.182 | 0.134 | [plot](evalio/newer_college_2020__quad_with_dynamics.png) |
+| Newer College 2020 | short_experiment | KISS-ICP | complete | 100.0% | 1.661 | 0.597 | [plot](evalio/newer_college_2020__short_experiment.png) |
+| Newer College 2020 | short_experiment | DLIO | complete | 100.0% | 5.363 | 0.346 | [plot](evalio/newer_college_2020__short_experiment.png) |
+| Newer College 2020 | short_experiment | GenZ-ICP | fail; 6083/15302 poses | 39.8% | 1.094 | 0.299 partial | [plot](evalio/newer_college_2020__short_experiment.png) |
+
+![evalio ATE 总览](evalio/ate_overview.png)
+
+总览图使用与 evalio 完全相同的原生口径加入 Sapphire：对 evalio 密集 GT 做最近
+时间戳关联和 first-pose alignment。Sapphire 的原始完整轨迹先转换到对应数据集的
+IMU 帧再评测。该图与上方的 SE(3) 表口径不同。图中只包含完整运行；GenZ-ICP
+失败前保留的部分轨迹仍在逐序列表里。Sapphire 数值见
+[sapphire_evalio_native_ate.csv](evalio/sapphire_evalio_native_ate.csv)。
+
+完整的 evalio 结果表见 [ate_summary.csv](evalio/ate_summary.csv)；
+重新计算的 Newer College SE(3) 数值见
+[newer_college_se3_ate.csv](evalio/newer_college_se3_ate.csv)。运行来源记录在
+[run_manifest.json](evalio/run_manifest.json)，对应配置为
+[evalio_baseline.yaml](evalio/evalio_baseline.yaml)。
+
 ## 逐序列结果
 
 | 数据 | 序列 | Agent | 指标 | 结果 (m) | GT 覆盖 | 估计长度 (m) | GT 长度 (m) | 状态 | 计入均值 | 轨迹 |
@@ -87,7 +171,7 @@ Campus Road 3 Carol 在 PGO 批量帧摄入更新后重新回放。7,348 个估�
 ## 评测异常
 
 - **Site 2 · Handheld 6 / site2_handheld_6 / Reference**: TrajectoryError: evo APE calculation failed: Degenerate covariance rank, Umeyama alignment is not possible
-- **Site 2 · Robot 2 / site2_robot_2 / Reference**: ValueError: /workspace/results/nightly_2026-11-06/hilti_2023/site2_robot_2/trajectory.tum: only 1 robot control point(s) matched
+- **Site 2 · Robot 2 / site2_robot_2 / Reference**: ValueError: only 1 robot control point(s) matched
 
 S3E Laboratory 1–4 只有起终点真值，因此使用 endpoint error，不与连续轨迹 ATE 混合。
 

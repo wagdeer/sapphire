@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "run_id": "evalio_20261107",
+  "status": "complete",
+  "started_at_utc": "2026-11-06T16:38:43.611583Z",
+  "completed_at_utc": "2026-11-06T19:28:49.797071Z",
+  "algorithm_harness": "evalio",
+  "evalio_version": "0.6.1",
+  "metric_protocol": {
+    "association": "evalio nearest timestamp",
+    "alignment": "first pose",
+    "ate": "translation SSE / RMSE-equivalent",
+    "rte_windows_m": [
+      30.0,
+      100.0
+    ]
+  },
+  "workspace": ".",
+  "config": "evalio_baseline.yaml",
+  "config_sha256": "bdded9254f22efa03180d64e6b44462fc984e5cd225a103dabeff4c871cbaf5f",
+  "source_state": {
+    "sapphire": {
+      "commit": "5e66e7a7c2bf3c40802e52b52d18b39891d9fcae",
+      "short_commit": "5e66e7a7c2bf",
+      "dirty": false
+    },
+    "sapphire_ros1": {
+      "commit": "65ce51f197a3e61fa14d251edcc4d92188a53ec8",
+      "short_commit": "65ce51f197a3",
+      "dirty": false
+    },
+    "sapphire_ros2": {
+      "commit": "0dfa96db44e59888a001defde2633a779b843363",
+      "short_commit": "0dfa96db44e5",
+      "dirty": false
+    }
+  },
+  "included_files": {
+    "data": "data",
+    "raw_results": "evalio_results/evalio_baseline",
+    "full_log": "full_run.log",
+    "summary_json": "ate_summary.json",
+    "summary_csv": "ate_summary.csv",
+    "summary_md": "summary.md"
+  },
+  "counts": {
+    "successful_runs": 17,
+    "recorded_runs": 21,
+    "failures": 4
+  },
+  "adapters": {
+    "included": [
+      "hilti_2022/basement_2",
+      "hilti_2022/attic_to_upper_gallery_2",
+      "newer_college_2020/short_experiment",
+      "newer_college_2020/long_experiment",
+      "newer_college_2020/quad_with_dynamics",
+      "newer_college_2020/dynamic_spinning",
+      "newer_college_2020/parkland_mound"
+    ],
+    "skipped": {
+      "hilti_2022": "Only basement_2 and attic_to_upper_gallery_2 have local dense *_imu.txt GT that matches the built-in adapter without redefining the metric.",
+      "hilti_2023": "No evalio dataset adapter is available.",
+      "s3e": "No evalio dataset adapter is available."
+    }
+  }
+}

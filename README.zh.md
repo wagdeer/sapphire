@@ -45,6 +45,21 @@ HILTI 2022 主行包含本次重跑中稀疏控制点覆盖完整的 9 条序列
 `exp10` 和 `exp16` 仍为部分覆盖，逐条结果保留在基准页中，不并入均值。
 [逐序列结果与轨迹图](docs/benchmarks/benchmark_table.zh.md)。
 
+另一次 evalio 0.6.1 评测加入了 KISS-ICP、DLIO 和 GenZ-ICP。Newer College
+的外部队列使用与 Sapphire 相同的 SE(3) Umeyama 对齐和翻译 RMSE 重新评测，
+得到可直接比较的 5 条序列汇总：
+
+| 管线 | 完整运行数 | 平均 ATE | 中位数 ATE |
+|---|---:|---:|---:|
+| Sapphire | 5/5 | 0.263176 m | 0.158747 m |
+| DLIO 1.1.1 | 5/5 | 0.221192 m | 0.164614 m |
+| KISS-ICP 1.3.0 | 5/5 | 0.540744 m | 0.583880 m |
+| GenZ-ICP 0.3.2 | 1/5 | 0.133740 m | 0.133740 m |
+
+GenZ-ICP 只完整完成了一条 Newer College 序列，因此该行不是 5 条序列对比。
+evalio 原生 first-pose 指标、HILTI 结果、部分轨迹和全部图片见
+[完整基准页](docs/benchmarks/benchmark_table.zh.md#跨管线基线)。
+
 ## 编译
 
 ```bash
@@ -110,7 +125,7 @@ ros2 launch sapphire_ros2 sapphire.launch.py \
 
 | 文档 | 内容 |
 |---|---|
-| [docs/benchmarks/benchmark_table.zh.md](docs/benchmarks/benchmark_table.zh.md) | 逐条 ATE，含未进入上表的结果 |
+| [docs/benchmarks/benchmark_table.zh.md](docs/benchmarks/benchmark_table.zh.md) | 逐条 ATE、evalio 基线与轨迹图 |
 | [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md) | 如何回放数据包并写出 TUM 轨迹 |
 
 ## 致谢

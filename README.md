@@ -50,6 +50,23 @@ in the current replay. `exp03`, `exp10`, and `exp16` remained partial and are
 reported separately on the benchmark page rather than folded into the mean.
 [Per-sequence results and trajectory plots](docs/benchmarks/benchmark_table.md).
 
+An evalio 0.6.1 cross-check adds KISS-ICP, DLIO, and GenZ-ICP. For Newer
+College, the saved external trajectories were re-evaluated with the same
+translation RMSE and SE(3) Umeyama alignment, giving a directly comparable
+five-sequence result:
+
+| Pipeline | Complete runs | Mean ATE | Median ATE |
+|---|---:|---:|---:|
+| Sapphire | 5/5 | 0.263176 m | 0.158747 m |
+| DLIO 1.1.1 | 5/5 | 0.221192 m | 0.164614 m |
+| KISS-ICP 1.3.0 | 5/5 | 0.540744 m | 0.583880 m |
+| GenZ-ICP 0.3.2 | 1/5 | 0.133740 m | 0.133740 m |
+
+GenZ-ICP completed only one Newer College sequence, so its row is not a
+five-sequence comparison. The evalio-native first-pose results, HILTI runs,
+partial trajectories, and all plots are on the
+[full benchmark page](docs/benchmarks/benchmark_table.md#cross-pipeline-baselines).
+
 ## Build
 
 ```bash
@@ -121,7 +138,7 @@ live in `cfg/`. A replay walkthrough is in
 
 | Document | What it is |
 |---|---|
-| [docs/benchmarks/benchmark_table.md](docs/benchmarks/benchmark_table.md) | Per-run ATE, including runs left out of the table above |
+| [docs/benchmarks/benchmark_table.md](docs/benchmarks/benchmark_table.md) | Per-run ATE, evalio baselines, and trajectory plots |
 | [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md) | How to replay a bag and write a TUM trajectory |
 
 ## Credits

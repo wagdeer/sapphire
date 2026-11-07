@@ -17,6 +17,101 @@ HILTI 2022 `exp03_construction_stairs` covered only 7/17 control points in this 
 
 Campus Road 3 Carol was replayed after the PGO batch-ingest update. All 7,348 estimated poses have a timestamp-associated GT sample (100.0%), representing 7,348 of 63,771 dense GT samples. The estimate remains continuous through the full recording, with a maximum pose gap of 0.796 s and no divergence.
 
+## Cross-pipeline baselines
+
+A separate evalio 0.6.1 run (`evalio_20261107`) compares KISS-ICP, DLIO, and
+GenZ-ICP on every
+local recording with a built-in adapter. It covers HILTI 2022
+`basement_2` and `attic_to_upper_gallery_2`, plus all five Newer College 2020
+sequences. Of 21 pipeline/sequence combinations, 17 completed and four GenZ-ICP
+runs stopped part-way; their partial trajectories and metrics are retained.
+HILTI 2023 and S3E were not included because evalio 0.6.1 has no adapter for
+them.
+
+### Newer College 2020 · Sapphire-compatible metric
+
+The saved evalio trajectories were timestamp-associated at 0.1 s and
+re-evaluated with translation-part RMSE after SE(3) Umeyama alignment and no
+scale correction. This matches the metric used by Sapphire's Newer College
+rows below, so these five-sequence results can be compared directly. The
+Sapphire values come from the current replay rather than a fresh side-by-side
+run in the evalio container.
+
+| Pipeline | Version | Complete runs | Mean ATE (m) | Median ATE (m) |
+|---|---|---:|---:|---:|
+| Sapphire | current benchmark | 5/5 | 0.263176 | 0.158747 |
+| DLIO | 1.1.1 | 5/5 | 0.221192 | 0.164614 |
+| KISS-ICP | 1.3.0 | 5/5 | 0.540744 | 0.583880 |
+| GenZ-ICP | 0.3.2 | 1/5 | 0.133740 | 0.133740 |
+
+GenZ-ICP completed only `quad_with_dynamics`; its one-run mean is not a
+five-sequence comparison. The partial GenZ-ICP results are shown below but are
+excluded from all complete-run aggregates.
+
+### evalio published metric
+
+The following values preserve evalio's native protocol: nearest-timestamp
+association and first-pose alignment. They are not interchangeable with the
+SE(3) Umeyama values in the Sapphire tables.
+
+| Dataset | Pipeline | Version | Complete runs | Mean ATE (m) | Median ATE (m) |
+|---|---|---|---:|---:|---:|
+| HILTI 2022 | KISS-ICP | 1.3.0 | 2/2 | 10.552516 | 10.552516 |
+| HILTI 2022 | DLIO | 1.1.1 | 2/2 | 16.817070 | 16.817070 |
+| HILTI 2022 | GenZ-ICP | 0.3.2 | 2/2 | 10.192442 | 10.192442 |
+| Newer College 2020 | KISS-ICP | 1.3.0 | 5/5 | 1.028167 | 0.803811 |
+| Newer College 2020 | DLIO | 1.1.1 | 5/5 | 2.686118 | 2.831087 |
+| Newer College 2020 | GenZ-ICP | 0.3.2 | 1/5 | 0.181977 | 0.181977 |
+
+### evalio per-sequence results
+
+`SE(3)` repeats the metric on saved Newer College trajectories with the
+Sapphire-compatible alignment described above. A value marked `partial` covers
+only the saved prefix of a failed run and must not be ranked as a full result.
+HILTI uses dense `*_imu.txt` GT in evalio, so no corresponding sparse-control
+SE(3) value is reported here.
+
+| Dataset | Sequence | Pipeline | Status | Pose coverage | evalio ATE (m) | SE(3) ATE (m) | Plot |
+|---|---|---|---|---:|---:|---:|---|
+| HILTI 2022 | attic_to_upper_gallery_2 | KISS-ICP | complete | 100.0% | 12.445 | — | [plot](evalio/hilti_2022__attic_to_upper_gallery_2.png) |
+| HILTI 2022 | attic_to_upper_gallery_2 | DLIO | complete | 100.0% | 17.125 | — | [plot](evalio/hilti_2022__attic_to_upper_gallery_2.png) |
+| HILTI 2022 | attic_to_upper_gallery_2 | GenZ-ICP | complete | 100.0% | 20.191 | — | [plot](evalio/hilti_2022__attic_to_upper_gallery_2.png) |
+| HILTI 2022 | basement_2 | KISS-ICP | complete | 100.0% | 8.660 | — | [plot](evalio/hilti_2022__basement_2.png) |
+| HILTI 2022 | basement_2 | DLIO | complete | 100.0% | 16.509 | — | [plot](evalio/hilti_2022__basement_2.png) |
+| HILTI 2022 | basement_2 | GenZ-ICP | complete | 100.0% | 0.194 | — | [plot](evalio/hilti_2022__basement_2.png) |
+| Newer College 2020 | dynamic_spinning | KISS-ICP | complete | 100.0% | 0.804 | 0.584 | [plot](evalio/newer_college_2020__dynamic_spinning.png) |
+| Newer College 2020 | dynamic_spinning | DLIO | complete | 100.0% | 0.115 | 0.095 | [plot](evalio/newer_college_2020__dynamic_spinning.png) |
+| Newer College 2020 | dynamic_spinning | GenZ-ICP | fail; 557/1202 poses | 46.3% | 11.529 | 9.426 partial | [plot](evalio/newer_college_2020__dynamic_spinning.png) |
+| Newer College 2020 | long_experiment | KISS-ICP | complete | 100.0% | 1.924 | 1.057 | [plot](evalio/newer_college_2020__long_experiment.png) |
+| Newer College 2020 | long_experiment | DLIO | complete | 100.0% | 2.831 | 0.377 | [plot](evalio/newer_college_2020__long_experiment.png) |
+| Newer College 2020 | long_experiment | GenZ-ICP | fail; 13088/26560 poses | 49.3% | 0.979 | 0.335 partial | [plot](evalio/newer_college_2020__long_experiment.png) |
+| Newer College 2020 | parkland_mound | KISS-ICP | complete | 100.0% | 0.505 | 0.279 | [plot](evalio/newer_college_2020__parkland_mound.png) |
+| Newer College 2020 | parkland_mound | DLIO | complete | 100.0% | 4.013 | 0.165 | [plot](evalio/newer_college_2020__parkland_mound.png) |
+| Newer College 2020 | parkland_mound | GenZ-ICP | fail; 1630/5009 poses | 32.5% | 1.517 | 1.459 partial | [plot](evalio/newer_college_2020__parkland_mound.png) |
+| Newer College 2020 | quad_with_dynamics | KISS-ICP | complete | 100.0% | 0.247 | 0.187 | [plot](evalio/newer_college_2020__quad_with_dynamics.png) |
+| Newer College 2020 | quad_with_dynamics | DLIO | complete | 100.0% | 1.109 | 0.123 | [plot](evalio/newer_college_2020__quad_with_dynamics.png) |
+| Newer College 2020 | quad_with_dynamics | GenZ-ICP | complete | 100.0% | 0.182 | 0.134 | [plot](evalio/newer_college_2020__quad_with_dynamics.png) |
+| Newer College 2020 | short_experiment | KISS-ICP | complete | 100.0% | 1.661 | 0.597 | [plot](evalio/newer_college_2020__short_experiment.png) |
+| Newer College 2020 | short_experiment | DLIO | complete | 100.0% | 5.363 | 0.346 | [plot](evalio/newer_college_2020__short_experiment.png) |
+| Newer College 2020 | short_experiment | GenZ-ICP | fail; 6083/15302 poses | 39.8% | 1.094 | 0.299 partial | [plot](evalio/newer_college_2020__short_experiment.png) |
+
+![evalio ATE overview](evalio/ate_overview.png)
+
+The overview now includes Sapphire under the same evalio-native protocol:
+nearest-timestamp association and first-pose alignment against the evalio
+dense GT. Sapphire raw full trajectories are transformed into the dataset's
+IMU frame before evaluation. This figure is separate from the SE(3) table
+above. Only completed runs enter the overview; failed GenZ-ICP prefixes remain
+in the per-sequence table. Sapphire's values are in
+[sapphire_evalio_native_ate.csv](evalio/sapphire_evalio_native_ate.csv).
+
+The complete evalio result table is available as
+[ate_summary.csv](evalio/ate_summary.csv); the recomputed Newer College
+SE(3) values are in
+[newer_college_se3_ate.csv](evalio/newer_college_se3_ate.csv). Run provenance
+is recorded in [run_manifest.json](evalio/run_manifest.json), with the
+[evalio configuration](evalio/evalio_baseline.yaml).
+
 ## Per-sequence results
 
 | Dataset | Sequence | Agent | Metric | Result (m) | GT coverage | Est. length (m) | GT length (m) | Status | In mean | Plot |
@@ -87,7 +182,7 @@ Campus Road 3 Carol was replayed after the PGO batch-ingest update. All 7,348 es
 ## Evaluation failures
 
 - **Site 2 · Handheld 6 / site2_handheld_6 / Reference**: TrajectoryError: evo APE calculation failed: Degenerate covariance rank, Umeyama alignment is not possible
-- **Site 2 · Robot 2 / site2_robot_2 / Reference**: ValueError: /workspace/results/nightly_2026-11-06/hilti_2023/site2_robot_2/trajectory.tum: only 1 robot control point(s) matched
+- **Site 2 · Robot 2 / site2_robot_2 / Reference**: ValueError: only 1 robot control point(s) matched
 
 S3E Laboratory 1–4 provide endpoint-only ground truth and use endpoint error; they are not mixed with continuous-trajectory ATE.
 

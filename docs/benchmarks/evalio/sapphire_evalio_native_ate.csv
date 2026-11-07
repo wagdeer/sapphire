@@ -1,0 +1,8 @@
+dataset,sequence,status,associated_poses,gt_poses,ate_rmse_m
+hilti_2022,attic_to_upper_gallery_2,complete,1550,2001,2.463997062399459
+hilti_2022,basement_2,complete,684,689,0.28648652555161497
+newer_college_2020,short_experiment,complete,11186,15301,2.3810366547350057
+newer_college_2020,long_experiment,complete,19238,26559,1.7995636176186671
+newer_college_2020,quad_with_dynamics,complete,2986,3954,0.2254749542594986
+newer_college_2020,dynamic_spinning,complete,859,1237,0.11230268291053468
+newer_college_2020,parkland_mound,complete,3748,6239,0.9282735410329952

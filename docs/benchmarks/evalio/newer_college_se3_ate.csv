@@ -1,0 +1,16 @@
+sequence,pipeline,evalio_status,one_to_one_pairs,evalio_pose_coverage,se3_ate_rmse_m
+short_experiment,kiss,complete,15301,1.000000,0.597080152
+short_experiment,dlio,complete,15301,1.000000,0.346335349
+short_experiment,genz,fail,6082,0.397529735,0.298729812
+long_experiment,kiss,complete,26559,1.000000,1.057017766
+long_experiment,dlio,complete,26559,1.000000,0.377073357
+long_experiment,genz,fail,13087,0.492771084,0.335129038
+quad_with_dynamics,kiss,complete,3954,1.000000,0.186845604
+quad_with_dynamics,dlio,complete,3954,1.000000,0.123165110
+quad_with_dynamics,genz,complete,3954,1.000000,0.133739677
+dynamic_spinning,kiss,complete,1198,1.000000,0.583880167
+dynamic_spinning,dlio,complete,1198,1.000000,0.094770011
+dynamic_spinning,genz,fail,553,0.463394343,9.426323178
+parkland_mound,kiss,complete,5007,1.000000,0.278897489
+parkland_mound,dlio,complete,5007,1.000000,0.164614290
+parkland_mound,genz,fail,1628,0.325414254,1.459175345
