@@ -108,6 +108,11 @@ changes algorithmic behavior relative to the baseline fingerprint.
 
 Purpose: stop treating registration as a binary event.
 
+Attempt 1A, a separate 3x3 rotation/translation observability projector, did
+not trigger on the corridor case and failed the completion gate on
+`exp09_cupola`. It was rejected and removed; see
+[the Gate 1A report](reports/gate-1-blockwise-observability.md).
+
 Changes:
 
 - classify registrations as excellent, partial, degenerate, or invalid;
