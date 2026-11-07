@@ -118,6 +118,11 @@ scale changes and caused `exp03`, `exp09`, and `exp10` to lose most of their
 trajectories. It was rejected and removed; see
 [the Gate 1B report](reports/gate-1b-quality-aware-fusion.md).
 
+Attempt 2A raised the GICP iteration cap from 32 to 64. It extended one wrong
+`exp10` basin but increased that sequence's RMSE by more than 4x and degraded
+`exp09`; it was rejected and reverted. See
+[the Gate 2A report](reports/gate-2a-convergence-budget.md).
+
 Changes:
 
 - classify registrations as excellent, partial, degenerate, or invalid;
