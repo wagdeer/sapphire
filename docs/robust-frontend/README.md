@@ -129,6 +129,12 @@ but the recovered `exp10` segment still has a multi-metre offset. It is accepted
 as a coverage recovery mechanism with that limitation; see
 [the Gate 3A report](reports/gate-3a-map-reset-recovery.md).
 
+Gate 3B added a five-frame IMU/deskew bootstrap after each reset. The complete
+five-case run reached full coverage, including 14/14 on `exp10`, and reduced the
+Gate 3A `exp10` RMSE to 2.46 m. It remains a completion recovery rather than a
+global relocalization; see
+[the Gate 3B report](reports/gate-3b-bounded-bootstrap.md).
+
 Changes:
 
 - classify registrations as excellent, partial, degenerate, or invalid;

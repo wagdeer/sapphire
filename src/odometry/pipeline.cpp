@@ -496,6 +496,39 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
                 / static_cast<double>(registration_attempt_count_));
     }
 
+    if (!artifacts.result.accepted
+        && recovery_build_frames_remaining_ > 0) {
+        const Isometry3d T_world_lidar_bootstrap =
+            deskewed.T_world_lidar_ref;
+        const std::size_t keyframes_before = keyframeCount();
+        maybeUpdateSubmapTarget(
+            T_world_lidar_bootstrap,
+            registration_source,
+            true);
+        if (keyframeCount() > keyframes_before) {
+            ++map_update_count_;
+        }
+        --recovery_build_frames_remaining_;
+        registration_reject_streak_ = 0;
+        pgo_backend_.addFrame(
+            registration_source,
+            T_world_lidar_bootstrap,
+            deskewed.reference_stamp);
+        rememberPoseGraphSample(
+            T_world_lidar_bootstrap,
+            deskewed.v_world_ref,
+            deskewed.reference_stamp);
+        {
+            std::lock_guard<std::mutex> lock(output_mutex_);
+            latest_deskewed_ = registration_source;
+            latest_result_.T_world_lidar = T_world_lidar_bootstrap;
+            latest_result_.v_world = deskewed.v_world_ref;
+            latest_result_.stamp = deskewed.reference_stamp;
+            latest_result_.converged = false;
+        }
+        return;
+    }
+
     const std::size_t recovery_threshold =
         static_cast<std::size_t>(
             config_.odometry.submap.recovery_after_rejections);

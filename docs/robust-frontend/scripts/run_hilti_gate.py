@@ -287,6 +287,12 @@ def main() -> int:
         help="short gate name, for example gate-0-observability",
     )
     parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument(
+        "--case",
+        action="append",
+        dest="cases",
+        help="run only the named case id; may be repeated",
+    )
     args = parser.parse_args()
 
     now = dt.datetime.now(dt.timezone.utc)
@@ -301,8 +307,19 @@ def main() -> int:
     )
     run_root.mkdir(parents=True, exist_ok=False)
 
+    selected_cases = CASES
+    if args.cases:
+        known = {case["id"] for case in CASES}
+        requested = set(args.cases)
+        unknown = sorted(requested - known)
+        if unknown:
+            parser.error(f"unknown case id(s): {', '.join(unknown)}")
+        selected_cases = tuple(
+            case for case in CASES if case["id"] in requested
+        )
+
     cases = []
-    for case in CASES:
+    for case in selected_cases:
         item = dict(case)
         item["container_bag"] = "/datasets/" + str(
             case["bag"].relative_to("/mnt/e/dataset")
