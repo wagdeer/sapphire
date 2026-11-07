@@ -120,6 +120,26 @@ void testTranslationIsRecovered() {
     expect(result.accepted, "structured translated clouds must align");
     expect(std::abs(result.T_world_lidar.translation().x() - 0.2) < 1e-3,
            "GICP must recover source-to-target translation");
+    expect(result.source_points == 100,
+           "registration must report the source point count");
+    expect(result.num_inliers > 0,
+           "accepted registration must report positive inliers");
+    expect(result.inlier_ratio > 0.0 && result.inlier_ratio <= 1.0,
+           "accepted registration must report a valid inlier ratio");
+    expect(result.iterations > 0,
+           "registration must report solver iterations");
+    expect(std::isfinite(result.solver_error) && result.solver_error >= 0.0,
+           "registration must report a finite non-negative solver error");
+    expect(result.hessian_valid,
+           "accepted registration must expose a finite Hessian");
+    expect(result.conditioning_valid,
+           "accepted registration must expose blockwise conditioning");
+    expect(result.rotation_min_eigenvalue > 0.0
+               && result.translation_min_eigenvalue > 0.0,
+           "blockwise Hessian minima must be positive");
+    expect(result.rotation_condition >= 1.0
+               && result.translation_condition >= 1.0,
+           "blockwise Hessian condition numbers must be at least one");
 }
 
 void testVgicpTranslationIsRecovered() {

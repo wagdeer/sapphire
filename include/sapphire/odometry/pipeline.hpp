@@ -240,6 +240,10 @@ private:
     Registration registration_;
     std::size_t registration_attempt_count_ = 0;
     std::size_t registration_reject_count_ = 0;
+    std::size_t registration_reject_streak_ = 0;
+    std::size_t registration_reject_streak_max_ = 0;
+    std::size_t registration_accept_streak_ = 0;
+    std::size_t map_update_count_ = 0;
     bool warned_rigid_deskew_ = false;
 };
 

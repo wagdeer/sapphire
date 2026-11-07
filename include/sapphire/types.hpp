@@ -2,6 +2,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -114,7 +115,11 @@ struct RegistrationResult {
     Eigen::Isometry3d T_correction;  // correction: T_prior → T_world_lidar
     Eigen::Isometry3d T_world_lidar; // world-frame pose after correction
     bool    converged      = false;
+    size_t  source_points  = 0;
     size_t  num_inliers    = 0;
+    size_t  iterations     = 0;
+    double  inlier_ratio   = 0.0;
+    double  solver_error   = 0.0;
     bool    accepted       = false;   // false if correction was rejected
     /// Solver correction before the accept/reject gate. Identity is stored in
     /// T_correction when the gate rejects, so these keep the attempt visible.
@@ -127,6 +132,16 @@ struct RegistrationResult {
     /// Final GICP information matrix from small_gicp, order [rx,ry,rz,tx,ty,tz].
     Eigen::Matrix<double, 6, 6> hessian = Eigen::Matrix<double, 6, 6>::Zero();
     bool    hessian_valid  = false;
+    /// Diagnostics copied from the final Hessian. The combined matrix is
+    /// retained above for the existing ESKF path; these blockwise values are
+    /// scale-separated and are not yet used to alter the update.
+    Eigen::Matrix<double, 6, 1> hessian_eigenvalues =
+        Eigen::Matrix<double, 6, 1>::Zero();
+    double rotation_min_eigenvalue = -1.0;
+    double translation_min_eigenvalue = -1.0;
+    double rotation_condition = -1.0;
+    double translation_condition = -1.0;
+    bool   conditioning_valid = false;
 };
 
 /// IMU initialization and noise, loaded from the TOML `imu` table.

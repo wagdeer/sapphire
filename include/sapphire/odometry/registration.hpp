@@ -44,6 +44,7 @@ private:
     std::string type_;
     GicpType gicp_;
     bool target_set_ = false;
+    std::size_t source_point_count_ = 0;
 };
 
 }  // namespace sapphire

@@ -4,6 +4,7 @@
 #include <SO3.hpp>
 
 #include <Eigen/Geometry>
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -37,6 +38,7 @@ Registration::Registration(
 }
 
 void Registration::setSource(const PointCloudConstPtr& cloud) {
+    source_point_count_ = cloud ? cloud->size() : 0;
     gicp_.setInputSource(cloud);
 }
 
@@ -48,6 +50,7 @@ void Registration::setTarget(const PointCloudConstPtr& cloud) {
 RegistrationResult Registration::align(const Isometry3d& T_prior) {
     RegistrationResult result;
     result.T_world_lidar = T_prior;
+    result.source_points = source_point_count_;
 
     if (!target_set_) {
         spdlog::warn("[registration] align() called before setTarget()");
@@ -63,6 +66,13 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
 
     bool converged = gicp_.hasConverged();
     const auto& reg_result = gicp_.getRegistrationResult();
+    result.iterations = reg_result.iterations;
+    result.solver_error = reg_result.error;
+    result.num_inliers = reg_result.num_inliers;
+    result.inlier_ratio = source_point_count_ > 0
+        ? static_cast<double>(reg_result.num_inliers)
+            / static_cast<double>(source_point_count_)
+        : 0.0;
     Eigen::Matrix4f T_corr_f = gicp_.getFinalTransformation();
 
     const Eigen::Isometry3d T_correction(
@@ -122,12 +132,79 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
         result.T_world_lidar = T_prior;
     }
 
-    result.converged     = converged;
-    result.num_inliers   = reg_result.num_inliers;
-    result.accepted      = accepted;
-    result.hessian       = gicp_.getFinalHessian();
+    result.converged = converged;
+    result.accepted = accepted;
+    result.hessian = gicp_.getFinalHessian();
     result.hessian_valid = result.hessian.allFinite()
         && result.hessian.norm() > 0.0;
+    if (result.hessian_valid) {
+        const Eigen::Matrix<double, 6, 6> symmetric =
+            0.5 * (result.hessian + result.hessian.transpose());
+        const Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>>
+            solver(symmetric);
+        if (solver.info() == Eigen::Success) {
+            result.hessian_eigenvalues = solver.eigenvalues();
+            const Eigen::Matrix3d rotation =
+                0.5 * (
+                    symmetric.block<3, 3>(0, 0)
+                    + symmetric.block<3, 3>(0, 0).transpose());
+            const Eigen::Matrix3d translation =
+                0.5 * (
+                    symmetric.block<3, 3>(3, 3)
+                    + symmetric.block<3, 3>(3, 3).transpose());
+            const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d>
+                rotation_solver(rotation);
+            const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d>
+                translation_solver(translation);
+            if (rotation_solver.info() == Eigen::Success
+                && translation_solver.info() == Eigen::Success) {
+                const Eigen::Vector3d rotation_eigenvalues =
+                    rotation_solver.eigenvalues();
+                const Eigen::Vector3d translation_eigenvalues =
+                    translation_solver.eigenvalues();
+                result.rotation_min_eigenvalue =
+                    rotation_eigenvalues.minCoeff();
+                result.translation_min_eigenvalue =
+                    translation_eigenvalues.minCoeff();
+                if (result.rotation_min_eigenvalue > 0.0) {
+                    result.rotation_condition =
+                        rotation_eigenvalues.maxCoeff()
+                        / result.rotation_min_eigenvalue;
+                }
+                if (result.translation_min_eigenvalue > 0.0) {
+                    result.translation_condition =
+                        translation_eigenvalues.maxCoeff()
+                        / result.translation_min_eigenvalue;
+                }
+                result.conditioning_valid =
+                    result.rotation_min_eigenvalue > 0.0
+                    && result.translation_min_eigenvalue > 0.0
+                    && std::isfinite(result.rotation_condition)
+                    && std::isfinite(result.translation_condition);
+            }
+        }
+    }
+
+    // The ROS wrappers keep warning-level logs in benchmark artifacts. These
+    // records are the durable quality input for the robustness gates.
+    spdlog::warn(
+        "[registration-quality] type={} accepted={} converged={} "
+        "source={} inliers={} ratio={:.4f} iterations={} error={:.6e} "
+        "rot_min={:.3e} trans_min={:.3e} rot_cond={:.3e} "
+        "trans_cond={:.3e} conditioning_valid={}",
+        type_,
+        accepted,
+        converged,
+        result.source_points,
+        result.num_inliers,
+        result.inlier_ratio,
+        result.iterations,
+        result.solver_error,
+        result.rotation_min_eigenvalue,
+        result.translation_min_eigenvalue,
+        result.rotation_condition,
+        result.translation_condition,
+        result.conditioning_valid);
 
     return result;
 }

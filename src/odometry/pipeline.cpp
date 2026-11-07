@@ -474,6 +474,14 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
     ++registration_attempt_count_;
     if (!artifacts.result.accepted) {
         ++registration_reject_count_;
+        ++registration_reject_streak_;
+        registration_accept_streak_ = 0;
+        registration_reject_streak_max_ = std::max(
+            registration_reject_streak_max_,
+            registration_reject_streak_);
+    } else {
+        registration_reject_streak_ = 0;
+        ++registration_accept_streak_;
     }
     if (registration_attempt_count_ % 20 == 0) {
         spdlog::warn(
@@ -601,7 +609,11 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
         const double injected_m =
             (p - deskewed.T_world_lidar_ref.translation()).norm();
         spdlog::info(
-            "[trace] n={} deskew={} pts={} inl={} acc={} fus={} "
+            "[trace] n={} deskew={} pts={} inl={} inl_ratio={:.4f} "
+            "iter={} reg_err={:.6e} rot_min={:.3e} trans_min={:.3e} "
+            "rot_cond={:.3e} trans_cond={:.3e} cond_valid={} "
+            "reject_streak={} reject_streak_max={} accepts={} map_updates={} "
+            "acc={} fus={} "
             "try={:.3f}m sens={:.3f}m rot={:.1f}deg inj={:.3f}m "
             "v={:.2f} ({:.2f},{:.2f},{:.2f}) "
             "p={:.2f},{:.2f},{:.2f} yaw={:.1f} "
@@ -610,6 +622,18 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
             static_cast<int>(deskewed.status),
             registration_source->size(),
             artifacts.result.num_inliers,
+            artifacts.result.inlier_ratio,
+            artifacts.result.iterations,
+            artifacts.result.solver_error,
+            artifacts.result.rotation_min_eigenvalue,
+            artifacts.result.translation_min_eigenvalue,
+            artifacts.result.rotation_condition,
+            artifacts.result.translation_condition,
+            artifacts.result.conditioning_valid,
+            registration_reject_streak_,
+            registration_reject_streak_max_,
+            registration_accept_streak_,
+            map_update_count_,
             artifacts.result.accepted ? 1 : 0,
             fusion_accepted ? 1 : 0,
             artifacts.result.attempted_trans_m,
@@ -634,7 +658,11 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed)
     }
 
     if (fusion_accepted) {
+        const std::size_t keyframes_before = keyframeCount();
         maybeUpdateSubmapTarget(T_world_lidar_out, cloud_out);
+        if (keyframeCount() > keyframes_before) {
+            ++map_update_count_;
+        }
     }
     {
         std::lock_guard<std::mutex> lock(output_mutex_);
