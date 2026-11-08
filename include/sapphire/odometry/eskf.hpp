@@ -13,8 +13,22 @@
 
 namespace sapphire {
 
+/// Error coordinates of the 15D frontend ESKF.
+///
+/// Euclidean keeps today's world-frame additive velocity and position.
+/// Gal3Right is ξ = log(χ̄⁻¹ χ) on Gal(3), time slot fixed at 0, biases additive.
+enum class EskfChart {
+    Euclidean,
+    Gal3Right,
+};
+
 /// Configuration for the Approach-A ESKF frontend fusion.
 struct EskfConfig {
+    /// Default stays on the Euclidean chart. Gal3Right replaces Φ, Q, z, R,
+    /// H, the retraction, and the reset Jacobian together, and forces
+    /// inject_full_pose=false, inject_directional_pose=false,
+    /// velocity_correction_gain=0, bias_update_scale=1.
+    EskfChart chart = EskfChart::Euclidean;
     /// Fallback ICP measurement std when Hessian is unused / invalid.
     /// Keep small: the current GICP frontend is already accurate without ESKF,
     /// so the filter should mostly follow ICP for pose.
@@ -104,7 +118,23 @@ struct EskfConfig {
     double init_sigma_theta = 0.1;     // rad
     double init_sigma_velocity = 1.0;  // m/s
     double init_sigma_position = 1.0;  // m
+    /// gal3_right only. Added in quadrature to the calibrated accelerometer
+    /// density, on the same right-Jacobian input channel. This is model
+    /// error of the specific force, not a rewrite of the sensor calibration.
+    /// Zero keeps the datasheet Q, whose steady-state pose gain collapses.
+    double specific_force_model_density = 0.0;  // m/s²/√Hz
+    /// gal3_right only. Variance rate on the right-error position block.
+    /// Pose-transport residual that is not a velocity error. It is not
+    /// multiplied by an extra Φ. Zero leaves position diffusion to the
+    /// input channel's O(dt³) term.
+    double position_model_diffusion = 0.0;  // m²/s
 };
+
+/// Scalar fixed point at a 0.1 s scan and R = (0.05 m)² that reproduces the
+/// mixed-gain operating point K_p ≈ 0.85, K_v ≈ 0.8. See
+/// docs/gal3-eskf-docking.md §11.
+inline constexpr double kGal3SpecificForceModelDensity = 0.327;
+inline constexpr double kGal3PositionModelDiffusion = 0.1053;
 
 /// Result of one ESKF LiDAR correction at the scan reference time.
 struct EskfUpdate {
@@ -125,10 +155,10 @@ struct EskfUpdate {
 
 /// Error-state Kalman filter for IMU–LiDAR frontend fusion (Approach A).
 ///
-/// Nominal mean uses Gal(3) preintegration (same as MeanOnlyGal3Integrator).
-/// Covariance uses the standard 15D linearized IMU error dynamics.
-/// LiDAR pose updates use a right-multiplied SO(3) residual and world-frame
-/// additive position residual (see docs/eskf_on_gal3.md).
+/// Nominal mean uses Gal(3) preintegration (same as MeanOnlyGal3Integrator)
+/// on both charts. The Euclidean chart keeps the 15D world-frame linearization
+/// and the legacy gain switches (see docs/eskf_on_gal3.md). gal3_right keeps
+/// that mean and replaces the error coordinates as a set.
 class Eskf {
 public:
     using Mat15 = Eigen::Matrix<double, 15, 15>;
@@ -165,10 +195,11 @@ public:
     /// the committed baseline is NOT updated. After optional IMU-buffer bias
     /// adjustment, the caller must setBaseline(...) + replayToLatest(...).
     ///
-    /// The effective measurement gain is controlled by three config flags —
-    /// see the pose-injection priority table in EskfConfig for their
-    /// interaction semantics (inject_full_pose > inject_directional_pose >
-    /// velocity_correction_gain > Kalman rows).
+    /// On the Euclidean chart the effective measurement gain is controlled by
+    /// three config flags — see the pose-injection priority table in
+    /// EskfConfig (inject_full_pose > inject_directional_pose >
+    /// velocity_correction_gain > Kalman rows). gal3_right does not enter
+    /// those row replacements.
     ///
     /// @param prior_mean  deskew prior at reference_stamp (authoritative mean)
     /// @param T_world_imu_measured  GICP-corrected IMU pose
@@ -207,19 +238,91 @@ public:
         Mat6* directional_observability = nullptr) const;
 
     /// First-order map from small_gicp correction right perturbations
-    /// [rotation, translation] to the ESKF innovation coordinates.
+    /// [rotation, translation] to the Euclidean innovation (z_ω, z_p).
     static Mat6 registrationToInnovationJacobian(
+        const Isometry3d& T_world_imu_prior,
+        const Isometry3d& T_world_imu_measured);
+
+    /// (z_ω, z_a) from Gal3::log(χ̄⁻¹ χ_z), χ_z = (R_m, v̄, p_m, 0).
+    static Vec6 gal3RightInnovation(
+        const Eigen::Matrix3d& R_nominal,
+        const Eigen::Vector3d& v_nominal,
+        const Eigen::Vector3d& p_nominal,
+        const Eigen::Matrix3d& R_measured,
+        const Eigen::Vector3d& p_measured);
+
+    /// χ ← χ̄ · Gal3::exp(ω, α, a, 0). Does not touch biases.
+    static void gal3RightRetract(
+        Eigen::Matrix3d& rotation,
+        Eigen::Vector3d& velocity,
+        Eigen::Vector3d& position,
+        const Eigen::Matrix<double, 9, 1>& xi_nav);
+
+    /// One IMU sample, one Φ. Argument of invAdjoint / rightJacobian is û = u·dt.
+    static Mat15 gal3RightTransition(
+        const Eigen::Vector3d& omega,
+        const Eigen::Vector3d& accel,
+        double dt);
+
+    /// σ² arguments are continuous PSDs (diagonal entries of the 12×12 Qc).
+    static Mat15 gal3RightProcessNoise(
+        const Eigen::Vector3d& omega,
+        const Eigen::Vector3d& accel,
+        double dt,
+        double sigma_g2,
+        double sigma_a2,
+        double sigma_ba2,
+        double sigma_bg2);
+
+    /// I₁₅ with the navigation block set to Gal3::rightJacobian(ω, α, a, 0).
+    static Mat15 gal3RightResetJacobian(
+        const Eigen::Matrix<double, 9, 1>& xi_nav);
+
+    /// Central difference of (z_ω, z_a) w.r.t. a small_gicp right perturbation.
+    static Mat6 gal3RightRegistrationJacobian(
         const Isometry3d& T_world_imu_prior,
         const Isometry3d& T_world_imu_measured);
 
 private:
     void recoverTipLocked(double stamp);
+    void enforceGal3RightGains();
     void propagateCovariance(
         const Eigen::Matrix3d& R_world_imu,
         const Eigen::Vector3d& omega,
         const Eigen::Vector3d& accel,
         double dt,
         Mat15& P) const;
+    void propagateCovarianceGal3Right(
+        const Eigen::Vector3d& omega,
+        const Eigen::Vector3d& accel,
+        double dt,
+        Mat15& P) const;
+    Mat6 measurementCovarianceEuclidean(
+        const std::optional<Mat6>& hessian,
+        const Isometry3d& T_world_imu_prior,
+        const Isometry3d& T_world_imu_measured,
+        Vec6* information_eigenvalues,
+        Mat6* directional_observability) const;
+    Mat6 measurementCovarianceGal3Right(
+        const std::optional<Mat6>& hessian,
+        const Isometry3d& T_world_imu_prior,
+        const Isometry3d& T_world_imu_measured,
+        Vec6* information_eigenvalues,
+        Mat6* directional_observability) const;
+    EskfUpdate correctEuclidean(
+        double reference_stamp,
+        const Isometry3d& T_world_imu_measured,
+        const std::optional<Mat6>& hessian,
+        double replay_rotation_error,
+        double replay_position_error,
+        double replay_velocity_error);
+    EskfUpdate correctGal3Right(
+        double reference_stamp,
+        const Isometry3d& T_world_imu_measured,
+        const std::optional<Mat6>& hessian,
+        double replay_rotation_error,
+        double replay_position_error,
+        double replay_velocity_error);
     Mat15 makeInitialCovariance() const;
     double biasRwAccel() const;
     double biasRwGyro() const;

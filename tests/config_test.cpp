@@ -332,7 +332,7 @@ void testShippedProfilesLoad() {
         }
         ++count;
     }
-    expect(count == 8, "every shipped profile must load");
+    expect(count == 9, "every shipped profile must load");
 }
 
 void testTrajectoryFileMustStayRelative() {

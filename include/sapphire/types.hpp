@@ -191,6 +191,10 @@ struct Config {
             double gyro_bias_max = 0.5;    // rad/s, absolute total bias
         } observer;
         struct Eskf {
+            /// "euclidean" (default) or "gal3_right".
+            /// gal3_right forces the legacy gain switches off and uses the
+            /// right-multiplied Gal(3) error chart from initialize onward.
+            std::string chart = "euclidean";
             double sigma_rotation = 0.01;       // rad
             double sigma_translation = 0.01;    // m
             double icp_covariance_scale = 25.0;
@@ -216,6 +220,10 @@ struct Config {
             double init_sigma_theta = 0.1;      // rad
             double init_sigma_velocity = 1.0;   // m/s
             double init_sigma_position = 1.0;   // m
+            /// gal3_right specific-force model PSD, added to the accel channel.
+            double specific_force_model_density = 0.0;  // m/s²/√Hz
+            /// gal3_right variance rate on the right-error position block.
+            double position_model_diffusion = 0.0;  // m²/s
         } eskf;
     } odometry;
 

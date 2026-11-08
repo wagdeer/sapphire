@@ -199,6 +199,16 @@ if(BUILD_TESTING)
     sapphire_enable_release_ipo(sapphire_observer_test)
     add_test(NAME sapphire_observer_test COMMAND sapphire_observer_test)
 
+    add_executable(sapphire_gal3_eskf_test
+        tests/gal3_eskf_test.cpp
+    )
+    target_link_libraries(sapphire_gal3_eskf_test PRIVATE sapphire)
+    target_compile_definitions(sapphire_gal3_eskf_test PRIVATE
+        SAPPHIRE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    sapphire_enable_release_ipo(sapphire_gal3_eskf_test)
+    add_test(NAME sapphire_gal3_eskf_test COMMAND sapphire_gal3_eskf_test)
+
     add_executable(sapphire_eskf_test
         tests/eskf_test.cpp
     )

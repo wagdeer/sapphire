@@ -364,6 +364,8 @@ struct StringField {
 
 constexpr const char* const kFusionChoices[] = {
     "observer", "eskf", nullptr};
+constexpr const char* const kEskfChartChoices[] = {
+    "euclidean", "gal3_right", nullptr};
 constexpr const char* const kRegistrationChoices[] = {
     "GICP", "VGICP", nullptr};
 constexpr const char* const kAccelUnitChoices[] = {
@@ -451,6 +453,10 @@ const NumberField kNumbers[] = {
         odometry.eskf.init_sigma_velocity, NumberRule::Positive),
     OPT("odometry.eskf.init_sigma_position",
         odometry.eskf.init_sigma_position, NumberRule::Positive),
+    OPT("odometry.eskf.specific_force_model_density",
+        odometry.eskf.specific_force_model_density, NumberRule::Nonnegative),
+    OPT("odometry.eskf.position_model_diffusion",
+        odometry.eskf.position_model_diffusion, NumberRule::Nonnegative),
 
     OPT("registration.gicp.transformation_epsilon",
         registration.gicp.transformation_epsilon, NumberRule::Positive),
@@ -553,6 +559,8 @@ const BoolField kBools[] = {
 const StringField kStrings[] = {
     STR("odometry.fusion", odometry.fusion, kFusionChoices,
         "odometry.fusion must be \"observer\" or \"eskf\""),
+    STR("odometry.eskf.chart", odometry.eskf.chart, kEskfChartChoices,
+        "odometry.eskf.chart must be \"euclidean\" or \"gal3_right\""),
     STR("registration.type", registration.type, kRegistrationChoices,
         "registration.type must be GICP or VGICP"),
     STR("sensor.lidar.time_field", sensor.lidar.time_field,

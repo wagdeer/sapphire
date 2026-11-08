@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <omp.h>
 
 namespace sapphire {
@@ -17,6 +18,17 @@ namespace {
 constexpr double kImuGapWarningSec = 0.1;
 constexpr int kRecoveryBuildFrames = 5;
 constexpr std::size_t kMaxRecoveryAttempts = 3;
+
+EskfChart eskfChartFromString(const std::string& chart) {
+    if (chart == "euclidean") {
+        return EskfChart::Euclidean;
+    }
+    if (chart == "gal3_right") {
+        return EskfChart::Gal3Right;
+    }
+    throw std::invalid_argument(
+        "odometry.eskf.chart must be \"euclidean\" or \"gal3_right\"");
+}
 
 bool isFiniteImu(const ImuData& imu) {
     return std::isfinite(imu.stamp)
@@ -49,6 +61,7 @@ EskfConfig OdometryPipeline::makeEskfConfig(const Config& config) {
         config.odometry.eskf.hessian_degenerate_sigma;
     eskf.hessian_max_sigma = config.odometry.eskf.hessian_max_sigma;
     eskf.mahalanobis_threshold = config.odometry.eskf.mahalanobis_threshold;
+    eskf.chart = eskfChartFromString(config.odometry.eskf.chart);
     eskf.inject_full_pose = config.odometry.eskf.inject_full_pose;
     eskf.inject_directional_pose =
         config.odometry.eskf.inject_directional_pose;
@@ -60,6 +73,10 @@ EskfConfig OdometryPipeline::makeEskfConfig(const Config& config) {
     eskf.init_sigma_theta = config.odometry.eskf.init_sigma_theta;
     eskf.init_sigma_velocity = config.odometry.eskf.init_sigma_velocity;
     eskf.init_sigma_position = config.odometry.eskf.init_sigma_position;
+    eskf.specific_force_model_density =
+        config.odometry.eskf.specific_force_model_density;
+    eskf.position_model_diffusion =
+        config.odometry.eskf.position_model_diffusion;
     return eskf;
 }
 

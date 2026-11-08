@@ -43,6 +43,15 @@ Eigen::Matrix3d so3RightJacobianInverse(const Eigen::Vector3d& phi) {
     return SO3::invRightJacobian(phi);
 }
 
+/// small_gicp right perturbation C' = C Exp(δ), with Exp the SE(3) exponential.
+Isometry3d rightSe3Exp(const Eigen::Matrix<double, 6, 1>& delta) {
+    Isometry3d result = Isometry3d::Identity();
+    const Eigen::Vector3d omega = delta.head<3>();
+    result.linear() = SO3::exp(omega).R();
+    result.translation() = SO3::leftJacobian(omega) * delta.tail<3>();
+    return result;
+}
+
 }  // namespace
 
 Eskf::Eskf(
@@ -65,6 +74,33 @@ Eskf::Eskf(
         Eigen::Matrix3d::Identity() * sba * sba;
     precomputed_Qc_.block<3, 3>(9, 9) =
         Eigen::Matrix3d::Identity() * sbg * sbg;
+    enforceGal3RightGains();
+}
+
+void Eskf::enforceGal3RightGains() {
+    if (config_.chart != EskfChart::Gal3Right) {
+        return;
+    }
+    const bool conflict =
+        config_.inject_full_pose
+        || config_.inject_directional_pose
+        || config_.velocity_correction_gain != 0.0
+        || config_.bias_update_scale != 1.0;
+    if (conflict) {
+        spdlog::warn(
+            "[eskf] gal3_right ignores legacy gains "
+            "(inject_full_pose={}, inject_directional_pose={}, "
+            "velocity_correction_gain={}, bias_update_scale={}) "
+            "and forces false, false, 0, 1",
+            config_.inject_full_pose,
+            config_.inject_directional_pose,
+            config_.velocity_correction_gain,
+            config_.bias_update_scale);
+    }
+    config_.inject_full_pose = false;
+    config_.inject_directional_pose = false;
+    config_.velocity_correction_gain = 0.0;
+    config_.bias_update_scale = 1.0;
 }
 
 double Eskf::biasRwAccel() const {
@@ -218,6 +254,197 @@ void Eskf::propagateCovariance(
     P = 0.5 * (P + P.transpose());
 }
 
+Eskf::Vec6 Eskf::gal3RightInnovation(
+    const Eigen::Matrix3d& R_nominal,
+    const Eigen::Vector3d& v_nominal,
+    const Eigen::Vector3d& p_nominal,
+    const Eigen::Matrix3d& R_measured,
+    const Eigen::Vector3d& p_measured)
+{
+    const lie::Gal3d nominal(
+        R_nominal,
+        lie::Gal3d::IsometriesType{v_nominal, p_nominal},
+        0.0);
+    const lie::Gal3d measured(
+        R_measured,
+        lie::Gal3d::IsometriesType{v_nominal, p_measured},
+        0.0);
+    const lie::Gal3d::VectorType xi =
+        lie::Gal3d::log(nominal.inv() * measured);
+    const double alpha = xi.segment<3>(3).lpNorm<Eigen::Infinity>();
+    const double tau = std::abs(xi(9));
+    if (alpha > 1e-12 || tau > 1e-12) {
+        spdlog::error(
+            "[eskf] gal3_right residual alpha/tau not near 0 "
+            "(alpha_inf={:.3e}, tau={:.3e})",
+            alpha,
+            tau);
+    }
+    Vec6 innovation;
+    innovation.segment<3>(0) = xi.segment<3>(0);
+    innovation.segment<3>(3) = xi.segment<3>(6);
+    return innovation;
+}
+
+void Eskf::gal3RightRetract(
+    Eigen::Matrix3d& rotation,
+    Eigen::Vector3d& velocity,
+    Eigen::Vector3d& position,
+    const Eigen::Matrix<double, 9, 1>& xi_nav)
+{
+    const lie::Gal3d nominal(
+        rotation,
+        lie::Gal3d::IsometriesType{velocity, position},
+        0.0);
+    lie::Gal3d::VectorType xi = lie::Gal3d::VectorType::Zero();
+    xi.segment<3>(0) = xi_nav.segment<3>(0);
+    xi.segment<3>(3) = xi_nav.segment<3>(3);
+    xi.segment<3>(6) = xi_nav.segment<3>(6);
+    const lie::Gal3d updated = nominal * lie::Gal3d::exp(xi);
+    rotation = updated.R();
+    velocity = updated.v();
+    position = updated.p();
+}
+
+Eskf::Mat15 Eskf::gal3RightTransition(
+    const Eigen::Vector3d& omega,
+    const Eigen::Vector3d& accel,
+    double dt)
+{
+    lie::Gal3d::VectorType input;
+    input << omega, accel, Eigen::Vector3d::Zero(), 1.0;
+    const lie::Gal3d::VectorType u_hat = input * dt;
+    const lie::Gal3d upsilon = lie::Gal3d::exp(u_hat);
+    const lie::Gal3d::TMatrixType adjoint = upsilon.invAdjoint();
+    const lie::Gal3d::TMatrixType Jr = lie::Gal3d::rightJacobian(u_hat);
+
+    // Columns (ω, α, a, b_a, b_g). Navigation block is Ad_{Υ⁻¹} without τ.
+    // Bias columns are −dt · J_r(û) on the gyro (cols 0:3) and accel (cols 3:6)
+    // slots. No R̄ and no gravity.
+    Mat15 Phi = Mat15::Zero();
+    Phi.block<9, 9>(0, 0) = adjoint.block<9, 9>(0, 0);
+    Phi.block<9, 3>(0, 9) = -dt * Jr.block<9, 3>(0, 3);
+    Phi.block<9, 3>(0, 12) = -dt * Jr.block<9, 3>(0, 0);
+    Phi.block<3, 3>(9, 9).setIdentity();
+    Phi.block<3, 3>(12, 12).setIdentity();
+    return Phi;
+}
+
+Eskf::Mat15 Eskf::gal3RightProcessNoise(
+    const Eigen::Vector3d& omega,
+    const Eigen::Vector3d& accel,
+    double dt,
+    double sigma_g2,
+    double sigma_a2,
+    double sigma_ba2,
+    double sigma_bg2)
+{
+    lie::Gal3d::VectorType input;
+    input << omega, accel, Eigen::Vector3d::Zero(), 1.0;
+    const lie::Gal3d::TMatrixType Jr =
+        lie::Gal3d::rightJacobian(input * dt);
+    const auto gyro = Jr.block<9, 3>(0, 0);
+    const auto accel_block = Jr.block<9, 3>(0, 3);
+
+    Mat15 Q = Mat15::Zero();
+    Q.block<9, 9>(0, 0) =
+        gyro * (sigma_g2 * dt) * gyro.transpose()
+        + accel_block * (sigma_a2 * dt) * accel_block.transpose();
+    Q.block<3, 3>(9, 9) =
+        Eigen::Matrix3d::Identity() * (sigma_ba2 * dt);
+    Q.block<3, 3>(12, 12) =
+        Eigen::Matrix3d::Identity() * (sigma_bg2 * dt);
+    return Q;
+}
+
+Eskf::Mat15 Eskf::gal3RightResetJacobian(
+    const Eigen::Matrix<double, 9, 1>& xi_nav)
+{
+    lie::Gal3d::VectorType xi = lie::Gal3d::VectorType::Zero();
+    xi.segment<3>(0) = xi_nav.segment<3>(0);
+    xi.segment<3>(3) = xi_nav.segment<3>(3);
+    xi.segment<3>(6) = xi_nav.segment<3>(6);
+    Mat15 reset = Mat15::Identity();
+    reset.block<9, 9>(0, 0) =
+        lie::Gal3d::rightJacobian(xi).block<9, 9>(0, 0);
+    return reset;
+}
+
+Eskf::Mat6 Eskf::gal3RightRegistrationJacobian(
+    const Isometry3d& T_world_imu_prior,
+    const Isometry3d& T_world_imu_measured)
+{
+    const Isometry3d correction =
+        T_world_imu_measured * T_world_imu_prior.inverse();
+    const Eigen::Matrix3d R_bar = T_world_imu_prior.rotation();
+    const Eigen::Vector3d p_bar = T_world_imu_prior.translation();
+    const Eigen::Vector3d v_bar = Eigen::Vector3d::Zero();
+
+    Mat6 J = Mat6::Zero();
+    constexpr double epsilon = 1e-6;
+    for (int column = 0; column < 6; ++column) {
+        Eigen::Matrix<double, 6, 1> delta =
+            Eigen::Matrix<double, 6, 1>::Zero();
+        delta(column) = epsilon;
+        const Isometry3d measured_plus =
+            correction * rightSe3Exp(delta) * T_world_imu_prior;
+        delta(column) = -epsilon;
+        const Isometry3d measured_minus =
+            correction * rightSe3Exp(delta) * T_world_imu_prior;
+        const Vec6 plus = gal3RightInnovation(
+            R_bar,
+            v_bar,
+            p_bar,
+            measured_plus.rotation(),
+            measured_plus.translation());
+        const Vec6 minus = gal3RightInnovation(
+            R_bar,
+            v_bar,
+            p_bar,
+            measured_minus.rotation(),
+            measured_minus.translation());
+        J.col(column) = (plus - minus) / (2.0 * epsilon);
+    }
+    return J;
+}
+
+void Eskf::propagateCovarianceGal3Right(
+    const Eigen::Vector3d& omega,
+    const Eigen::Vector3d& accel,
+    double dt,
+    Mat15& P) const
+{
+    if (dt <= 0.0) {
+        return;
+    }
+    // One sample, one Υ. Do not split dt into 20 ms pieces, and do not
+    // wrap the input noise as Φ G Qc Gᵀ Φᵀ dt.
+    //
+    // The specific-force model density shares the accelerometer input
+    // channel, so its velocity / position correlation stays inside J_r.
+    // Position diffusion is added on the right-error position block only:
+    // it is not a velocity error and must not be transported by another Φ.
+    const Mat15 Phi = gal3RightTransition(omega, accel, dt);
+    const double specific_force = config_.specific_force_model_density;
+    const double sigma_a2 =
+        precomputed_Qc_(3, 3) + specific_force * specific_force;
+    Mat15 Q = gal3RightProcessNoise(
+        omega,
+        accel,
+        dt,
+        precomputed_Qc_(0, 0),
+        sigma_a2,
+        precomputed_Qc_(6, 6),
+        precomputed_Qc_(9, 9));
+    if (config_.position_model_diffusion > 0.0) {
+        Q.block<3, 3>(6, 6) +=
+            Eigen::Matrix3d::Identity()
+            * (config_.position_model_diffusion * dt);
+    }
+    P = Phi * P * Phi.transpose() + Q;
+    P = 0.5 * (P + P.transpose());
+}
+
 void Eskf::predict(const ImuData& imu) {
     if (!initialized_ || !tip_state_.valid || imu.stamp <= tip_state_.stamp) {
         return;
@@ -230,7 +457,11 @@ void Eskf::predict(const ImuData& imu) {
 
     integrator_.integrate(imu, dt);
     recoverTipLocked(imu.stamp);
-    propagateCovariance(R_before, omega, accel, dt, P_tip_);
+    if (config_.chart == EskfChart::Gal3Right) {
+        propagateCovarianceGal3Right(omega, accel, dt, P_tip_);
+    } else {
+        propagateCovariance(R_before, omega, accel, dt, P_tip_);
+    }
 }
 
 void Eskf::replayToLatest(const ImuBuffer& imu_buffer) {
@@ -272,6 +503,29 @@ Eskf::Mat6 Eskf::registrationToInnovationJacobian(
 }
 
 Eskf::Mat6 Eskf::measurementCovariance(
+    const std::optional<Mat6>& hessian,
+    const Isometry3d& T_world_imu_prior,
+    const Isometry3d& T_world_imu_measured,
+    Vec6* information_eigenvalues,
+    Mat6* directional_observability) const
+{
+    if (config_.chart == EskfChart::Gal3Right) {
+        return measurementCovarianceGal3Right(
+            hessian,
+            T_world_imu_prior,
+            T_world_imu_measured,
+            information_eigenvalues,
+            directional_observability);
+    }
+    return measurementCovarianceEuclidean(
+        hessian,
+        T_world_imu_prior,
+        T_world_imu_measured,
+        information_eigenvalues,
+        directional_observability);
+}
+
+Eskf::Mat6 Eskf::measurementCovarianceEuclidean(
     const std::optional<Mat6>& hessian,
     const Isometry3d& T_world_imu_prior,
     const Isometry3d& T_world_imu_measured,
@@ -353,6 +607,94 @@ Eskf::Mat6 Eskf::measurementCovariance(
     return R;
 }
 
+Eskf::Mat6 Eskf::measurementCovarianceGal3Right(
+    const std::optional<Mat6>& hessian,
+    const Isometry3d& T_world_imu_prior,
+    const Isometry3d& T_world_imu_measured,
+    Vec6* information_eigenvalues,
+    Mat6* directional_observability) const
+{
+    if (directional_observability != nullptr) {
+        *directional_observability = Mat6::Identity();
+    }
+
+    // J_z maps a small_gicp right perturbation into (z_ω, z_a). D maps the
+    // old (z_ω, z_p) floor into that same chart. Clip only after the
+    // information matrix has been moved by J_z.
+    const Mat6 J_z = gal3RightRegistrationJacobian(
+        T_world_imu_prior, T_world_imu_measured);
+    const Mat6 J_old = registrationToInnovationJacobian(
+        T_world_imu_prior, T_world_imu_measured);
+    const Mat6 D = J_z * J_old.inverse();
+
+    Mat6 floor = Mat6::Zero();
+    floor.block<3, 3>(0, 0) =
+        Eigen::Matrix3d::Identity()
+        * config_.sigma_rotation * config_.sigma_rotation;
+    floor.block<3, 3>(3, 3) =
+        Eigen::Matrix3d::Identity()
+        * config_.sigma_translation * config_.sigma_translation;
+    Mat6 R = D * floor * D.transpose();
+    R = 0.5 * (R + R.transpose());
+
+    if (!config_.use_hessian || !hessian.has_value()) {
+        return R;
+    }
+
+    const Mat6 J_inv = J_z.inverse();
+    Mat6 H =
+        J_inv.transpose()
+        * (0.5 * (*hessian + hessian->transpose()))
+        * J_inv;
+    H = 0.5 * (H + H.transpose());
+    Eigen::SelfAdjointEigenSolver<Mat6> solver(H);
+    if (solver.info() != Eigen::Success) {
+        spdlog::warn(
+            "[eskf] Hessian eigensolve failed; using z-coordinate noise floor");
+        return R;
+    }
+
+    Eigen::Matrix<double, 6, 1> evals = solver.eigenvalues();
+    if (information_eigenvalues != nullptr) {
+        *information_eigenvalues = evals;
+    }
+
+    const double max_eigen =
+        std::max(evals.maxCoeff(), config_.hessian_min_information);
+    const double weak_threshold = std::max(
+        config_.hessian_min_information,
+        max_eigen / config_.hessian_max_condition);
+    Eigen::Matrix<double, 6, 1> variances;
+    Eigen::Matrix<double, 6, 1> observability_weights;
+    for (int i = 0; i < 6; ++i) {
+        const double information =
+            std::max(evals(i), config_.hessian_min_information);
+        double sigma =
+            std::sqrt(config_.icp_covariance_scale / information);
+        if (evals(i) < weak_threshold) {
+            sigma = std::max(sigma, config_.hessian_degenerate_sigma);
+        }
+        sigma = std::min(sigma, config_.hessian_max_sigma);
+        variances(i) = sigma * sigma;
+        observability_weights(i) = std::clamp(
+            evals(i) / weak_threshold, 0.0, 1.0);
+    }
+
+    const Mat6 innovation_covariance =
+        solver.eigenvectors()
+        * variances.asDiagonal()
+        * solver.eigenvectors().transpose();
+    if (directional_observability != nullptr) {
+        *directional_observability =
+            solver.eigenvectors()
+            * observability_weights.asDiagonal()
+            * solver.eigenvectors().transpose();
+    }
+    R += innovation_covariance;
+    R = 0.5 * (R + R.transpose());
+    return R;
+}
+
 EskfUpdate Eskf::correctAt(
     double reference_stamp,
     const NavigationState& prior_mean,
@@ -408,12 +750,20 @@ EskfUpdate Eskf::correctAt(
                 tip_state_.T_world_imu.rotation();
             integrator_.integrate(*next_imu, remaining_dt);
             recoverTipLocked(reference_stamp);
-            propagateCovariance(
-                R_before,
-                next_imu->gyro,
-                next_imu->accel,
-                remaining_dt,
-                P_tip_);
+            if (config_.chart == EskfChart::Gal3Right) {
+                propagateCovarianceGal3Right(
+                    next_imu->gyro,
+                    next_imu->accel,
+                    remaining_dt,
+                    P_tip_);
+            } else {
+                propagateCovariance(
+                    R_before,
+                    next_imu->gyro,
+                    next_imu->accel,
+                    remaining_dt,
+                    P_tip_);
+            }
         } else if (!imu_buffer.empty()) {
             // Fallback: buffer ends before reference_stamp.  Use the last
             // available IMU sample as a piecewise-constant approximation
@@ -423,12 +773,20 @@ EskfUpdate Eskf::correctAt(
                 tip_state_.T_world_imu.rotation();
             integrator_.integrate(last_imu, remaining_dt);
             recoverTipLocked(reference_stamp);
-            propagateCovariance(
-                R_before,
-                last_imu.gyro,
-                last_imu.accel,
-                remaining_dt,
-                P_tip_);
+            if (config_.chart == EskfChart::Gal3Right) {
+                propagateCovarianceGal3Right(
+                    last_imu.gyro,
+                    last_imu.accel,
+                    remaining_dt,
+                    P_tip_);
+            } else {
+                propagateCovariance(
+                    R_before,
+                    last_imu.gyro,
+                    last_imu.accel,
+                    remaining_dt,
+                    P_tip_);
+            }
         } else {
             spdlog::warn(
                 "[eskf] covariance not propagated to reference stamp: "
@@ -467,6 +825,50 @@ EskfUpdate Eskf::correctAt(
         return finishWithoutInjection();
     }
 
+    if (config_.chart == EskfChart::Gal3Right) {
+        return correctGal3Right(
+            reference_stamp,
+            T_world_imu_measured,
+            hessian,
+            replay_rotation_error,
+            replay_position_error,
+            replay_velocity_error);
+    }
+    return correctEuclidean(
+        reference_stamp,
+        T_world_imu_measured,
+        hessian,
+        replay_rotation_error,
+        replay_position_error,
+        replay_velocity_error);
+}
+
+EskfUpdate Eskf::correctEuclidean(
+    double reference_stamp,
+    const Isometry3d& T_world_imu_measured,
+    const std::optional<Mat6>& hessian,
+    double replay_rotation_error,
+    double replay_position_error,
+    double replay_velocity_error)
+{
+    EskfUpdate update;
+    update.state = tip_state_;
+    update.state.stamp = reference_stamp;
+    update.state.valid = true;
+    update.accel_bias = accel_bias_;
+    update.gyro_bias = gyro_bias_;
+    update.accepted = false;
+
+    auto finishWithoutInjection = [&]() {
+        tip_state_.stamp = reference_stamp;
+        tip_state_.valid = true;
+        update.state = tip_state_;
+        update.accel_bias = accel_bias_;
+        update.gyro_bias = gyro_bias_;
+        update.accepted = false;
+        return update;
+    };
+
     const Eigen::Matrix3d R_bar = tip_state_.T_world_imu.rotation();
     const Eigen::Vector3d p_bar = tip_state_.T_world_imu.translation();
     const Eigen::Vector3d v_bar = tip_state_.v_world;
@@ -484,7 +886,7 @@ EskfUpdate Eskf::correctAt(
     Mat6 directional_observability = Mat6::Identity();
     const Mat6 R = measurementCovariance(
         hessian,
-        prior_mean.T_world_imu,
+        tip_state_.T_world_imu,
         T_world_imu_measured,
         &update.information_eigenvalues,
         &directional_observability);
@@ -664,6 +1066,192 @@ EskfUpdate Eskf::correctAt(
                 nu.segment<3>(3).norm(),
                 dx.norm(),
                 bias_scale);
+        }
+    }
+#endif
+
+    ++correction_count_;
+    if (correction_count_ % 10 == 0 || dx.segment<3>(3).norm() > 0.25) {
+        spdlog::warn(
+            "[eskf] update #{}: nu_rot={:.4f}rad nu_pos={:.3f}m "
+            "dv={:.3f}m/s replay_err(r,p,v)=({:.4f},{:.3f},{:.3f}) "
+            "ba={:.4f} bg={:.5f} "
+            "P(v,p,ba,bg)=({:.3e},{:.3e},{:.3e},{:.3e}) "
+            "NIS/6={:.2f} mean={:.2f}",
+            correction_count_,
+            nu.segment<3>(0).norm(),
+            nu.segment<3>(3).norm(),
+            dx.segment<3>(3).norm(),
+            replay_rotation_error,
+            replay_position_error,
+            replay_velocity_error,
+            accel_bias_.norm(),
+            gyro_bias_.norm(),
+            P_tip_.block<3, 3>(3, 3).trace(),
+            P_tip_.block<3, 3>(6, 6).trace(),
+            P_tip_.block<3, 3>(9, 9).trace(),
+            P_tip_.block<3, 3>(12, 12).trace(),
+            update.normalized_nis,
+            update.mean_normalized_nis);
+        if (config_.use_hessian) {
+            spdlog::warn(
+                "[eskf] directional: info=[{:.2e},{:.2e}] "
+                "std(r,p)=({:.3f},{:.3f},{:.3f};"
+                "{:.3f},{:.3f},{:.3f}) Kpose=({:.2f},{:.2f},{:.2f};"
+                "{:.2f},{:.2f},{:.2f})",
+                update.information_eigenvalues.minCoeff(),
+                update.information_eigenvalues.maxCoeff(),
+                update.measurement_std(0),
+                update.measurement_std(1),
+                update.measurement_std(2),
+                update.measurement_std(3),
+                update.measurement_std(4),
+                update.measurement_std(5),
+                update.pose_gain_diagonal(0),
+                update.pose_gain_diagonal(1),
+                update.pose_gain_diagonal(2),
+                update.pose_gain_diagonal(3),
+                update.pose_gain_diagonal(4),
+                update.pose_gain_diagonal(5));
+        }
+    }
+
+    update.state = tip_state_;
+    update.accel_bias = accel_bias_;
+    update.gyro_bias = gyro_bias_;
+    update.accepted = true;
+    return update;
+}
+
+EskfUpdate Eskf::correctGal3Right(
+    double reference_stamp,
+    const Isometry3d& T_world_imu_measured,
+    const std::optional<Mat6>& hessian,
+    double replay_rotation_error,
+    double replay_position_error,
+    double replay_velocity_error)
+{
+    EskfUpdate update;
+    update.state = tip_state_;
+    update.state.stamp = reference_stamp;
+    update.state.valid = true;
+    update.accel_bias = accel_bias_;
+    update.gyro_bias = gyro_bias_;
+    update.accepted = false;
+
+    auto finishWithoutInjection = [&]() {
+        tip_state_.stamp = reference_stamp;
+        tip_state_.valid = true;
+        update.state = tip_state_;
+        update.accel_bias = accel_bias_;
+        update.gyro_bias = gyro_bias_;
+        update.accepted = false;
+        return update;
+    };
+
+    const Eigen::Matrix3d R_bar = tip_state_.T_world_imu.rotation();
+    const Eigen::Vector3d p_bar = tip_state_.T_world_imu.translation();
+    const Eigen::Vector3d v_bar = tip_state_.v_world;
+    const Eigen::Matrix3d R_meas = T_world_imu_measured.rotation();
+    const Eigen::Vector3d p_meas = T_world_imu_measured.translation();
+
+    const Vec6 nu = gal3RightInnovation(
+        R_bar, v_bar, p_bar, R_meas, p_meas);
+
+    Eigen::Matrix<double, 6, 15> H = Eigen::Matrix<double, 6, 15>::Zero();
+    H.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
+    H.block<3, 3>(3, 6) = Eigen::Matrix3d::Identity();
+
+    const Mat6 R = measurementCovarianceGal3Right(
+        hessian,
+        tip_state_.T_world_imu,
+        T_world_imu_measured,
+        &update.information_eigenvalues,
+        nullptr);
+    update.measurement_std = R.diagonal().cwiseMax(0.0).cwiseSqrt();
+    const Mat6 S = H * P_tip_ * H.transpose() + R;
+    Eigen::LDLT<Mat6> ldlt(S);
+    if (ldlt.info() != Eigen::Success) {
+        spdlog::warn("[eskf] innovation covariance factorization failed");
+        return finishWithoutInjection();
+    }
+
+    const Vec6 Sinv_nu = ldlt.solve(nu);
+    update.mahalanobis = nu.dot(Sinv_nu);
+    update.normalized_nis = update.mahalanobis / 6.0;
+
+    constexpr std::size_t kNisWindowSize = 100;
+    normalized_nis_window_.push_back(update.normalized_nis);
+    normalized_nis_sum_ += update.normalized_nis;
+    if (normalized_nis_window_.size() > kNisWindowSize) {
+        normalized_nis_sum_ -= normalized_nis_window_.front();
+        normalized_nis_window_.pop_front();
+    }
+    update.mean_normalized_nis =
+        normalized_nis_sum_
+        / static_cast<double>(normalized_nis_window_.size());
+    if (config_.mahalanobis_threshold > 0.0
+        && update.mahalanobis > config_.mahalanobis_threshold) {
+        spdlog::warn(
+            "[eskf] Mahalanobis rejection: d={:.2f} > {:.2f}",
+            update.mahalanobis,
+            config_.mahalanobis_threshold);
+        return finishWithoutInjection();
+    }
+
+    // Pure Kalman. Legacy pose, velocity, and bias row replacements are not
+    // applied on this chart; degeneracy stays inside R.
+    const Eigen::Matrix<double, 15, 6> K =
+        P_tip_ * H.transpose() * ldlt.solve(Mat6::Identity());
+    update.pose_gain_diagonal.segment<3>(0) =
+        K.block<3, 3>(0, 0).diagonal();
+    update.pose_gain_diagonal.segment<3>(3) =
+        K.block<3, 3>(6, 3).diagonal();
+
+    const Vec15 dx = K * nu;
+    const Eigen::Matrix<double, 9, 1> xi_nav = dx.segment<9>(0);
+
+    tip_state_.stamp = reference_stamp;
+    tip_state_.valid = true;
+    Eigen::Matrix3d rotation = R_bar;
+    Eigen::Vector3d velocity = v_bar;
+    Eigen::Vector3d position = p_bar;
+    gal3RightRetract(rotation, velocity, position, xi_nav);
+    tip_state_.T_world_imu.linear() = rotation;
+    tip_state_.T_world_imu.translation() = position;
+    tip_state_.v_world = velocity;
+
+    accel_bias_ += dx.segment<3>(9);
+    gyro_bias_ += dx.segment<3>(12);
+    accel_bias_ = accel_bias_.array()
+        .min(config_.accel_bias_max)
+        .max(-config_.accel_bias_max);
+    gyro_bias_ = gyro_bias_.array()
+        .min(config_.gyro_bias_max)
+        .max(-config_.gyro_bias_max);
+
+    const Mat15 I = Mat15::Identity();
+    const Mat15 P_upd =
+        (I - K * H) * P_tip_ * (I - K * H).transpose()
+        + K * R * K.transpose();
+    const Mat15 reset = gal3RightResetJacobian(xi_nav);
+    P_tip_ = reset * P_upd * reset.transpose();
+    P_tip_ = 0.5 * (P_tip_ + P_tip_.transpose());
+
+#ifndef NDEBUG
+    {
+        Eigen::LLT<Mat15> llt(P_tip_);
+        if (llt.info() != Eigen::Success) {
+            spdlog::error(
+                "[eskf] covariance not positive-definite after Joseph update "
+                "#{}: NIS/6={:.2f} nu_rot={:.4f}rad nu_pos={:.3f}m "
+                "||dx||={:.3f} bias_scale={:.2f}",
+                correction_count_,
+                update.normalized_nis,
+                nu.segment<3>(0).norm(),
+                nu.segment<3>(3).norm(),
+                dx.norm(),
+                1.0);
         }
     }
 #endif
