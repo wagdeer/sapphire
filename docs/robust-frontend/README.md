@@ -1,7 +1,7 @@
 # Robust Frontend Iteration Plan
 
-Status: active  
-Branch: `feat/robust-frontend`  
+Status: active
+Branch: `feat/robust-frontend`
 Baseline: current worktree on top of `49c2110`, including the pre-existing
 `gal3_right` worktree changes
 
@@ -256,4 +256,3 @@ The pre-change baseline for this branch is the current worktree on top of
 `49c2110`. That worktree already contains uncommitted `gal3_right` and benchmark
 changes. Gate reports record its dirty fingerprint rather than silently treating
 it as clean `main`.
-
