@@ -31,29 +31,35 @@ thin wrappers.
 
 Each number below is the unweighted mean or median of per-run translation ATE:
 RMSE after SE(3) alignment, with no scale correction. Runs are not weighted by
-distance.
+distance. Results below are from the 2026-11-08 full replay.
 
 | Dataset | Runs in the mean | What the coverage column counts | Mean ATE | Median ATE |
 |---|---:|---|---:|---:|
-| HILTI 2022 · complete results | 9 | 86 matched control points | 0.2257 m | 0.0615 m |
-| HILTI 2023 Site 1 handheld | 5 | 346.4 m of control-point polylines | 0.0683 m | 0.0617 m |
-| S3E | 18 | 11.39 km of ground-truth path | 1.3034 m | 0.9808 m |
-| Newer College 2020 | 5 | 5.94 km of ground-truth path | 0.2632 m | 0.1587 m |
+| HILTI 2022 · complete results | 12 | 126 matched control points | 0.4190 m | 0.0879 m |
+| HILTI 2023 Site 1 handheld | 5 | 346.4 m of control-point polylines | 0.0749 m | 0.0618 m |
+| S3E | 18 | 11.39 km of ground-truth path | 2.7547 m | 1.2765 m |
+| Newer College 2020 | 5 | 5.94 km of ground-truth path | 0.2889 m | 0.2847 m |
 
 HILTI uses sparse control points and a 2 s association window. S3E and Newer
 College use a 0.1 s window. Partial runs, sequences that were not replayed,
 and runs withheld from the mean are listed on the benchmark page and are not
 folded into this table.
 
-The HILTI 2022 row contains the 9 runs with complete sparse-control coverage
-in the current replay. `exp03`, `exp10`, and `exp16` remained partial and are
-reported separately on the benchmark page rather than folded into the mean.
+The HILTI 2022 row contains all 12 recordings from the 2026-11-08 full
+replay, each with complete sparse-control coverage. S3E `Campus_Road_1/2`
+are not runnable because their db3 bags are absent.
 [Per-sequence results and trajectory plots](docs/benchmarks/benchmark_table.md).
+
+S3E Tunnel 1 Bob is retained as a GT-quality diagnostic: its `55.729 m` value
+is reproducible, but maintainer review found the GT path/time unreliable while
+the estimated trajectory and point cloud are visually consistent. It is not an
+algorithm failure or ranking result.
 
 An evalio 0.6.1 cross-check adds KISS-ICP, DLIO, and GenZ-ICP. For Newer
 College, the saved external trajectories were re-evaluated with the same
 translation RMSE and SE(3) Umeyama alignment, giving a directly comparable
-five-sequence result:
+five-sequence result. This comparison table retains the 2026-11-06 data; no
+new side-by-side run was performed for the 2026-11-08 replay:
 
 | Pipeline | Complete runs | Mean ATE | Median ATE |
 |---|---:|---:|---:|
