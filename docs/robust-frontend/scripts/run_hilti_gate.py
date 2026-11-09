@@ -30,7 +30,7 @@ CASES = (
         "sequence": "exp03_construction_stairs",
         "bag": Path("/mnt/e/dataset/hilti2022/rosbags/"
                     "exp03_construction_stairs.bag"),
-        "config": CORE / "cfg" / "sapphire_hilti_2022_handheld.toml",
+        "config": CORE / "cfg" / "hilti_2022_handheld.toml",
         "launch": "hilti_2022_handheld.launch",
         "rate": "0.5",
     },
@@ -40,7 +40,7 @@ CASES = (
         "sequence": "exp07_long_corridor",
         "bag": Path("/mnt/e/dataset/hilti2022/rosbags/"
                     "exp07_long_corridor.bag"),
-        "config": CORE / "cfg" / "sapphire_hilti_2022_handheld.toml",
+        "config": CORE / "cfg" / "hilti_2022_handheld.toml",
         "launch": "hilti_2022_handheld.launch",
         "rate": "0.5",
     },
@@ -49,7 +49,7 @@ CASES = (
         "dataset": "hilti_2022",
         "sequence": "exp09_cupola",
         "bag": Path("/mnt/e/dataset/hilti2022/rosbags/exp09_cupola.bag"),
-        "config": CORE / "cfg" / "sapphire_hilti_2022_handheld.toml",
+        "config": CORE / "cfg" / "hilti_2022_handheld.toml",
         "launch": "hilti_2022_handheld.launch",
         "rate": "0.5",
     },
@@ -59,7 +59,7 @@ CASES = (
         "sequence": "exp10_cupola_2",
         "bag": Path("/mnt/e/dataset/hilti2022/rosbags/"
                     "exp10_cupola_2.bag"),
-        "config": CORE / "cfg" / "sapphire_hilti_2022_handheld.toml",
+        "config": CORE / "cfg" / "hilti_2022_handheld.toml",
         "launch": "hilti_2022_handheld.launch",
         "rate": "0.5",
     },
@@ -69,7 +69,7 @@ CASES = (
         "sequence": "site2_handheld_5",
         "bag": Path("/mnt/e/dataset/hilti-2023/rosbags/"
                     "site2_handheld_5.bag"),
-        "config": CORE / "cfg" / "sapphire_hilti_2023_handheld.toml",
+        "config": CORE / "cfg" / "hilti_2023_handheld.toml",
         "launch": "hilti_2023_handheld.launch",
         "rate": "1.0",
     },

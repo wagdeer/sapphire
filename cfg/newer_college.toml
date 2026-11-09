@@ -1,41 +1,39 @@
-# HILTI SLAM Challenge 2022 handheld platform.
-# Sensors: Hesai PandarXT-32 + Alphasense Core IMU
-#
-# Extrinsics and measurement-tip geometry come from:
-#   calibration/calibration_files/lidar_calibration.yaml
-#
-# IMU noise values are estimated from the static 89-minute
-# calibration/imu_noise_calibration.bag using its approximately 399 Hz samples.
+# Newer College 2020: Ouster OS1-64 + built-in Ouster IMU.
+# Calibration:
+#   kalibr_output/ouster_imu_lidar_transforms.yaml
+# Topic/time layout:
+#   /os1_cloud_node/points: xyz + uint32 "t" nanoseconds relative to header
+#   /os1_cloud_node/imu: 100 Hz, m/s^2 and rad/s
 
 [imu]
 gravity = 9.80665
 
 [imu.init]
-convergence_gyro_std = 0.0065
-convergence_accel_std = 0.05
+convergence_gyro_std = 0.008
+convergence_accel_std = 0.10
 timeout_sec = 5.0
 check_interval_sec = 0.5
 min_samples = 100
 
 [imu.noise]
-accel_noise_density = 0.001125
-gyro_noise_density = 0.0001884
-accel_random_walk = 0.000243
-gyro_random_walk = 0.00000452
-accel_bias_rw_sigma = 0.000243
-gyro_bias_rw_sigma = 0.00000452
+accel_noise_density = 0.001249
+gyro_noise_density = 0.000208
+accel_random_walk = 0.000106
+gyro_random_walk = 0.000004
+accel_bias_rw_sigma = 0.000106
+gyro_bias_rw_sigma = 0.000004
 
 [odometry]
-voxel_size = 0.05
+voxel_size = 0.25
 fusion = "eskf"
 
 [odometry.crop_box]
-min_x = -1.0
-min_y = -1.0
-min_z = -1.0
-max_x = 1.0
-max_y = 1.0
-max_z = 1.0
+min_x = -0.5
+min_y = -0.5
+min_z = -0.5
+max_x = 0.5
+max_y = 0.5
+max_z = 0.5
 
 [odometry.observer]
 position_gain = 4.5
@@ -47,9 +45,6 @@ accel_bias_max = 10.0
 gyro_bias_max = 0.5
 
 [odometry.eskf]
-chart = "gal3_right"
-specific_force_model_density = 0.327
-position_model_diffusion = 0.1053
 sigma_rotation = 0.02
 sigma_translation = 0.05
 icp_covariance_scale = 25.0
@@ -70,10 +65,11 @@ init_sigma_velocity = 0.5
 init_sigma_position = 0.5
 
 [odometry.submap]
-splitting_distance = 0.75
-splitting_rotation = 0.02
-max_keyframes = 5
-voxel_size = 0.05
+splitting_distance = 2.0
+splitting_rotation = 0.7853981633974483
+max_keyframes = 10
+voxel_size = 0.25
+recovery_after_rejections = 5
 
 [registration]
 type = "VGICP"
@@ -89,12 +85,12 @@ max_correction_trans = 1.0
 max_correction_rot_deg = 20.0
 
 [registration.vgicp]
-voxel_resolution = 0.25
+voxel_resolution = 0.5
 
 [pgo]
 enabled = true
-keyframe_distance = 0.5
-keyframe_rotation = 0.3
+keyframe_distance = 1.5
+keyframe_rotation = 0.5235987756
 loop_min_time_separation = 30.0
 loop_min_travel_distance = 30.0
 loop_max_rotation = 3.14
@@ -107,7 +103,7 @@ source_travel_radius_m = 10.0
 source_max_range_m = 20.0
 source_max_frames = 256
 lidar_min_inliers = 64
-lidar_max_iterations = 64
+lidar_max_iterations = 32
 lidar_max_correspondence_m = 2.0
 lidar_min_overlap = 0.5
 lidar_max_fitness_m2 = 0.5
@@ -115,26 +111,26 @@ lidar_translation_sigma_m = 0.2
 lidar_rotation_sigma_rad = 0.1
 max_constraint_error_sigma = 3.0
 update_period_sec = 1.0
-map_frame_stride = 1
-map_voxel_size = 0.3
+map_frame_stride = 3
+map_voxel_size = 0.8
 
 [pgo.occupancy]
 enabled = false
 resolution = 0.1
-h_clearance = 1.0
-ground_margin = 0.2
-clear_height_eps = 0.1
-d_max = 6.0
+h_clearance = 2.0
+ground_margin = 0.0
+clear_height_eps = 0.05
+d_max = 3.0
 occ_threshold = 0.3
 usable_range = 40.0
 min_range = 0.5
-cloud_voxel_size = 0.4
+cloud_voxel_size = 0.2
 margin = 5.0
 
 [sensor.lidar]
-time_field = "timestamp"
-time_unit = "s"
-time_ref = "absolute"
+time_field = "t"
+time_unit = "ns"
+time_ref = "relative"
 max_scan_duration = 0.2
 header_tolerance = 0.5
 require_point_time = true
@@ -142,10 +138,14 @@ require_point_time = true
 [sensor.imu]
 accel_unit = "m_s2"
 
+# T_imu_lidar maps LiDAR points into the Ouster IMU frame.
+# Derived from the calibrated sensor tree:
+#   T_sensor_imu = ([0.006253, -0.011775, 0.007645], identity)
+#   T_sensor_lidar = ([0, 0, 0.036180], yaw 180 deg)
 [extrinsics.T_imu_lidar]
-translation = [-0.001, -0.00855, 0.055]
-rotation_xyzw = [0.7071068, -0.7071068, 0.0, 0.0]
+translation = [-0.006253, 0.011775, 0.028535]
+rotation_xyzw = [0.0, 0.0, 1.0, 0.0]
 
 [output]
-trajectory_dir = "/workspace/results/hilti_2022/handheld_gal3_right"
-trajectory_file = "trajectory.tum"
+trajectory_dir = "/workspace/results/newer_college"
+trajectory_file = "01_short_experiment/trajectory.tum"

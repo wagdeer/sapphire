@@ -1,5 +1,15 @@
-# Experimental direction-aware ESKF profile for Livox Mid-360.
-# Keep sapphire_mid360.toml as the validated observer-hybrid rollback profile.
+# GrAco ground-04 profile (VLP-16 + g320N).
+# Algorithm knobs match mid360.toml. Sensor values come from
+# /data/GrAco/ground-04 and the bag itself.
+#
+#   ros2 launch sapphire_ros2 sapphire.launch.py \
+#     config_file:=/workspace/src/sapphire/cfg/graco.toml \
+#     lidar_topic:=/velodyne/points \
+#     imu_topic:=/gnss/imu
+#
+# ground-04 is still for about 1.5 s, then it drives. Init is capped at 1.2 s
+# so a timeout still uses that stationary prefix (125 Hz, 100 samples ≈ 0.8 s).
+# Measured there: gyro_σ ≈ 0.001 rad/s, accel_σ ≈ 0.030 m/s², |a| ≈ 9.805.
 
 [imu]
 gravity = 9.80665
@@ -7,29 +17,36 @@ gravity = 9.80665
 [imu.init]
 convergence_gyro_std = 0.005
 convergence_accel_std = 0.05
-timeout_sec = 5.0
-check_interval_sec = 0.5
+timeout_sec = 1.2
+check_interval_sec = 0.4
 min_samples = 100
 
 [imu.noise]
-accel_noise_density = 0.000196
-gyro_noise_density = 0.000152
-accel_random_walk = 0.000165
-gyro_random_walk = 0.0000655
-accel_bias_rw_sigma = 0.000165
-gyro_bias_rw_sigma = 0.0000655
+# imu.yaml, sensor_type g320N. Densities are continuous-time Allan values.
+# random_walk units in that file are m/s³/√Hz and rad/s²/√Hz, which is the
+# bias diffusion sigma Sapphire stores as *_random_walk / *_bias_rw_sigma.
+accel_noise_density = 1.0028108e-02
+gyro_noise_density = 8.3723892e-04
+accel_random_walk = 5.5367077e-04
+gyro_random_walk = 1.5212086e-05
+accel_bias_rw_sigma = 5.5367077e-04
+gyro_bias_rw_sigma = 1.5212086e-05
 
 [odometry]
 voxel_size = 0.25
 fusion = "eskf"
 
+# LiDAR-frame body filter. VLP-16 writes no-return points at the origin
+# (~15% of each scan) and a persistent self-return near
+# x ∈ [-0.42, 0.37], y ∈ [-0.67, -0.59], z ≈ -0.19 (r ≈ 0.75 m).
+# Scene points sit outside this cube.
 [odometry.crop_box]
-min_x = -1.0
-min_y = -1.0
-min_z = -1.0
-max_x = 1.0
-max_y = 1.0
-max_z = 1.0
+min_x = -0.5
+min_y = -0.5
+min_z = -0.5
+max_x = 0.5
+max_y = 0.5
+max_z = 0.5
 
 [odometry.observer]
 position_gain = 4.5
@@ -68,10 +85,11 @@ init_sigma_velocity = 0.5
 init_sigma_position = 0.5
 
 [odometry.submap]
-splitting_distance = 1.5
+splitting_distance = 2.0
 splitting_rotation = 0.7853981633974483
 max_keyframes = 10
 voxel_size = 0.25
+recovery_after_rejections = 5
 
 [registration]
 type = "VGICP"
@@ -80,6 +98,7 @@ type = "VGICP"
 max_iterations = 32
 transformation_epsilon = 0.01
 rotation_epsilon = 0.01
+# VLP-16 ring spacing is ~0.35 m at 10 m and ~0.7 m at 20 m.
 max_correspondence_dist = 0.5
 k_correspondences = 16
 min_num_points = 64
@@ -91,8 +110,8 @@ voxel_resolution = 0.5
 
 [pgo]
 enabled = true
-keyframe_distance = 0.5
-keyframe_rotation = 0.3
+keyframe_distance = 1.5
+keyframe_rotation = 0.5235987756
 loop_min_time_separation = 30.0
 loop_min_travel_distance = 30.0
 loop_max_rotation = 3.14
@@ -106,6 +125,7 @@ target_voxel_size = 0.4
 source_travel_radius_m = 10.0
 # Drop points beyond this range in the scan that observed them, not after
 # they have been moved into the query frame.
+# VLP-16 still returns past 80 m; p90 of ground-04 is ~44 m.
 source_max_range_m = 20.0
 # Stationary cap. Travel does not grow while spinning in place.
 source_max_frames = 256
@@ -123,39 +143,39 @@ map_frame_stride = 3
 map_voxel_size = 0.8
 
 [pgo.occupancy]
-# d = world Z relative to sensor (≈ lidar-frame z on flat ground).
-# h_clearance ≈ sensor height above ground (vehicle Mid-360 ~2m).
-# ground_margin raises the HIT lower bound: hit iff
-#   d >= -h_clearance + ground_margin
-# so the near-ground slice is skipped (not occupied / does not lock d_min).
-# Too small h_clearance (e.g. 0.15) only keeps a thin slice at the lidar.
+# Disabled. If enabled: ground returns in this bag sit near lidar z ≈ -0.88 m.
 enabled = false
 resolution = 0.1
 h_clearance = 2.0
-ground_margin = 0.5
-# Same-height free rays can clear hit cells (pose jitter / wall moved along ray).
-clear_height_eps = 0.1
-d_max = 6.0
+ground_margin = 0.0
+clear_height_eps = 0.05
+d_max = 3.0
 occ_threshold = 0.3
 usable_range = 40.0
 min_range = 0.5
-cloud_voxel_size = 0.4
+cloud_voxel_size = 0.2
 margin = 5.0
 
-# [sensor.lidar]
-# time_field = "auto"    # auto | offset_time | timestamp | time | t | none
-# time_unit  = "auto"    # auto | s | ms | us | ns
-# time_ref   = "auto"    # auto | relative | absolute
-# max_scan_duration = 0.5
-# header_tolerance = 0.5
-# require_point_time = false
+# Velodyne driver: float32 field "time", seconds relative to the cloud header.
+# Measured span on ground-04 is 0.100 s (10 Hz).
+[sensor.lidar]
+time_field = "time"
+time_unit = "s"
+time_ref = "relative"
+max_scan_duration = 0.2
+header_tolerance = 0.5
+require_point_time = true
 
-# [sensor.imu]
-# accel_unit = "auto"   # auto | g | m_s2
+# Bag linear_acceleration is already m/s² (|mean| ≈ 9.805). Gyro is rad/s.
+[sensor.imu]
+accel_unit = "m_s2"
 
+# imu-lidar.yaml T_Imu_Lidar, row-major. Maps a LiDAR point into the IMU frame:
+#   p_imu = R * p_lidar + t
+# Rotation is 0.86 deg; quaternion is xyzw.
 [extrinsics.T_imu_lidar]
-translation = [0.0, 0.0, 0.0]
-rotation_xyzw = [0.0, 0.0, 0.0, 1.0]
+translation = [-0.01192777, -0.01973063, 0.12260907]
+rotation_xyzw = [-0.00383904, 0.00395939, -0.00511026, 0.99997173]
 
 # TUM RGB-D dump on exit: timestamp tx ty tz qx qy qz qw.
 # Leave trajectory_dir empty to skip.

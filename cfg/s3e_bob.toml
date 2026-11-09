@@ -1,16 +1,16 @@
-# S3E Laboratory_1, robot Alpha (DCL-SLAM dcl_lio_sam_vlp16_params_a.yaml).
-# Algorithm knobs match sapphire_graco.toml. Sensor values come from that
+# S3E Laboratory_1, robot Bob (DCL-SLAM dcl_lio_sam_vlp16_params_b.yaml).
+# Algorithm knobs match graco.toml. Sensor values come from that
 # LIO-SAM profile and /data/s3e/S3E_Dataset/S3Ev1/S3E_Laboratory_1.
 #
 #   ros2 launch sapphire_ros2 sapphire.launch.py \
-#     config_file:=/workspace/src/sapphire/cfg/sapphire_s3e_alpha.toml \
-#     lidar_topic:=/Alpha/velodyne_points \
-#     imu_topic:=/Alpha/imu/data
+#     config_file:=/workspace/src/sapphire/cfg/s3e_bob.toml \
+#     lidar_topic:=/Bob/velodyne_points \
+#     imu_topic:=/Bob/imu/data
 #
-# Alpha is still for about 3.5 s, then it drives. IMU is 100 Hz.
+# Bob is still for about 11.5 s. IMU is 100 Hz.
 # Combined gyro_σ while still is ≈ 0.017 rad/s (per-axis ≈ 0.010), so the
 # Graco 0.005 gate never converges on this IMU. Timeout is 2.5 s so a miss
-# still uses the stationary prefix. |a| ≈ 9.797 m/s².
+# still uses the stationary prefix. |a| ≈ 9.760 m/s².
 
 [imu]
 gravity = 9.79172227
@@ -26,12 +26,12 @@ min_samples = 100
 # lio_sam imuAccNoise / imuGyrNoise / imuAccBiasN / imuGyrBiasN.
 # LIO-SAM stores these as the continuous-time sigmas passed to GTSAM.
 # Sapphire uses the same numbers as noise density and bias random walk.
-accel_noise_density = 1.0919628856399554e-02
-gyro_noise_density = 1.0451440924866223e-02
-accel_random_walk = 2.1851827629113259e-04
-gyro_random_walk = 8.1770009351257180e-05
-accel_bias_rw_sigma = 2.1851827629113259e-04
-gyro_bias_rw_sigma = 8.1770009351257180e-05
+accel_noise_density = 1.0557715622632996e-02
+gyro_noise_density = 1.0084886221461694e-02
+accel_random_walk = 2.3084619195565281e-04
+gyro_random_walk = 9.8778648600726277e-05
+accel_bias_rw_sigma = 2.3084619195565281e-04
+gyro_bias_rw_sigma = 9.8778648600726277e-05
 
 [odometry]
 voxel_size = 0.25
@@ -39,12 +39,12 @@ fusion = "eskf"
 
 # LiDAR-frame body filter, same cube as the Graco VLP-16 profile.
 [odometry.crop_box]
-min_x = -1.0
-min_y = -1.0
-min_z = -1.0
-max_x = 1.0
-max_y = 1.0
-max_z = 1.0
+min_x = -0.5
+min_y = -0.5
+min_z = -0.5
+max_x = 0.5
+max_y = 0.5
+max_z = 0.5
 
 [odometry.observer]
 position_gain = 4.5
@@ -83,10 +83,11 @@ init_sigma_velocity = 0.5
 init_sigma_position = 0.5
 
 [odometry.submap]
-splitting_distance = 1.5
+splitting_distance = 2.0
 splitting_rotation = 0.7853981633974483
 max_keyframes = 10
 voxel_size = 0.25
+recovery_after_rejections = 5
 
 [registration]
 type = "VGICP"
@@ -96,19 +97,19 @@ max_iterations = 32
 transformation_epsilon = 0.01
 rotation_epsilon = 0.01
 # VLP-16 ring spacing is ~0.35 m at 10 m and ~0.7 m at 20 m.
-max_correspondence_dist = 1.0
+max_correspondence_dist = 0.5
 k_correspondences = 16
 min_num_points = 64
 max_correction_trans = 1.0
 max_correction_rot_deg = 20.0
 
 [registration.vgicp]
-voxel_resolution = 1.0
+voxel_resolution = 0.5
 
 [pgo]
 enabled = true
-keyframe_distance = 0.5
-keyframe_rotation = 0.3
+keyframe_distance = 1.5
+keyframe_rotation = 0.5235987756
 loop_min_time_separation = 30.0
 loop_min_travel_distance = 30.0
 loop_max_rotation = 3.14
@@ -122,8 +123,8 @@ target_voxel_size = 0.4
 source_travel_radius_m = 10.0
 # Drop points beyond this range in the scan that observed them, not after
 # they have been moved into the query frame.
-# Same VLP-16 cap as sapphire_graco.toml.
-source_max_range_m = 40.0
+# Same VLP-16 cap as graco.toml.
+source_max_range_m = 20.0
 # Stationary cap. Travel does not grow while spinning in place.
 source_max_frames = 256
 lidar_min_inliers = 64
@@ -136,24 +137,24 @@ lidar_rotation_sigma_rad = 0.1
 # Drop the trial if any binary edge exceeds this many standard deviations.
 max_constraint_error_sigma = 3.0
 update_period_sec = 1.0
-map_frame_stride = 1
-map_voxel_size = 0.3
+map_frame_stride = 3
+map_voxel_size = 0.8
 
 [pgo.occupancy]
 enabled = false
 resolution = 0.1
-h_clearance = 0.9
-ground_margin = 0.3
-clear_height_eps = 0.1
-d_max = 6.0
+h_clearance = 2.0
+ground_margin = 0.0
+clear_height_eps = 0.05
+d_max = 3.0
 occ_threshold = 0.3
 usable_range = 40.0
 min_range = 0.5
-cloud_voxel_size = 0.4
+cloud_voxel_size = 0.2
 margin = 5.0
 
 # Velodyne driver: float32 field "time", seconds relative to the cloud header.
-# Measured span on Alpha is 0.101 s (10 Hz), from about -0.100 to +0.001.
+# Measured span on Bob is 0.100 s (10 Hz), from about -0.098 to +0.001.
 [sensor.lidar]
 time_field = "time"
 time_unit = "s"
@@ -162,25 +163,23 @@ max_scan_duration = 0.2
 header_tolerance = 0.5
 require_point_time = true
 
-# Bag linear_acceleration is already m/s² (|mean| ≈ 9.797). Gyro is rad/s.
+# Bag linear_acceleration is already m/s² (|mean| ≈ 9.760). Gyro is rad/s.
 [sensor.imu]
 accel_unit = "m_s2"
 
 # lio_sam extrinsicRot / extrinsicTrans, T_lb (lidar -> imu), row-major.
 # Maps a LiDAR point into the IMU frame:
 #   p_imu = R * p_lidar + t
-# Rotation is 1.89 deg; quaternion is xyzw.
+# Rotation is 1.21 deg; quaternion is xyzw.
 [extrinsics.T_imu_lidar]
-translation = [0.047665376129920, -0.144120962294238, 0.010086423805523]
-rotation_xyzw = [0.00038180, 0.00468820, 0.01579472, 0.99986419]
+translation = [0.049603512631594, -0.092737045313503, 0.015313004887488]
+rotation_xyzw = [0.00246397, 0.00864399, 0.00555991, 0.99994415]
 
 # TUM RGB-D file written once when sapphire_ros exits:
 #   timestamp tx ty tz qx qy qz qw
 # qx qy qz qw is the estimated orientation as stored. It is not reordered
 # to wxyz and not replaced. Leave trajectory_dir empty to skip the dump.
-# Point it at eval's estimates root and keep trajectory_file equal to the
-# run's trajectory path. Change the dataset folder for each sequence.
 #   trajectory_dir = "/workspace/eval/estimates"
 [output]
 trajectory_dir = "/workspace/eval/estimates"
-trajectory_file = "sapphire/S3E_Library_1/alpha.tum"
+trajectory_file = "sapphire/S3E_Library_1/bob.tum"

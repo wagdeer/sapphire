@@ -52,7 +52,7 @@ extrinsic frames, and the LiDAR time offset:
 ```bash
 mkdir -p "$OUT/ros1/hilti_2023/site1_handheld_1"
 roslaunch sapphire_ros1 hilti_2023_handheld.launch \
-  config_file:=/path/to/sapphire/cfg/sapphire_hilti_2023_handheld.toml \
+  config_file:=/path/to/sapphire/cfg/hilti_2023_handheld.toml \
   bag:="$HILTI_DIR/rosbags/site1_handheld_1.bag" \
   rate:=1.0 \
   rviz:=false \
@@ -90,7 +90,7 @@ Terminal A:
 ```bash
 mkdir -p "$OUT/ros1/s3e/S3E_Dormitory_1/Alpha"
 roslaunch sapphire_ros1 sapphire.launch \
-  config_file:=/path/to/sapphire/cfg/sapphire_s3e_alpha.toml \
+  config_file:=/path/to/sapphire/cfg/s3e_alpha.toml \
   lidar_topic:=/Alpha/velodyne_points \
   imu_topic:=/Alpha/imu/data \
   pose_frame:=lidar \
@@ -108,7 +108,7 @@ rosbag play --clock --delay 2.0 \
 ```
 
 For Bob or Carol, change the topic prefix, the config
-(`sapphire_s3e_bob.toml` or `sapphire_s3e_carol.toml`), and the output
+(`s3e_bob.toml` or `s3e_carol.toml`), and the output
 directory together. The three configs differ by robot, not by sequence.
 
 ### Foxglove
@@ -131,7 +131,7 @@ S3E can be played directly. Terminal A:
 ```bash
 mkdir -p "$OUT/ros2/s3e/S3E_Dormitory_1/Alpha"
 ros2 launch sapphire_ros2 sapphire.launch.py \
-  config_file:=/path/to/sapphire/cfg/sapphire_s3e_alpha.toml \
+  config_file:=/path/to/sapphire/cfg/s3e_alpha.toml \
   lidar_topic:=/Alpha/velodyne_points \
   imu_topic:=/Alpha/imu/data \
   pose_frame:=lidar \
@@ -167,7 +167,7 @@ Terminal A:
 ```bash
 mkdir -p "$OUT/ros2/hilti_2023/site1_handheld_1"
 ros2 launch sapphire_ros2 sapphire.launch.py \
-  config_file:=/path/to/sapphire/cfg/sapphire_hilti_2023_handheld.toml \
+  config_file:=/path/to/sapphire/cfg/hilti_2023_handheld.toml \
   lidar_topic:=/hesai/pandar \
   imu_topic:=/alphasense/imu \
   lidar_frame:=PandarXT-32 \
@@ -196,13 +196,13 @@ launch file, so the same value is passed on the command line.
 
 | Recording | Config | LiDAR topic | IMU topic |
 |---|---|---|---|
-| HILTI 2023 handheld | `cfg/sapphire_hilti_2023_handheld.toml` | `/hesai/pandar` | `/alphasense/imu` |
-| HILTI 2022 handheld | `cfg/sapphire_hilti_2022_handheld.toml` | `/hesai/pandar` | `/alphasense/imu` |
+| HILTI 2023 handheld | `cfg/hilti_2023_handheld.toml` | `/hesai/pandar` | `/alphasense/imu` |
+| HILTI 2022 handheld | `cfg/hilti_2022_handheld.toml` | `/hesai/pandar` | `/alphasense/imu` |
 
 `sapphire_ros1/launch/hilti_2022_handheld.launch` uses those two topics.
 Unlike the 2023 handheld launch, its LiDAR time offset defaults to 0.
-| S3E Alpha / Bob / Carol | `cfg/sapphire_s3e_alpha.toml` and the Bob and Carol files | `/<Robot>/velodyne_points` | `/<Robot>/imu/data` |
-| Newer College 2020 | `cfg/sapphire_newer_college.toml` | `/os1_cloud_node/points` | `/os1_cloud_node/imu` |
+| S3E Alpha / Bob / Carol | `cfg/s3e_alpha.toml` and the Bob and Carol files | `/<Robot>/velodyne_points` | `/<Robot>/imu/data` |
+| Newer College 2020 | `cfg/newer_college.toml` | `/os1_cloud_node/points` | `/os1_cloud_node/imu` |
 
 Published ATE for these datasets is defined in
 [benchmarks/benchmark_table.md](benchmarks/benchmark_table.md), including which
