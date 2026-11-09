@@ -22,6 +22,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -29,8 +30,7 @@ jobs:
       - name: Install ffmpeg when unavailable
         run: |
           if ! command -v ffmpeg >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y ffmpeg
+            sudo apt-get install -y -o Acquire::Retries=3 ffmpeg
           fi
 
       - name: Build static site
