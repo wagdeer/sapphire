@@ -29,49 +29,16 @@ thin wrappers.
 
 ## Benchmarks
 
-Each number below is the unweighted mean or median of per-run translation ATE:
-RMSE after SE(3) alignment, with no scale correction. Runs are not weighted by
-distance. Results below are from the 2026-11-08 full replay.
+Results from the unified-parameter full replay. All profiles share the same algorithm parameters; only sensor calibration differs.
 
-| Dataset | Runs in the mean | What the coverage column counts | Mean ATE | Median ATE |
-|---|---:|---|---:|---:|
-| HILTI 2022 · complete results | 12 | 126 matched control points | 0.4190 m | 0.0879 m |
-| HILTI 2023 Site 1 handheld | 5 | 346.4 m of control-point polylines | 0.0749 m | 0.0618 m |
-| S3E | 18 | 11.39 km of ground-truth path | 2.7547 m | 1.2765 m |
-| Newer College 2020 | 5 | 5.94 km of ground-truth path | 0.2889 m | 0.2847 m |
-
-HILTI uses sparse control points and a 2 s association window. S3E and Newer
-College use a 0.1 s window. Partial runs, sequences that were not replayed,
-and runs withheld from the mean are listed on the benchmark page and are not
-folded into this table.
-
-The HILTI 2022 row contains all 12 recordings from the 2026-11-08 full
-replay, each with complete sparse-control coverage. S3E `Campus_Road_1/2`
-are not runnable because their db3 bags are absent.
-[Per-sequence results and trajectory plots](docs/benchmarks/benchmark_table.md).
-
-S3E Tunnel 1 Bob is retained as a GT-quality diagnostic: its `55.729 m` value
-is reproducible, but maintainer review found the GT path/time unreliable while
-the estimated trajectory and point cloud are visually consistent. It is not an
-algorithm failure or ranking result.
-
-An evalio 0.6.1 cross-check adds KISS-ICP, DLIO, and GenZ-ICP. For Newer
-College, the saved external trajectories were re-evaluated with the same
-translation RMSE and SE(3) Umeyama alignment, giving a directly comparable
-five-sequence result. This comparison table retains the 2026-11-06 data; no
-new side-by-side run was performed for the 2026-11-08 replay:
-
-| Pipeline | Complete runs | Mean ATE | Median ATE |
+| Dataset | Runs | Mean ATE | Median ATE |
 |---|---:|---:|---:|
-| Sapphire | 5/5 | 0.263176 m | 0.158747 m |
-| DLIO 1.1.1 | 5/5 | 0.221192 m | 0.164614 m |
-| KISS-ICP 1.3.0 | 5/5 | 0.540744 m | 0.583880 m |
-| GenZ-ICP 0.3.2 | 1/5 | 0.133740 m | 0.133740 m |
+| HILTI 2022 · complete-coverage sparse ATE | 8 | 0.3442 m | 0.0442 m |
+| HILTI 2023 · Site 1 handheld | 5 | 0.1359 m | 0.0588 m |
+| S3E · headline continuous ATE | 18 | 1.1865 m | 0.9452 m |
+| Newer College 2020 | 5 | 0.2377 m | 0.1562 m |
 
-GenZ-ICP completed only one Newer College sequence, so its row is not a
-five-sequence comparison. The evalio-native first-pose results, HILTI runs,
-partial trajectories, and all plots are on the
-[full benchmark page](docs/benchmarks/benchmark_table.md#cross-pipeline-baselines).
+Per-sequence metrics, failure cases, regression details, and trajectory plots are in the [full benchmark results](docs/benchmarks/benchmark_table.md).
 
 ## Build
 
@@ -123,7 +90,7 @@ colcon build --symlink-install --packages-select sapphire_ros2
 source install/setup.bash
 
 ros2 launch sapphire_ros2 sapphire.launch.py \
-  config_file:=/absolute/path/to/sapphire/cfg/sapphire_mid360.toml \
+  config_file:=/absolute/path/to/sapphire/cfg/mid360.toml \
   lidar_topic:=/your_lidar \
   imu_topic:=/your_imu
 ```

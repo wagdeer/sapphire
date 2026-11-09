@@ -1,13 +1,11 @@
-# HILTI 2023 handheld platform.
-# Final profile selected on site1_handheld_5 and cross-validated on
-# site1_handheld_2.
-# Sensors: Hesai PandarXT-32 + Alphasense Core IMU
+# HILTI 2023 robot platform.
+# Sensors: LiDAR + Alphasense Core IMU
 #
 # Extrinsics and IMU noise values come from:
-#   calibration/calibration.zip -> calibration_handheld/calibration.yaml
-#   and calibration_handheld/calibration_imu.yaml.
-# The calib file defines T_imu0_lidar0, exactly the LiDAR-to-IMU transform
-# consumed by the core.
+#   calibration_robot/extrinsics/multical_config/lidar.yaml
+#   calibration_robot/extrinsics/multical_config/imu.yaml
+# The calibration defines T_here_imu0. The core consumes T_imu_lidar, so the
+# values below are the inverse of that calibration matrix.
 
 [imu]
 gravity = 9.80665
@@ -20,24 +18,24 @@ check_interval_sec = 0.5
 min_samples = 100
 
 [imu.noise]
-accel_noise_density = 0.0001688956233495657
-gyro_noise_density = 0.0010679343003532472
-accel_random_walk = 9.782812831313576e-07
-gyro_random_walk = 2.6541629581345176e-05
-accel_bias_rw_sigma = 9.782812831313576e-07
-gyro_bias_rw_sigma = 2.6541629581345176e-05
+accel_noise_density = 0.0006771784583884886
+gyro_noise_density = 0.00013548849713483453
+accel_random_walk = 4.855592390728982e-06
+gyro_random_walk = 2.6867875817855036e-06
+accel_bias_rw_sigma = 4.855592390728982e-06
+gyro_bias_rw_sigma = 2.6867875817855036e-06
 
 [odometry]
-voxel_size = 0.05
+voxel_size = 0.25
 fusion = "eskf"
 
 [odometry.crop_box]
-min_x = -1.0
-min_y = -1.0
-min_z = -1.0
-max_x = 1.0
-max_y = 1.0
-max_z = 1.0
+min_x = -0.5
+min_y = -0.5
+min_z = -0.5
+max_x = 0.5
+max_y = 0.5
+max_z = 0.5
 
 [odometry.observer]
 position_gain = 4.5
@@ -69,10 +67,10 @@ init_sigma_velocity = 0.5
 init_sigma_position = 0.5
 
 [odometry.submap]
-splitting_distance = 0.75
-splitting_rotation = 0.02
-max_keyframes = 5
-voxel_size = 0.05
+splitting_distance = 2.0
+splitting_rotation = 0.7853981633974483
+max_keyframes = 10
+voxel_size = 0.25
 recovery_after_rejections = 5
 
 [registration]
@@ -89,12 +87,12 @@ max_correction_trans = 1.0
 max_correction_rot_deg = 20.0
 
 [registration.vgicp]
-voxel_resolution = 0.25
+voxel_resolution = 0.5
 
 [pgo]
 enabled = true
-keyframe_distance = 0.5
-keyframe_rotation = 0.3
+keyframe_distance = 1.5
+keyframe_rotation = 0.5235987756
 loop_min_time_separation = 30.0
 loop_min_travel_distance = 30.0
 loop_max_rotation = 3.14
@@ -107,7 +105,7 @@ source_travel_radius_m = 10.0
 source_max_range_m = 20.0
 source_max_frames = 256
 lidar_min_inliers = 64
-lidar_max_iterations = 64
+lidar_max_iterations = 32
 lidar_max_correspondence_m = 2.0
 lidar_min_overlap = 0.5
 lidar_max_fitness_m2 = 0.5
@@ -115,20 +113,20 @@ lidar_translation_sigma_m = 0.2
 lidar_rotation_sigma_rad = 0.1
 max_constraint_error_sigma = 3.0
 update_period_sec = 1.0
-map_frame_stride = 1
-map_voxel_size = 0.3
+map_frame_stride = 3
+map_voxel_size = 0.8
 
 [pgo.occupancy]
 enabled = false
 resolution = 0.1
-h_clearance = 1.0
-ground_margin = 0.2
-clear_height_eps = 0.1
-d_max = 6.0
+h_clearance = 2.0
+ground_margin = 0.0
+clear_height_eps = 0.05
+d_max = 3.0
 occ_threshold = 0.3
 usable_range = 40.0
 min_range = 0.5
-cloud_voxel_size = 0.4
+cloud_voxel_size = 0.2
 margin = 5.0
 
 [sensor.lidar]
@@ -143,9 +141,9 @@ require_point_time = true
 accel_unit = "m_s2"
 
 [extrinsics.T_imu_lidar]
-translation = [-0.00695046499029016, -0.006713481609220226, 0.04989346097032105]
-rotation_xyzw = [0.7094397486399825, -0.7047651311547696, 0.001135774698382635, -0.0002509459564800096]
+translation = [0.13142294953901998, -0.010025172794813506, 0.010596745751955584]
+rotation_xyzw = [0.9998293598004317, -0.0013952639907006768, 0.01800982181504198, 0.0038666313045620346]
 
 [output]
-trajectory_dir = "/workspace/results/hilti_2023/handheld"
+trajectory_dir = "/workspace/results/hilti_2023/robot"
 trajectory_file = "trajectory.tum"

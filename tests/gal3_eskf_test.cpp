@@ -900,7 +900,7 @@ void testChartConfig() {
 
     const auto handheld = sapphire::loadConfig(
         std::filesystem::path(SAPPHIRE_SOURCE_DIR)
-        / "cfg" / "sapphire_hilti_2022_handheld.toml");
+        / "cfg" / "hilti_2022_handheld.toml");
     expect(handheld.odometry.fusion == "eskf", "handheld fusion stays eskf");
     expect(
         handheld.odometry.eskf.chart == "euclidean",

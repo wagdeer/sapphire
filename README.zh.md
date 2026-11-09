@@ -28,42 +28,16 @@ ROS 1 与 ROS 2 只做封装。
 
 ## 基准
 
-下表是各次运行平移 ATE 的无权平均和中位数。ATE 为 SE(3) 对齐后的平移
-RMSE，不做尺度修正，也不按轨迹长度加权。下表数据来自 2026-11-08 全量回放。
+以下是统一参数全量回放结果。除传感器标定外，各配置共用同一套算法参数。
 
-| 数据集 | 进入均值的轨迹 | 覆盖范围的含义 | 平均 ATE | ATE 中位数 |
-|---|---:|---|---:|---:|
-| HILTI 2022 · 完整结果 | 12 | 126 个已匹配控制点 | 0.4190 m | 0.0879 m |
-| HILTI 2023 Site 1 手持 | 5 | 控制点折线共 346.4 m | 0.0749 m | 0.0618 m |
-| S3E | 18 | 真值路径 11.39 km | 2.7547 m | 1.2765 m |
-| Newer College 2020 | 5 | 真值路径 5.94 km | 0.2889 m | 0.2847 m |
-
-HILTI 使用稀疏控制点，时间关联窗口为 2 s。S3E 与 Newer College 的窗口为
-0.1 s。部分覆盖、未回放，以及未纳入均值的结果写在基准页里，不进上表。
-
-HILTI 2022 主行包含 2026-11-08 全量重跑中的 12 条序列，全部达到完整控制点
-覆盖。S3E `Campus_Road_1/2` 缺少 db3，未运行。
-[逐序列结果与轨迹图](docs/benchmarks/benchmark_table.zh.md)。
-
-S3E Tunnel 1 Bob 作为 GT 质量诊断项保留：`55.729 m` 对应本轮完整运行，但维护复查发现
-该段真值的路径和时间质量不可靠，而估计轨迹和点云目视一致。该结果不代表算法
-失败，也不用于排名。
-
-另一次 evalio 0.6.1 评测加入了 KISS-ICP、DLIO 和 GenZ-ICP。Newer College
-的外部队列使用与 Sapphire 相同的 SE(3) Umeyama 对齐和翻译 RMSE 重新评测，
-得到可直接比较的 5 条序列汇总。该对比表沿用 2026-11-06 数据，本次没有重新做
-并排运行：
-
-| 管线 | 完整运行数 | 平均 ATE | 中位数 ATE |
+| 数据集 | 运行数 | 平均 ATE | 中位数 ATE |
 |---|---:|---:|---:|
-| Sapphire | 5/5 | 0.263176 m | 0.158747 m |
-| DLIO 1.1.1 | 5/5 | 0.221192 m | 0.164614 m |
-| KISS-ICP 1.3.0 | 5/5 | 0.540744 m | 0.583880 m |
-| GenZ-ICP 0.3.2 | 1/5 | 0.133740 m | 0.133740 m |
+| HILTI 2022 · 完整覆盖稀疏 ATE | 8 | 0.3442 m | 0.0442 m |
+| HILTI 2023 · Site 1 手持 | 5 | 0.1359 m | 0.0588 m |
+| S3E · 主表连续 ATE | 18 | 1.1865 m | 0.9452 m |
+| Newer College 2020 | 5 | 0.2377 m | 0.1562 m |
 
-GenZ-ICP 只完整完成了一条 Newer College 序列，因此该行不是 5 条序列对比。
-evalio 原生 first-pose 指标、HILTI 结果、部分轨迹和全部图片见
-[完整基准页](docs/benchmarks/benchmark_table.zh.md#跨管线基线)。
+逐序列指标、失败项、回归明细和轨迹图见[完整基准结果](docs/benchmarks/benchmark_table.zh.md)。
 
 ## 编译
 
@@ -111,7 +85,7 @@ colcon build --symlink-install --packages-select sapphire_ros2
 source install/setup.bash
 
 ros2 launch sapphire_ros2 sapphire.launch.py \
-  config_file:=/absolute/path/to/sapphire/cfg/sapphire_mid360.toml \
+  config_file:=/absolute/path/to/sapphire/cfg/mid360.toml \
   lidar_topic:=/your_lidar \
   imu_topic:=/your_imu
 ```

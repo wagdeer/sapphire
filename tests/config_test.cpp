@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -25,6 +26,99 @@ void expectNear(double actual, double expected, const std::string& message) {
     if (std::abs(actual - expected) > 1e-12) {
         fail(message);
     }
+}
+
+void expectSameAlgorithm(
+    const sapphire::Config& reference,
+    const sapphire::Config& candidate,
+    const std::string& profile)
+{
+    const auto same = [&profile](bool condition, const std::string& field) {
+        expect(condition, profile + ": non-uniform algorithm field " + field);
+    };
+    expectNear(
+        candidate.odometry.voxel_size,
+        reference.odometry.voxel_size,
+        profile + ": odometry.voxel_size must match");
+    expectNear(
+        candidate.odometry.submap.splitting_distance,
+        reference.odometry.submap.splitting_distance,
+        profile + ": submap.splitting_distance must match");
+    expectNear(
+        candidate.odometry.submap.splitting_rotation,
+        reference.odometry.submap.splitting_rotation,
+        profile + ": submap.splitting_rotation must match");
+    expectNear(
+        candidate.odometry.submap.voxel_size,
+        reference.odometry.submap.voxel_size,
+        profile + ": submap.voxel_size must match");
+    same(
+        candidate.odometry.submap.max_keyframes
+            == reference.odometry.submap.max_keyframes,
+        "submap.max_keyframes");
+    same(
+        candidate.odometry.submap.recovery_after_rejections
+            == reference.odometry.submap.recovery_after_rejections,
+        "submap.recovery_after_rejections");
+    expectNear(
+        candidate.registration.gicp.max_correspondence_dist,
+        reference.registration.gicp.max_correspondence_dist,
+        profile + ": gicp.max_correspondence_dist must match");
+    expectNear(
+        candidate.registration.vgicp.voxel_resolution,
+        reference.registration.vgicp.voxel_resolution,
+        profile + ": vgicp.voxel_resolution must match");
+    expectNear(
+        candidate.pgo.keyframe_distance,
+        reference.pgo.keyframe_distance,
+        profile + ": pgo.keyframe_distance must match");
+    expectNear(
+        candidate.pgo.keyframe_rotation,
+        reference.pgo.keyframe_rotation,
+        profile + ": pgo.keyframe_rotation must match");
+    expectNear(
+        candidate.pgo.source_voxel_size,
+        reference.pgo.source_voxel_size,
+        profile + ": pgo.source_voxel_size must match");
+    expectNear(
+        candidate.pgo.target_voxel_size,
+        reference.pgo.target_voxel_size,
+        profile + ": pgo.target_voxel_size must match");
+    expectNear(
+        candidate.pgo.source_travel_radius_m,
+        reference.pgo.source_travel_radius_m,
+        profile + ": pgo.source_travel_radius_m must match");
+    expectNear(
+        candidate.pgo.source_max_range_m,
+        reference.pgo.source_max_range_m,
+        profile + ": pgo.source_max_range_m must match");
+    expectNear(
+        candidate.pgo.map_voxel_size,
+        reference.pgo.map_voxel_size,
+        profile + ": pgo.map_voxel_size must match");
+    same(
+        candidate.pgo.lidar_max_iterations
+            == reference.pgo.lidar_max_iterations,
+        "pgo.lidar_max_iterations");
+    same(
+        candidate.pgo.map_frame_stride == reference.pgo.map_frame_stride,
+        "pgo.map_frame_stride");
+    same(
+        candidate.pgo.occupancy.enabled == reference.pgo.occupancy.enabled
+            && candidate.pgo.occupancy.enabled == false,
+        "pgo.occupancy.enabled");
+    expectNear(
+        candidate.pgo.occupancy.h_clearance,
+        reference.pgo.occupancy.h_clearance,
+        profile + ": occupancy.h_clearance must match");
+    expectNear(
+        candidate.pgo.occupancy.ground_margin,
+        reference.pgo.occupancy.ground_margin,
+        profile + ": occupancy.ground_margin must match");
+    expectNear(
+        candidate.pgo.occupancy.cloud_voxel_size,
+        reference.pgo.occupancy.cloud_voxel_size,
+        profile + ": occupancy.cloud_voxel_size must match");
 }
 
 std::filesystem::path writeConfig(
@@ -57,7 +151,7 @@ std::string validConfig(double gravity, const std::string& quaternion) {
 void testProjectConfig() {
     const auto config = sapphire::loadConfig(
         std::filesystem::path(SAPPHIRE_SOURCE_DIR)
-        / "cfg" / "sapphire_mid360.toml");
+        / "cfg" / "mid360.toml");
 
     expectNear(config.imu.init.gravity_mag, 9.80665, "gravity value");
     expect(config.imu.init.min_samples == 100, "IMU init sample count");
@@ -84,10 +178,10 @@ void testProjectConfig() {
         config.odometry.voxel_size, 0.25,
         "GICP source voxel size");
     expectNear(
-        config.odometry.crop_box.min_x, -1.0,
+        config.odometry.crop_box.min_x, -0.5,
         "crop box minimum X");
     expectNear(
-        config.odometry.submap.splitting_distance, 1.5,
+        config.odometry.submap.splitting_distance, 2.0,
         "submap keyframe translation threshold");
     expectNear(
         config.odometry.submap.splitting_rotation,
@@ -109,8 +203,11 @@ void testProjectConfig() {
         "VGICP voxel resolution");
     expect(config.pgo.enabled, "PGO must be enabled in the Mid-360 profile");
     expectNear(
-        config.pgo.keyframe_distance, 0.5,
+        config.pgo.keyframe_distance, 1.5,
         "PGO keyframe translation threshold");
+    expectNear(
+        config.pgo.keyframe_rotation, 0.5235987756,
+        "PGO keyframe rotation threshold");
     expectNear(
         config.pgo.loop_search_radius, 30.0,
         "PGO loop search radius");
@@ -173,10 +270,10 @@ void testProjectConfig() {
         config.pgo.occupancy.h_clearance, 2.0,
         "occupancy h_clearance");
     expectNear(
-        config.pgo.occupancy.ground_margin, 0.5,
+        config.pgo.occupancy.ground_margin, 0.0,
         "occupancy ground_margin");
     expectNear(
-        config.pgo.occupancy.d_max, 6.0,
+        config.pgo.occupancy.d_max, 3.0,
         "occupancy d_max");
     expect(config.extrinsics.T_imu_lidar.matrix().isApprox(
                Eigen::Matrix4d::Identity(), 1e-12),
@@ -320,19 +417,29 @@ void testShippedProfilesLoad() {
     const std::filesystem::path cfg =
         std::filesystem::path(SAPPHIRE_SOURCE_DIR) / "cfg";
     int count = 0;
+    std::vector<sapphire::Config> configs;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(cfg)) {
         if (entry.path().extension() != ".toml") {
             continue;
         }
         try {
-            (void)sapphire::loadConfig(entry.path());
+            const sapphire::Config loaded =
+                sapphire::loadConfig(entry.path());
+            if (!configs.empty()) {
+                expectSameAlgorithm(
+                    configs.front(),
+                    loaded,
+                    entry.path().filename().string());
+            }
+            configs.push_back(loaded);
         } catch (const std::exception& error) {
             fail(entry.path().filename().string() + ": " + error.what());
         }
         ++count;
     }
     expect(count == 9, "every shipped profile must load");
+    expect(configs.size() == 9, "every shipped algorithm config must compare");
 }
 
 void testTrajectoryFileMustStayRelative() {
