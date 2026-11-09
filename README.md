@@ -1,13 +1,8 @@
 # Sapphire
 
-LiDAR-inertial odometry with Gal(3) equivariant IMU preintegration.
+LiDAR-inertial odometry. Deskew and IMU propagation use the same Gal(3) preintegration. The library is C++17 and has no ROS dependency.
 
 [中文说明](README.zh.md)
-
-Sapphire estimates a 6-DoF trajectory from LiDAR and IMU. Scan deskew and IMU
-propagation share one Gal(3) motion model, and an asynchronous pose graph
-keeps the map consistent. The core is standalone C++17. ROS 1 and ROS 2 are
-thin wrappers.
 
 ## Demos
 
@@ -27,35 +22,68 @@ thin wrappers.
 
 ![Newer College RViz mapping](docs/newer_college.gif)
 
-## Benchmarks
+## Dependencies
 
-Results from the unified-parameter full replay. All profiles share the same algorithm parameters; only sensor calibration differs.
+| Package | Version |
+|---|---|
+| CMake | 3.16+ |
+| Compiler | C++17 |
+| Eigen | 3.4 |
+| PCL | 1.12+ |
+| OpenMP | |
+| GTSAM | 4.2 |
+| small_gicp | 1.0.1 |
+| spdlog | |
+| toml++ | 3.4, downloaded automatically if missing |
 
-| Dataset | Runs | Mean ATE | Median ATE |
-|---|---:|---:|---:|
-| HILTI 2022 · complete-coverage sparse ATE | 8 | 0.3442 m | 0.0442 m |
-| HILTI 2023 · Site 1 handheld | 5 | 0.1359 m | 0.0588 m |
-| S3E · headline continuous ATE | 18 | 1.1865 m | 0.9452 m |
-| Newer College 2020 | 5 | 0.2377 m | 0.1562 m |
+For ROS, use the Dockerfile in the wrapper repository. Both images already contain Eigen, PCL, OpenMP, spdlog, GTSAM, and small_gicp. The Noetic image also installs toml++ 3.4. The Humble image does not, so CMake downloads it when it is missing.
 
-Per-sequence metrics, failure cases, regression details, and trajectory plots are in the [full benchmark results](docs/benchmarks/benchmark_table.md).
+- [sapphire_ros1](https://github.com/wagdeer/sapphire_ros1): ROS 1 Noetic, `docker/Dockerfile`
+- [sapphire_ros2](https://github.com/wagdeer/sapphire_ros2): ROS 2 Humble, `docker/Dockerfile`
+
+To build only the core on Ubuntu 22.04:
+
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake git software-properties-common \
+  libeigen3-dev libpcl-dev libomp-dev libspdlog-dev
+sudo add-apt-repository -y ppa:borglab/gtsam-release-4.2
+sudo apt install -y libgtsam-dev
+```
+
+Those packages are Eigen 3.4, PCL 1.12, OpenMP, spdlog, and GTSAM 4.2.
+
+small_gicp 1.0.1:
+
+```bash
+sudo rm -rf /tmp/small_gicp
+git clone --depth 1 --branch v1.0.1 https://github.com/koide3/small_gicp.git /tmp/small_gicp
+cmake -S /tmp/small_gicp -B /tmp/small_gicp/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=OFF \
+  -DBUILD_EXAMPLES=OFF \
+  -DBUILD_BENCHMARKS=OFF \
+  -DBUILD_WITH_MARCH_NATIVE=OFF
+cmake --build /tmp/small_gicp/build -j"$(nproc)"
+sudo cmake --install /tmp/small_gicp/build
+```
 
 ## Build
 
 ```bash
 git clone https://github.com/wagdeer/sapphire.git
 cd sapphire
+cmake -S . -B build
+cmake --build build -j"$(nproc)"
+```
+
+Tests:
+
+```bash
 cmake -S . -B build -DBUILD_TESTING=ON
 cmake --build build -j"$(nproc)"
 cmake --build build --target test
 ```
-
-Requires CMake 3.16 or newer, a C++17 compiler, Eigen 3.4, PCL 1.11 or newer,
-OpenMP, GTSAM 4.3, small_gicp, and spdlog. Configuring PCL also requires an
-MPI C library, because VTK's imported target references `MPI::MPI_C`. Sapphire
-itself does not call MPI. toml++ 3.4 is used when it is already installed;
-otherwise CMake downloads that release. The test target above works on CMake
-3.16; `ctest --test-dir` needs CMake 3.20.
 
 ## Install
 
@@ -63,63 +91,26 @@ otherwise CMake downloads that release. The test target above works on CMake
 cmake --install build --prefix /opt/sapphire
 ```
 
-A downstream project finds the static library with
-`find_package(sapphire REQUIRED)` and links the `sapphire` target. Put the
-prefix on `CMAKE_PREFIX_PATH`. The consumer also needs Eigen, PCL, GTSAM,
-OpenMP, small_gicp, spdlog, toml++ 3.4, and an MPI C library; this package
-does not ship them. toml++ downloaded while building Sapphire is not part of
-the install. The ROS wrappers below use a sibling checkout and
-`add_subdirectory`, and do not need this prefix.
+Add `/opt/sapphire` to `CMAKE_PREFIX_PATH`, then `find_package(sapphire REQUIRED)` and link `sapphire`.
 
 ## ROS
 
-ROS 1 and ROS 2 are separate packages. Put the core beside the wrapper you
-need:
+Put the core next to the wrapper. The wrapper compiles that `sapphire` directory.
 
 ```text
 ws/src/
 ├── sapphire/
-└── sapphire_ros2/    or sapphire_ros1/
+└── sapphire_ros1/    or sapphire_ros2/
 ```
 
-ROS 2 Humble, from the workspace root:
-
-```bash
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select sapphire_ros2
-source install/setup.bash
-
-ros2 launch sapphire_ros2 sapphire.launch.py \
-  config_file:=/absolute/path/to/sapphire/cfg/mid360.toml \
-  lidar_topic:=/your_lidar \
-  imu_topic:=/your_imu
-```
-
-`config_file` is required. If you omit the topic arguments, the launch file
-subscribes to `/front_lidar` and `/front_lidar/imu`. The node always publishes
-`/sapphire/odometry` and `/sapphire/deskewed`. `/sapphire/trajectory`,
-`/sapphire/pgo/map`, and `/sapphire/pgo/graph` are published only when the
-profile sets `pgo.enabled` to true.
-
-Dependency installation, Docker, and bag playback are in
-[`sapphire_ros2`](https://github.com/wagdeer/sapphire_ros2) and
-[`sapphire_ros1`](https://github.com/wagdeer/sapphire_ros1). Dataset profiles
-live in `cfg/`. A replay walkthrough is in
-[docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md).
-
-## Documentation
-
-| Document | What it is |
-|---|---|
-| [docs/benchmarks/benchmark_table.md](docs/benchmarks/benchmark_table.md) | Per-run ATE, evalio baselines, and trajectory plots |
-| [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md) | How to replay a bag and write a TUM trajectory |
+Sensor profiles are in `cfg/`. Replaying a recorded dataset is described in [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md).
 
 ## Credits
 
 - [DLIO](https://github.com/vectr-ucla/direct_lidar_inertial_odometry): pipeline and submap design
 - [Equivariant IMU Preintegration with Biases](https://github.com/aau-cns/equivariant-preintegration): Gal(3) preintegration
 - [small_gicp](https://github.com/koide3/small_gicp): GICP and VGICP
-- [GTSAM](https://github.com/borglab/gtsam): incremental pose-graph optimization
+- [GTSAM](https://github.com/borglab/gtsam): pose-graph optimization
 
 ## License
 

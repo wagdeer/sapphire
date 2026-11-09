@@ -2,13 +2,11 @@
 
 include(CMakeFindDependencyMacro)
 
-# VTK's imported target references MPI::MPI_C. A C++-only consumer does not
-# define that target unless C and MPI are found first.
-enable_language(C)
-find_dependency(MPI COMPONENTS C)
 find_dependency(Eigen3)
 find_dependency(spdlog)
-find_dependency(PCL)
+find_dependency(PCL COMPONENTS common)
+find_dependency(PkgConfig)
+pkg_check_modules(LZ4 REQUIRED IMPORTED_TARGET liblz4)
 find_dependency(GTSAM)
 find_dependency(OpenMP)
 find_dependency(small_gicp)

@@ -1,12 +1,8 @@
 # Sapphire
 
-基于 Gal(3) 等变 IMU 预积分的 LiDAR-惯性里程计。
+激光-惯性里程计。点云去畸变和 IMU 传播使用同一套 Gal(3) 预积分。核心库是 C++17，不依赖 ROS。
 
 [English](README.md)
-
-Sapphire 从 LiDAR 与 IMU 估计 6-DoF 轨迹。逐点去畸变和 IMU 传播共用同一套
-Gal(3) 运动模型，异步位姿图负责维持地图一致。核心库是独立的 C++17 实现，
-ROS 1 与 ROS 2 只做封装。
 
 ## 演示
 
@@ -26,34 +22,68 @@ ROS 1 与 ROS 2 只做封装。
 
 ![Newer College RViz 建图](docs/newer_college.gif)
 
-## 基准
+## 依赖
 
-以下是统一参数全量回放结果。除传感器标定外，各配置共用同一套算法参数。
+| 依赖 | 版本 |
+|---|---|
+| CMake | 3.16+ |
+| 编译器 | C++17 |
+| Eigen | 3.4 |
+| PCL | 1.12+ |
+| OpenMP | |
+| GTSAM | 4.2 |
+| small_gicp | 1.0.1 |
+| spdlog | |
+| toml++ | 3.4，没有会自动下载 |
 
-| 数据集 | 运行数 | 平均 ATE | 中位数 ATE |
-|---|---:|---:|---:|
-| HILTI 2022 · 完整覆盖稀疏 ATE | 8 | 0.3442 m | 0.0442 m |
-| HILTI 2023 · Site 1 手持 | 5 | 0.1359 m | 0.0588 m |
-| S3E · 主表连续 ATE | 18 | 1.1865 m | 0.9452 m |
-| Newer College 2020 | 5 | 0.2377 m | 0.1562 m |
+用 ROS 时，直接用封装仓库里的 Dockerfile。两个镜像里都有 Eigen、PCL、OpenMP、spdlog、GTSAM 和 small_gicp。Noetic 镜像还会装上 toml++ 3.4。Humble 镜像没有，缺的时候由 CMake 下载。
 
-逐序列指标、失败项、回归明细和轨迹图见[完整基准结果](docs/benchmarks/benchmark_table.zh.md)。
+- [sapphire_ros1](https://github.com/wagdeer/sapphire_ros1)：ROS 1 Noetic，`docker/Dockerfile`
+- [sapphire_ros2](https://github.com/wagdeer/sapphire_ros2)：ROS 2 Humble，`docker/Dockerfile`
+
+只在 Ubuntu 22.04 上编译核心库：
+
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake git software-properties-common \
+  libeigen3-dev libpcl-dev libomp-dev libspdlog-dev
+sudo add-apt-repository -y ppa:borglab/gtsam-release-4.2
+sudo apt install -y libgtsam-dev
+```
+
+这几个包对应 Eigen 3.4、PCL 1.12、OpenMP、spdlog 和 GTSAM 4.2。
+
+small_gicp 1.0.1：
+
+```bash
+sudo rm -rf /tmp/small_gicp
+git clone --depth 1 --branch v1.0.1 https://github.com/koide3/small_gicp.git /tmp/small_gicp
+cmake -S /tmp/small_gicp -B /tmp/small_gicp/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=OFF \
+  -DBUILD_EXAMPLES=OFF \
+  -DBUILD_BENCHMARKS=OFF \
+  -DBUILD_WITH_MARCH_NATIVE=OFF
+cmake --build /tmp/small_gicp/build -j"$(nproc)"
+sudo cmake --install /tmp/small_gicp/build
+```
 
 ## 编译
 
 ```bash
 git clone https://github.com/wagdeer/sapphire.git
 cd sapphire
+cmake -S . -B build
+cmake --build build -j"$(nproc)"
+```
+
+跑测试：
+
+```bash
 cmake -S . -B build -DBUILD_TESTING=ON
 cmake --build build -j"$(nproc)"
 cmake --build build --target test
 ```
-
-依赖 CMake 3.16 或更新版本、C++17 编译器、Eigen 3.4、PCL 1.11 或更新版本、
-OpenMP、GTSAM 4.3、small_gicp 和 spdlog。配置 PCL 时还需要一套 MPI C 库，
-因为 VTK 的导入目标会引用 `MPI::MPI_C`。Sapphire 本身不调用 MPI。系统里已有
-toml++ 3.4 时直接使用，否则由 CMake 下载这一版本。上面的 `test` 目标在
-CMake 3.16 上可用；`ctest --test-dir` 需要 CMake 3.20。
 
 ## 安装
 
@@ -61,59 +91,27 @@ CMake 3.16 上可用；`ctest --test-dir` 需要 CMake 3.20。
 cmake --install build --prefix /opt/sapphire
 ```
 
-下游工程把该前缀放进 `CMAKE_PREFIX_PATH`，用 `find_package(sapphire REQUIRED)`
-找到静态库，并链接 `sapphire` 目标。消费方自己还要有 Eigen、PCL、GTSAM、
-OpenMP、small_gicp、spdlog、toml++ 3.4 和一套 MPI C 库；这个安装包不带这些
-依赖。编译 Sapphire 时由 CMake 下载的 toml++ 不会装进去。下面的 ROS 封装走
-同级源码和 `add_subdirectory`，不需要这个前缀。
+把 `/opt/sapphire` 加到 `CMAKE_PREFIX_PATH`，然后 `find_package(sapphire REQUIRED)` 并链接 `sapphire`。
 
 ## ROS
 
-ROS 1 与 ROS 2 是独立的封装包。把核心和要用的封装放在同一工作空间：
+把核心和封装放在同一个工作空间。封装会直接编译旁边的 `sapphire`。
 
 ```text
 ws/src/
 ├── sapphire/
-└── sapphire_ros2/    或 sapphire_ros1/
+└── sapphire_ros1/    或 sapphire_ros2/
 ```
 
-ROS 2 Humble，在工作空间根目录执行：
-
-```bash
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select sapphire_ros2
-source install/setup.bash
-
-ros2 launch sapphire_ros2 sapphire.launch.py \
-  config_file:=/absolute/path/to/sapphire/cfg/mid360.toml \
-  lidar_topic:=/your_lidar \
-  imu_topic:=/your_imu
-```
-
-`config_file` 必填。不改话题参数时，launch 订阅 `/front_lidar` 和
-`/front_lidar/imu`。节点始终发布 `/sapphire/odometry` 和
-`/sapphire/deskewed`。只有配置里 `pgo.enabled` 为 true 时，才发布
-`/sapphire/trajectory`、`/sapphire/pgo/map` 和 `/sapphire/pgo/graph`。
-
-依赖安装、Docker 和数据包回放见
-[`sapphire_ros2`](https://github.com/wagdeer/sapphire_ros2) 与
-[`sapphire_ros1`](https://github.com/wagdeer/sapphire_ros1)。数据集配置在
-`cfg/`。回放步骤见 [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md)。
-
-## 文档
-
-| 文档 | 内容 |
-|---|---|
-| [docs/benchmarks/benchmark_table.zh.md](docs/benchmarks/benchmark_table.zh.md) | 逐条 ATE、evalio 基线与轨迹图 |
-| [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md) | 如何回放数据包并写出 TUM 轨迹 |
+传感器配置在 `cfg/`。公开数据集的回放步骤见 [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md)。
 
 ## 致谢
 
-- [DLIO](https://github.com/vectr-ucla/direct_lidar_inertial_odometry)：管线与子图设计
+- [DLIO](https://github.com/vectr-ucla/direct_lidar_inertial_odometry)：管线与子图
 - [Equivariant IMU Preintegration with Biases](https://github.com/aau-cns/equivariant-preintegration)：Gal(3) 预积分
 - [small_gicp](https://github.com/koide3/small_gicp)：GICP 与 VGICP
-- [GTSAM](https://github.com/borglab/gtsam)：增量位姿图优化
+- [GTSAM](https://github.com/borglab/gtsam)：位姿图优化
 
-## License
+## 许可证
 
 MIT.

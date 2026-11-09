@@ -1,10 +1,6 @@
 # Dataset replay
 
-Replay one sequence and write `trajectory.tum` when the node shuts down
-normally. Build the wrapper first, using the instructions in
-[`sapphire_ros1`](https://github.com/wagdeer/sapphire_ros1) or
-[`sapphire_ros2`](https://github.com/wagdeer/sapphire_ros2). Both wrappers
-expect this repository as a sibling:
+Build the wrapper first. Instructions are in [sapphire_ros1](https://github.com/wagdeer/sapphire_ros1) and [sapphire_ros2](https://github.com/wagdeer/sapphire_ros2). The core must sit next to the wrapper:
 
 ```text
 ws/src/
@@ -12,160 +8,115 @@ ws/src/
 └── sapphire_ros1/     or sapphire_ros2/
 ```
 
-Set the dataset location in the shell you use for the commands below:
+Each file in `cfg/` matches one sensor rig. Use the same file for every sequence from that rig. `config_file` is an absolute path.
 
-```bash
-export HILTI_DIR=/path/to/hilti-2023
-export S3E_DIR=/path/to/s3e
-export OUT=$PWD/results/dataset_replay
-```
+Pass `trajectory_output`. The TUM file is written when the node exits normally, after you stop the launch with Ctrl-C. `kill -9` and stopping the container do not write it. Some profiles set `output.trajectory_dir` to a path under `/workspace/results`; `trajectory_output` replaces that path.
 
-`HILTI_DIR` should contain `rosbags/<sequence>.bag` for the 2023 handheld
-recordings. Each S3E sequence is a ROS 2 bag directory such as
-`$S3E_DIR/S3E_Dormitory_1`.
+For a recording, pass `use_sim_time:=true` to the launch file and `--clock` to the bag player.
 
-## Clock and the trajectory file
+## Which profile
 
-The estimator reads the LiDAR and IMU header stamps. RViz, TF markers, and
-bag playback still need one clock. For a recording, pass `use_sim_time:=true`
-to the launch file and `--clock` to the bag player.
+| Rig | Config | LiDAR | IMU |
+|---|---|---|---|
+| Livox Mid-360 | `cfg/mid360.toml` | your topic | your topic |
+| HILTI 2022 handheld | `cfg/hilti_2022_handheld.toml` | `/hesai/pandar` | `/alphasense/imu` |
+| HILTI 2023 handheld | `cfg/hilti_2023_handheld.toml` | `/hesai/pandar` | `/alphasense/imu` |
+| HILTI 2023 robot | `cfg/hilti_2023_robot.toml` | `/rslidar_points` | `/imu/data` |
+| S3E Alpha, Bob, Carol | `cfg/s3e_alpha.toml`, `s3e_bob.toml`, `s3e_carol.toml` | `/<Robot>/velodyne_points` | `/<Robot>/imu/data` |
+| Newer College 2020 | `cfg/newer_college.toml` | `/os1_cloud_node/points` | `/os1_cloud_node/imu` |
+| GrAco | `cfg/graco.toml` | `/velodyne/points` | `/gnss/imu` |
 
-The TUM file is written once, on a normal shutdown. After the bag ends, stop
-the launch process with Ctrl-C. `kill -9` and stopping the container do not
-flush the file.
-
-That file is the pose-graph map trajectory, not the frontend odometry. Every
-profile in the table at the bottom of this page sets `pgo.enabled = true`.
-A profile that sets `output.trajectory_dir` while `pgo.enabled` is false is
-rejected at load. `trajectory_output` only replaces the path. It does not
-enable PGO, and with PGO disabled shutdown creates no trajectory file.
-
-Give each robot its own output directory. The examples below put the robot
-name in the path so Alpha, Bob, and Carol do not overwrite one another.
+S3E has one config per robot. The sequence does not change the file.
 
 ## ROS 1
 
-Source the workspace, then play HILTI 2023 handheld with the dedicated launch
-file. It already selects `/hesai/pandar`, `/alphasense/imu`, the handheld
-extrinsic frames, and the LiDAR time offset:
+HILTI bags can use a launch file that already sets the topics and frames. `hilti_2023_handheld.launch` also applies the handheld LiDAR time offset. `hilti_2022_handheld.launch` leaves that offset at 0. `hilti_2023_robot.launch` is the robot rig.
 
 ```bash
-mkdir -p "$OUT/ros1/hilti_2023/site1_handheld_1"
 roslaunch sapphire_ros1 hilti_2023_handheld.launch \
   config_file:=/path/to/sapphire/cfg/hilti_2023_handheld.toml \
-  bag:="$HILTI_DIR/rosbags/site1_handheld_1.bag" \
-  rate:=1.0 \
-  rviz:=false \
-  bag_required:=true \
-  trajectory_output:="$OUT/ros1/hilti_2023/site1_handheld_1/trajectory.tum"
+  bag:=/path/to/site1_handheld_1.bag \
+  trajectory_output:=/path/to/trajectory.tum
 ```
 
-`rviz:=true` needs a working display. The default RViz file is
-`sapphire_ros1/launch/display.rviz`. See that package's Docker notes for X11.
+`bag_required:=true` makes the launch exit when the bag ends, which writes the TUM file. `rviz:=true` needs a display. The default RViz config is `sapphire_ros1/launch/display.rviz`.
 
-S3E is published as ROS 2 bags. Convert one robot's topics to a ROS 1 bag
-before replay. Install the pinned conversion tool once:
+S3E is published as ROS 2 bags. Convert one robot before replay:
 
 ```bash
 python3 -m pip install --user "rosbags==0.11.9"
-```
 
-Then convert the bag:
-
-```bash
-mkdir -p "$OUT/converted"
 rosbags-convert \
-  --src "$S3E_DIR/S3E_Dormitory_1" \
-  --dst "$OUT/converted/S3E_Dormitory_1_Alpha.bag" \
+  --src /path/to/S3E_Dormitory_1 \
+  --dst /path/to/S3E_Dormitory_1_Alpha.bag \
   --src-typestore ros2_humble \
   --dst-typestore ros1_noetic \
   --include-topic /Alpha/velodyne_points \
   --include-topic /Alpha/imu/data
 ```
 
-Use two terminals.
-
 Terminal A:
 
 ```bash
-mkdir -p "$OUT/ros1/s3e/S3E_Dormitory_1/Alpha"
 roslaunch sapphire_ros1 sapphire.launch \
   config_file:=/path/to/sapphire/cfg/s3e_alpha.toml \
   lidar_topic:=/Alpha/velodyne_points \
   imu_topic:=/Alpha/imu/data \
-  pose_frame:=lidar \
   use_sim_time:=true \
-  rviz:=false \
-  trajectory_output:="$OUT/ros1/s3e/S3E_Dormitory_1/Alpha/trajectory.tum"
+  trajectory_output:=/path/to/trajectory.tum
 ```
 
-Terminal B, after the node has logged that it is ready:
+Terminal B, after the node is up:
 
 ```bash
 rosbag play --clock --delay 2.0 \
   --topics /Alpha/velodyne_points /Alpha/imu/data \
-  "$OUT/converted/S3E_Dormitory_1_Alpha.bag"
+  /path/to/S3E_Dormitory_1_Alpha.bag
 ```
 
-For Bob or Carol, change the topic prefix, the config
-(`s3e_bob.toml` or `s3e_carol.toml`), and the output
-directory together. The three configs differ by robot, not by sequence.
+For Bob or Carol, change the topic prefix, the config, and the output path together.
 
-### Foxglove
-
-The base Noetic image does not install `foxglove_bridge`. Install
-`ros-noetic-foxglove-bridge`, or build `sapphire_ros1/docker/Dockerfile.foxglove`
-on top of `sapphire:noetic`. Then:
-
-```bash
-roslaunch sapphire_ros1 foxglove.launch
-```
-
-Open <https://app.foxglove.dev/>, choose **Open connection**, and use
-`ws://localhost:8765`. The bridge port is 8765.
+Newer College uses `cfg/newer_college.toml` with `/os1_cloud_node/points` and `/os1_cloud_node/imu`, through `sapphire.launch` in the same way.
 
 ## ROS 2 Humble
 
-S3E can be played directly. Terminal A:
+S3E plays directly.
+
+Terminal A:
 
 ```bash
-mkdir -p "$OUT/ros2/s3e/S3E_Dormitory_1/Alpha"
 ros2 launch sapphire_ros2 sapphire.launch.py \
   config_file:=/path/to/sapphire/cfg/s3e_alpha.toml \
   lidar_topic:=/Alpha/velodyne_points \
   imu_topic:=/Alpha/imu/data \
-  pose_frame:=lidar \
   use_sim_time:=true \
-  rviz:=false \
-  trajectory_output:="$OUT/ros2/s3e/S3E_Dormitory_1/Alpha/trajectory.tum"
+  trajectory_output:=/path/to/trajectory.tum
 ```
 
 Terminal B:
 
 ```bash
-ros2 bag play "$S3E_DIR/S3E_Dormitory_1" \
+ros2 bag play /path/to/S3E_Dormitory_1 \
   --clock \
   --delay 2.0 \
   --topics /Alpha/velodyne_points /Alpha/imu/data
 ```
 
-HILTI 2023 handheld bags are ROS 1. Convert the two sensor topics first:
+HILTI bags are ROS 1. Convert the two sensor topics, then pass the same topics and frames the ROS 1 launch file uses. ROS 2 has no HILTI launch file.
 
 ```bash
-mkdir -p "$OUT/converted"
 rosbags-convert \
-  --src "$HILTI_DIR/rosbags/site1_handheld_1.bag" \
-  --dst "$OUT/converted/site1_handheld_1" \
+  --src /path/to/site1_handheld_1.bag \
+  --dst /path/to/site1_handheld_1 \
   --src-typestore ros1_noetic \
   --dst-typestore ros2_humble \
   --include-topic /hesai/pandar \
   --include-topic /alphasense/imu
 ```
 
-Terminal A:
+HILTI 2023 handheld:
 
 ```bash
-mkdir -p "$OUT/ros2/hilti_2023/site1_handheld_1"
 ros2 launch sapphire_ros2 sapphire.launch.py \
   config_file:=/path/to/sapphire/cfg/hilti_2023_handheld.toml \
   lidar_topic:=/hesai/pandar \
@@ -175,35 +126,39 @@ ros2 launch sapphire_ros2 sapphire.launch.py \
   pose_frame:=imu \
   lidar_time_offset:=0.0015846550361175184 \
   use_sim_time:=true \
-  rviz:=false \
-  trajectory_output:="$OUT/ros2/hilti_2023/site1_handheld_1/trajectory.tum"
+  trajectory_output:=/path/to/trajectory.tum
 ```
 
-Terminal B:
-
 ```bash
-ros2 bag play "$OUT/converted/site1_handheld_1" \
+ros2 bag play /path/to/site1_handheld_1 \
   --clock \
   --delay 2.0 \
   --topics /hesai/pandar /alphasense/imu
 ```
 
-The time offset is the handheld calibration value used by
-`sapphire_ros1/launch/hilti_2023_handheld.launch`. ROS 2 has no equivalent
-launch file, so the same value is passed on the command line.
+HILTI 2022 handheld uses the same topics and frames, `cfg/hilti_2022_handheld.toml`, and `lidar_time_offset:=0.0`.
 
-## Profiles
+HILTI 2023 robot:
 
-| Recording | Config | LiDAR topic | IMU topic |
-|---|---|---|---|
-| HILTI 2023 handheld | `cfg/hilti_2023_handheld.toml` | `/hesai/pandar` | `/alphasense/imu` |
-| HILTI 2022 handheld | `cfg/hilti_2022_handheld.toml` | `/hesai/pandar` | `/alphasense/imu` |
+```bash
+ros2 launch sapphire_ros2 sapphire.launch.py \
+  config_file:=/path/to/sapphire/cfg/hilti_2023_robot.toml \
+  lidar_topic:=/rslidar_points \
+  imu_topic:=/imu/data \
+  lidar_frame:=rslidar \
+  imu_frame:=xsens_imu_link \
+  pose_frame:=imu \
+  use_sim_time:=true \
+  trajectory_output:=/path/to/trajectory.tum
+```
 
-`sapphire_ros1/launch/hilti_2022_handheld.launch` uses those two topics.
-Unlike the 2023 handheld launch, its LiDAR time offset defaults to 0.
-| S3E Alpha / Bob / Carol | `cfg/s3e_alpha.toml` and the Bob and Carol files | `/<Robot>/velodyne_points` | `/<Robot>/imu/data` |
-| Newer College 2020 | `cfg/newer_college.toml` | `/os1_cloud_node/points` | `/os1_cloud_node/imu` |
+Newer College:
 
-Published ATE for these datasets is defined in
-[benchmarks/benchmark_table.md](benchmarks/benchmark_table.md), including which
-runs are left out of the headline mean.
+```bash
+ros2 launch sapphire_ros2 sapphire.launch.py \
+  config_file:=/path/to/sapphire/cfg/newer_college.toml \
+  lidar_topic:=/os1_cloud_node/points \
+  imu_topic:=/os1_cloud_node/imu \
+  use_sim_time:=true \
+  trajectory_output:=/path/to/trajectory.tum
+```

@@ -34,11 +34,12 @@ endfunction()
 # Dependencies (only what the skeleton actually uses)
 find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
-# C++-only projects do not define MPI::MPI_C. System PCL loads VTK, and
-# VTK::mpi names that target. The SLAM does not call MPI.
-enable_language(C)
-find_package(MPI REQUIRED COMPONENTS C)
-find_package(PCL REQUIRED)
+# Point types and transforms are PCL common. small_gicp::RegistrationPCL
+# includes pcl::Registration, and that header instantiates FLANN code which
+# calls lz4. The library does not call PCL registration or FLANN.
+find_package(PCL REQUIRED COMPONENTS common)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LZ4 REQUIRED IMPORTED_TARGET liblz4)
 find_package(GTSAM REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
@@ -83,7 +84,8 @@ target_include_directories(sapphire PUBLIC
 target_link_libraries(sapphire PUBLIC
     Eigen3::Eigen
     spdlog::spdlog
-    ${PCL_LIBRARIES}
+    pcl_common
+    PkgConfig::LZ4
     gtsam
     OpenMP::OpenMP_CXX
     small_gicp::small_gicp

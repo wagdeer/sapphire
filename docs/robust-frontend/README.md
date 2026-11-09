@@ -135,6 +135,11 @@ Gate 3A `exp10` RMSE to 2.46 m. It remains a completion recovery rather than a
 global relocalization; see
 [the Gate 3B report](reports/gate-3b-bounded-bootstrap.md).
 
+The next proposed gate is documented in
+[Recovery-aware Global Re-anchor](design/recovery-aware-reanchor.md). It adds
+recovery epochs, weak cross-epoch PGO edges, filtered anchor-map snapshots, and
+strict map-frame priors after bootstrap.
+
 Changes:
 
 - classify registrations as excellent, partial, degenerate, or invalid;
