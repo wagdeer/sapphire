@@ -31,7 +31,7 @@ LiDAR-inertial odometry. Deskew and IMU propagation use the same Gal(3) preinteg
 | Eigen | 3.4 |
 | PCL | 1.12+ |
 | OpenMP | |
-| GTSAM | 4.2 |
+| GTSAM | 4.3 |
 | small_gicp | 1.0.1 |
 | spdlog | |
 | toml++ | 3.4, downloaded automatically if missing |
@@ -47,11 +47,11 @@ To build only the core on Ubuntu 22.04:
 sudo apt update
 sudo apt install -y build-essential cmake git software-properties-common \
   libeigen3-dev libpcl-dev libomp-dev libspdlog-dev
-sudo add-apt-repository -y ppa:borglab/gtsam-release-4.2
+sudo add-apt-repository -y ppa:borglab/gtsam-release-4.3
 sudo apt install -y libgtsam-dev
 ```
 
-Those packages are Eigen 3.4, PCL 1.12, OpenMP, spdlog, and GTSAM 4.2.
+Those packages are Eigen 3.4, PCL 1.12, OpenMP, spdlog, and GTSAM 4.3.
 
 small_gicp 1.0.1:
 
