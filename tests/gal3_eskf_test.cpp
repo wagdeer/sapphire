@@ -630,10 +630,10 @@ void testDegenerateAxisKeepsASmallGain() {
 
 void testChartConfig() {
   const auto absent = sapphire::loadConfig(writeConfig(minimalConfig("")));
-  expect(absent.odometry.eskf.chart == "euclidean", "omitted chart must stay euclidean");
+  expect(absent.odometry.eskf.chart == sapphire::EskfChart::Euclidean, "omitted chart must stay euclidean");
 
   const auto selected = sapphire::loadConfig(writeConfig(minimalConfig("chart = \"gal3_right\"\n")));
-  expect(selected.odometry.eskf.chart == "gal3_right", "toml chart must parse gal3_right");
+  expect(selected.odometry.eskf.chart == sapphire::EskfChart::Gal3Right, "toml chart must parse gal3_right");
 
   bool rejected = false;
   try {
@@ -645,7 +645,7 @@ void testChartConfig() {
 
   const auto handheld = sapphire::loadConfig(std::filesystem::path(SAPPHIRE_SOURCE_DIR) / "cfg" / "hilti_2022_handheld.toml");
   expect(handheld.odometry.fusion == "eskf", "handheld fusion stays eskf");
-  expect(handheld.odometry.eskf.chart == "euclidean", "handheld chart must remain the euclidean default");
+  expect(handheld.odometry.eskf.chart == sapphire::EskfChart::Euclidean, "handheld chart must remain the euclidean default");
   expect(!handheld.odometry.eskf.inject_full_pose && handheld.odometry.eskf.inject_directional_pose &&
              handheld.odometry.eskf.velocity_correction_gain == 8.0 && handheld.odometry.eskf.bias_update_scale == 0.0,
          "handheld mixed gains must stay unchanged");

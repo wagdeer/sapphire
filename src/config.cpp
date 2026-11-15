@@ -302,7 +302,6 @@ struct StringField {
   }
 
 constexpr const char* const kFusionChoices[] = {"observer", "eskf", nullptr};
-constexpr const char* const kEskfChartChoices[] = {"euclidean", "gal3_right", nullptr};
 constexpr const char* const kRegistrationChoices[] = {"GICP", "VGICP", nullptr};
 constexpr const char* const kAccelUnitChoices[] = {"auto", "g", "m_s2", nullptr};
 
@@ -422,9 +421,18 @@ const BoolField kBools[] = {
     BOOL_FIELD("sensor.lidar.require_point_time", sensor.lidar.require_point_time),
 };
 
+EskfChart eskfChartFromString(const std::string& chart) {
+  if (chart == "euclidean") {
+    return EskfChart::Euclidean;
+  }
+  if (chart == "gal3_right") {
+    return EskfChart::Gal3Right;
+  }
+  throw std::invalid_argument("odometry.eskf.chart must be \"euclidean\" or \"gal3_right\"");
+}
+
 const StringField kStrings[] = {
     STR("odometry.fusion", odometry.fusion, kFusionChoices, "odometry.fusion must be \"observer\" or \"eskf\""),
-    STR("odometry.eskf.chart", odometry.eskf.chart, kEskfChartChoices, "odometry.eskf.chart must be \"euclidean\" or \"gal3_right\""),
     STR("registration.type", registration.type, kRegistrationChoices, "registration.type must be GICP or VGICP"),
     STR("sensor.lidar.time_field", sensor.lidar.time_field, sensor::timeFieldChoices(), nullptr),
     STR("sensor.lidar.time_unit", sensor.lidar.time_unit, sensor::timeUnitChoices(), nullptr),
@@ -486,6 +494,10 @@ void loadSchema(ParseContext& ctx, toml::table& root, Config& config) {
     if (const auto value = optionalString(ctx, node, field.path)) {
       field.set(config, *value);
     }
+  }
+  const NodeView chart = root.at_path("odometry.eskf.chart");
+  if (const auto value = optionalString(ctx, chart, "odometry.eskf.chart")) {
+    config.odometry.eskf.chart = eskfChartFromString(*value);
   }
 
   const NodeView extrinsics = root.at_path("extrinsics.T_imu_lidar");

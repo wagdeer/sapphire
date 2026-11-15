@@ -183,8 +183,6 @@ class OdometryPipeline {
 
   bool useEskf() const { return config_.odometry.fusion == "eskf"; }
 
-  static EskfConfig makeEskfConfig(const Config& config);
-
   Config config_;
 
   // ── Initialization ──────────────────────────────────────────
