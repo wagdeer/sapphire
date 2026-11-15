@@ -63,6 +63,77 @@ PointCloudPtr voxelized(const PointCloudConstPtr& cloud, double leaf_size) {
   return deterministicVoxelDownsample(*cloud, leaf_size);
 }
 
+/// Sparse global-map rebuild. PoseGraphBackend::Impl calls this; the worker,
+/// output lock, and ISAM2 commit stay on the backend.
+class SparseMapRebuilder {
+ public:
+  template <typename CloudAt, typename PoseAt>
+  PointCloudPtr rebuild(size_t pose_count, int frame_stride, double voxel_size, CloudAt cloud_at, PoseAt pose_at) const {
+    auto merged = std::make_shared<PointCloud>();
+    const size_t stride = static_cast<size_t>(frame_stride);
+    for (size_t i = 0; i < pose_count; i += stride) {
+      *merged += *transformedCloud(cloud_at(i), pose_at(i));
+    }
+    return voxelized(merged, voxel_size);
+  }
+};
+
+/// Occupancy export. The grid, its insertion cursor, and the export lock live
+/// here. Impl still decides when to append, rebuild, or publish.
+class OccupancyGridExporter {
+ public:
+  explicit OccupancyGridExporter(const Config::Pgo::Occupancy& options) : grid_(std::make_unique<OccupancyGrid>(options)) {}
+
+  template <typename CloudAt, typename PoseAt>
+  void appendFrames(size_t optimized_count, CloudAt cloud_at, PoseAt pose_at) {
+    if (!grid_ || optimized_count == 0) {
+      return;
+    }
+    while (inserted_id_ < optimized_count) {
+      grid_->insertScan(cloud_at(inserted_id_), pose_at(inserted_id_));
+      ++inserted_id_;
+    }
+  }
+
+  template <typename CloudAt, typename PoseAt>
+  void rebuild(size_t optimized_count, CloudAt cloud_at, PoseAt pose_at) {
+    if (!grid_) {
+      return;
+    }
+    grid_->clear();
+    inserted_id_ = 0;
+    appendFrames(optimized_count, cloud_at, pose_at);
+    spdlog::info("[pgo] occupancy grid rebuilt from {} keyframes (rev={})", inserted_id_, grid_->revision());
+  }
+
+  template <typename CloudAt, typename PoseAt>
+  void publish(size_t optimized_count, CloudAt cloud_at, PoseAt pose_at) {
+    if (!grid_) {
+      return;
+    }
+    // Catch up new keyframes only. Full rebuild is reserved for loop
+    // closure in processPending — never re-raycast the whole trajectory
+    // on a visualization poll.
+    if (inserted_id_ < optimized_count) {
+      appendFrames(optimized_count, cloud_at, pose_at);
+    }
+    auto msg = std::make_shared<OccupancyGridMsg>(grid_->toMsg());
+    std::lock_guard<std::mutex> lock(mutex_);
+    msg_ = std::move(msg);
+  }
+
+  std::shared_ptr<const OccupancyGridMsg> latest() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return msg_;
+  }
+
+ private:
+  std::unique_ptr<OccupancyGrid> grid_;
+  size_t inserted_id_ = 0;
+  mutable std::mutex mutex_;
+  std::shared_ptr<const OccupancyGridMsg> msg_;
+};
+
 /// Neighbor count for loop-cloud covariances. Not a toml parameter.
 constexpr int kLoopCovarianceNeighbors = 20;
 /// Translation (m) and rotation (rad) convergence, fixed to match the
@@ -290,7 +361,7 @@ class PoseGraphBackend::Impl {
     odom_noise_ = gtsam::noiseModel::Diagonal::Variances(odom_variances);
 
     if (config_.occupancy.enabled) {
-      occupancy_ = std::make_unique<OccupancyGrid>(config_.occupancy);
+      occupancy_export_ = std::make_unique<OccupancyGridExporter>(config_.occupancy);
       spdlog::info("[pgo] occupancy grid enabled (reso={:.2f}m, d_max={:.2f}m)", config_.occupancy.resolution, config_.occupancy.d_max);
     }
 
@@ -440,15 +511,17 @@ class PoseGraphBackend::Impl {
   }
 
   void requestOccupancyGrid() {
-    if (config_.enabled && occupancy_) {
+    if (config_.enabled && occupancy_export_) {
       occupancy_requested_.store(true, std::memory_order_release);
       wake_cv_.notify_one();
     }
   }
 
   std::shared_ptr<const OccupancyGridMsg> latestOccupancyGrid() const {
-    std::lock_guard<std::mutex> lock(occupancy_mutex_);
-    return occupancy_msg_;
+    if (!occupancy_export_) {
+      return nullptr;
+    }
+    return occupancy_export_->latest();
   }
 
  private:
@@ -584,11 +657,13 @@ class PoseGraphBackend::Impl {
     //   loop  → full rebuild (historical poses moved)
     // Export (below) only serializes; it must not trigger a full rebuild
     // just because ISAM nudged poses or RViz polls every second.
-    if (occupancy_) {
+    auto occupancy_cloud = [this](size_t index) { return frames_[index].cloud_lidar; };
+    auto occupancy_pose = [this](size_t index) { return fromGtsam(optimizedPose(index)); };
+    if (occupancy_export_) {
       if (loop_updated) {
-        rebuildOccupancyMap();
+        occupancy_export_->rebuild(optimized_.size(), occupancy_cloud, occupancy_pose);
       } else if (odom_updated) {
-        appendOccupancyFrames();
+        occupancy_export_->appendFrames(optimized_.size(), occupancy_cloud, occupancy_pose);
       }
     }
 
@@ -598,8 +673,8 @@ class PoseGraphBackend::Impl {
     if (map_requested_.exchange(false, std::memory_order_acq_rel) && !optimized_.empty()) {
       rebuildGlobalMap();
     }
-    if (occupancy_requested_.exchange(false, std::memory_order_acq_rel) && occupancy_) {
-      publishOccupancySnapshot();
+    if (occupancy_requested_.exchange(false, std::memory_order_acq_rel) && occupancy_export_) {
+      occupancy_export_->publish(optimized_.size(), occupancy_cloud, occupancy_pose);
     }
   }
 
@@ -1289,13 +1364,9 @@ class PoseGraphBackend::Impl {
   }
 
   void rebuildGlobalMap() {
-    auto merged = std::make_shared<PointCloud>();
-    const size_t stride = static_cast<size_t>(config_.map_frame_stride);
-    for (size_t i = 0; i < optimized_.size(); i += stride) {
-      const Isometry3d pose = fromGtsam(optimizedPose(i));
-      *merged += *transformedCloud(frames_[i].cloud_lidar, pose);
-    }
-    const PointCloudPtr sparse = voxelized(merged, config_.map_voxel_size);
+    const PointCloudPtr sparse = sparse_map_.rebuild(
+        optimized_.size(), config_.map_frame_stride, config_.map_voxel_size, [this](size_t index) { return frames_[index].cloud_lidar; },
+        [this](size_t index) { return fromGtsam(optimizedPose(index)); });
     {
       std::lock_guard<std::mutex> lock(output_mutex_);
       global_map_ = sparse;
@@ -1341,42 +1412,6 @@ class PoseGraphBackend::Impl {
     ++stats_.revision;
   }
 
-  void appendOccupancyFrames() {
-    if (!occupancy_ || optimized_.empty()) {
-      return;
-    }
-    while (occupancy_inserted_id_ < optimized_.size()) {
-      const Isometry3d pose = fromGtsam(optimizedPose(occupancy_inserted_id_));
-      occupancy_->insertScan(frames_[occupancy_inserted_id_].cloud_lidar, pose);
-      ++occupancy_inserted_id_;
-    }
-  }
-
-  void rebuildOccupancyMap() {
-    if (!occupancy_) {
-      return;
-    }
-    occupancy_->clear();
-    occupancy_inserted_id_ = 0;
-    appendOccupancyFrames();
-    spdlog::info("[pgo] occupancy grid rebuilt from {} keyframes (rev={})", occupancy_inserted_id_, occupancy_->revision());
-  }
-
-  void publishOccupancySnapshot() {
-    if (!occupancy_) {
-      return;
-    }
-    // Catch up new keyframes only. Full rebuild is reserved for loop
-    // closure in processPending — never re-raycast the whole trajectory
-    // on a visualization poll.
-    if (occupancy_inserted_id_ < optimized_.size()) {
-      appendOccupancyFrames();
-    }
-    auto msg = std::make_shared<OccupancyGridMsg>(occupancy_->toMsg());
-    std::lock_guard<std::mutex> lock(occupancy_mutex_);
-    occupancy_msg_ = std::move(msg);
-  }
-
   Config::Pgo config_;
 
   mutable std::mutex input_mutex_;
@@ -1410,12 +1445,10 @@ class PoseGraphBackend::Impl {
   std::vector<Isometry3d> optimized_poses_snapshot_;
   std::vector<PoseGraphEdge> loop_edges_snapshot_;
   PointCloudConstPtr global_map_;
-  std::unique_ptr<OccupancyGrid> occupancy_;
-  size_t occupancy_inserted_id_ = 0;
+  SparseMapRebuilder sparse_map_;
   /// Occupancy export is isolated from output_mutex_ so dense grid copies
   /// cannot stall frontend T_map_odom() / IMU propagation publishers.
-  mutable std::mutex occupancy_mutex_;
-  std::shared_ptr<const OccupancyGridMsg> occupancy_msg_;
+  std::unique_ptr<OccupancyGridExporter> occupancy_export_;
   std::atomic<bool> snapshot_requested_{false};
   std::atomic<bool> map_requested_{false};
   std::atomic<bool> occupancy_requested_{false};
