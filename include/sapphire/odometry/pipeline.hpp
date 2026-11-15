@@ -179,7 +179,7 @@ class OdometryPipeline {
   std::optional<ImuInitializer::Result> imu_init_result_;
 
   // ── Latest output ───────────────────────────────────────────
-  OdometryResult latest_result_;
+  OdomFrameSample latest_result_;
   PointCloudConstPtr latest_deskewed_;
   mutable std::mutex output_mutex_;
 

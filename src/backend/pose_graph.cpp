@@ -403,9 +403,9 @@ class PoseGraphBackend::Impl {
     });
   }
 
-  void recordOdometrySample(const OdometryResult& sample) {
-    if (!config_.enabled || !sample.converged || !std::isfinite(sample.stamp) || !sample.T_world_lidar.matrix().allFinite() ||
-        !sample.v_world.allFinite()) {
+  void recordOdometrySample(const OdomFrameSample& sample) {
+    if (!config_.enabled || !sample.converged || !std::isfinite(sample.stamp) || !sample.T_odom_lidar.matrix().allFinite() ||
+        !sample.v_odom.allFinite()) {
       return;
     }
 
@@ -422,8 +422,8 @@ class PoseGraphBackend::Impl {
     samples_.push_back({
         sample.stamp,
         keyframe,
-        sample.T_world_lidar,
-        sample.v_world,
+        sample.T_odom_lidar,
+        sample.v_odom,
     });
   }
 
@@ -1469,7 +1469,7 @@ void PoseGraphBackend::addFrame(const PointCloudConstPtr& cloud_odom, const Isom
   impl_->addFrame(cloud_odom, T_odom_lidar, stamp);
 }
 
-void PoseGraphBackend::recordOdometrySample(const OdometryResult& odom_frame_sample) { impl_->recordOdometrySample(odom_frame_sample); }
+void PoseGraphBackend::recordOdometrySample(const OdomFrameSample& odom_frame_sample) { impl_->recordOdometrySample(odom_frame_sample); }
 
 MapTrajectory PoseGraphBackend::mapTrajectory() const { return impl_->mapTrajectory(); }
 

@@ -324,11 +324,11 @@ void testInconsistentLoopLeavesCommittedGraph() {
   }
 }
 
-sapphire::OdometryResult makeOdomSample(double x, double stamp, double velocity_x) {
-  sapphire::OdometryResult sample;
-  sample.T_world_lidar = sapphire::Isometry3d::Identity();
-  sample.T_world_lidar.translation().x() = x;
-  sample.v_world = Eigen::Vector3d(velocity_x, 0.0, 0.0);
+sapphire::OdomFrameSample makeOdomSample(double x, double stamp, double velocity_x) {
+  sapphire::OdomFrameSample sample;
+  sample.T_odom_lidar = sapphire::Isometry3d::Identity();
+  sample.T_odom_lidar.translation().x() = x;
+  sample.v_odom = Eigen::Vector3d(velocity_x, 0.0, 0.0);
   sample.stamp = stamp;
   sample.converged = true;
   return sample;
@@ -429,13 +429,13 @@ void testHistoricalTrajectoryFollowsOwningKeyframe() {
   expect(anchor_mid->keyframe == static_cast<size_t>(kAnchor), "an interior scan must stay on the keyframe that owned it");
   expect(query->keyframe == keyframe_x.size() - 1, "the return scan is owned by the latest keyframe");
 
-  const sapphire::Isometry3d root_odom = makeOdomSample(0.0, 0.0, 0.0).T_world_lidar;
-  const sapphire::Isometry3d root_mid_odom = makeOdomSample(kRootMidX, kRootMidStamp, 0.0).T_world_lidar;
-  const sapphire::Isometry3d anchor_mid_odom = makeOdomSample(anchor_mid_x, kAnchorMidStamp, 0.0).T_world_lidar;
-  const sapphire::Isometry3d query_odom = makeOdomSample(kReturnX, 0.0, 0.0).T_world_lidar;
+  const sapphire::Isometry3d root_odom = makeOdomSample(0.0, 0.0, 0.0).T_odom_lidar;
+  const sapphire::Isometry3d root_mid_odom = makeOdomSample(kRootMidX, kRootMidStamp, 0.0).T_odom_lidar;
+  const sapphire::Isometry3d anchor_mid_odom = makeOdomSample(anchor_mid_x, kAnchorMidStamp, 0.0).T_odom_lidar;
+  const sapphire::Isometry3d query_odom = makeOdomSample(kReturnX, 0.0, 0.0).T_odom_lidar;
 
   const auto expectReplay = [&](const sapphire::MapTrajectorySample& sample, const sapphire::Isometry3d& T_odom) {
-    const sapphire::Isometry3d T_odom_i = makeOdomSample(keyframe_x[sample.keyframe], 0.0, 0.0).T_world_lidar;
+    const sapphire::Isometry3d T_odom_i = makeOdomSample(keyframe_x[sample.keyframe], 0.0, 0.0).T_odom_lidar;
     const sapphire::Isometry3d expected = snapshot.optimized_poses[sample.keyframe] * T_odom_i.inverse() * T_odom;
     expect(sample.T_map_lidar.matrix().isApprox(expected.matrix(), 1e-6), "map pose must be T_map_i * T_odom_i^{-1} * T_odom");
     const Eigen::Vector3d expected_velocity = (expected.linear() * Eigen::Vector3d(kVelocityX, 0.0, 0.0));

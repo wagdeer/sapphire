@@ -31,9 +31,12 @@ EskfChart eskfChartFromString(const std::string& chart) {
 
 bool isFiniteImu(const ImuData& imu) { return std::isfinite(imu.stamp) && imu.accel.allFinite() && imu.gyro.allFinite(); }
 
-OdometryResult applyGlobalCorrection(OdometryResult result, const Isometry3d& T_map_odom) {
-  result.T_world_lidar = T_map_odom * result.T_world_lidar;
-  result.v_world = T_map_odom.rotation() * result.v_world;
+OdometryResult applyGlobalCorrection(const OdomFrameSample& sample, const Isometry3d& T_map_odom) {
+  OdometryResult result;
+  result.T_world_lidar = T_map_odom * sample.T_odom_lidar;
+  result.v_world = T_map_odom.rotation() * sample.v_odom;
+  result.stamp = sample.stamp;
+  result.converged = sample.converged;
   return result;
 }
 
@@ -72,7 +75,7 @@ OdometryPipeline::OdometryPipeline(const Config& config)
       submap_manager_(config.odometry.submap),
       pgo_backend_(config.pgo),
       registration_(config.registration.gicp, config.registration.type, config.registration.vgicp.voxel_resolution) {
-  latest_result_.T_world_lidar = Isometry3d::Identity();
+  latest_result_.T_odom_lidar = Isometry3d::Identity();
   gravity_world_ = Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag);
 
   spdlog::info("[pipeline] ready: fusion={}, registration={}, submap_kf={}", config.odometry.fusion, config.registration.type,
@@ -80,12 +83,12 @@ OdometryPipeline::OdometryPipeline(const Config& config)
 }
 
 OdometryResult OdometryPipeline::latestResult() const {
-  OdometryResult result;
+  OdomFrameSample sample;
   {
     std::lock_guard<std::mutex> lock(output_mutex_);
-    result = latest_result_;
+    sample = latest_result_;
   }
-  return applyGlobalCorrection(result, pgo_backend_.T_map_odom());
+  return applyGlobalCorrection(sample, pgo_backend_.T_map_odom());
 }
 
 PointCloudConstPtr OdometryPipeline::latestDeskewed() const {
@@ -103,19 +106,19 @@ PointCloudConstPtr OdometryPipeline::latestDeskewed() const {
 }
 
 std::optional<OdometryResult> OdometryPipeline::latestPropagatedResult() const {
-  OdometryResult result;
+  OdomFrameSample sample;
   {
     std::scoped_lock lock(state_mutex_, output_mutex_);
     if (!has_first_scan_.load(std::memory_order_acquire) || !propagated_state_.valid) {
       return std::nullopt;
     }
 
-    result = latest_result_;
-    result.T_world_lidar = propagated_state_.T_world_imu * config_.extrinsics.T_imu_lidar;
-    result.v_world = propagated_state_.v_world;
-    result.stamp = propagated_state_.stamp;
+    sample = latest_result_;
+    sample.T_odom_lidar = propagated_state_.T_world_imu * config_.extrinsics.T_imu_lidar;
+    sample.v_odom = propagated_state_.v_world;
+    sample.stamp = propagated_state_.stamp;
   }
-  return applyGlobalCorrection(result, pgo_backend_.T_map_odom());
+  return applyGlobalCorrection(sample, pgo_backend_.T_map_odom());
 }
 
 Eigen::Vector3d OdometryPipeline::accelBias() const {
@@ -326,8 +329,8 @@ bool OdometryPipeline::initializeFirstLidarTarget(double stamp, const Preprocess
   {
     std::lock_guard<std::mutex> lock(output_mutex_);
     latest_deskewed_ = downsampled;
-    latest_result_.T_world_lidar = T_world_lidar;
-    latest_result_.v_world = corrected_state.v_world;
+    latest_result_.T_odom_lidar = T_world_lidar;
+    latest_result_.v_odom = corrected_state.v_world;
     latest_result_.stamp = stamp;
     latest_result_.converged = true;
   }
@@ -426,8 +429,8 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
     {
       std::lock_guard<std::mutex> lock(output_mutex_);
       latest_deskewed_ = registration_source;
-      latest_result_.T_world_lidar = T_world_lidar_bootstrap;
-      latest_result_.v_world = deskewed.v_world_ref;
+      latest_result_.T_odom_lidar = T_world_lidar_bootstrap;
+      latest_result_.v_odom = deskewed.v_world_ref;
       latest_result_.stamp = deskewed.reference_stamp;
       latest_result_.converged = false;
     }
@@ -449,8 +452,8 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
     {
       std::lock_guard<std::mutex> lock(output_mutex_);
       latest_deskewed_ = registration_source;
-      latest_result_.T_world_lidar = T_world_lidar_recovery;
-      latest_result_.v_world = deskewed.v_world_ref;
+      latest_result_.T_odom_lidar = T_world_lidar_recovery;
+      latest_result_.v_odom = deskewed.v_world_ref;
       latest_result_.stamp = deskewed.reference_stamp;
       latest_result_.converged = false;
     }
@@ -579,8 +582,8 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
   {
     std::lock_guard<std::mutex> lock(output_mutex_);
     latest_deskewed_ = cloud_out;
-    latest_result_.T_world_lidar = T_world_lidar_out;
-    latest_result_.v_world = fused_state.v_world;
+    latest_result_.T_odom_lidar = T_world_lidar_out;
+    latest_result_.v_odom = fused_state.v_world;
     latest_result_.stamp = deskewed.reference_stamp;
     latest_result_.converged = fusion_accepted;
   }
@@ -591,9 +594,9 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
 }
 
 void OdometryPipeline::rememberPoseGraphSample(const Isometry3d& T_odom_lidar, const Eigen::Vector3d& v_odom, double stamp) {
-  OdometryResult sample;
-  sample.T_world_lidar = T_odom_lidar;
-  sample.v_world = v_odom;
+  OdomFrameSample sample;
+  sample.T_odom_lidar = T_odom_lidar;
+  sample.v_odom = v_odom;
   sample.stamp = stamp;
   sample.converged = true;
   pgo_backend_.recordOdometrySample(sample);

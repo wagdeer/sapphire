@@ -82,7 +82,7 @@ class PoseGraphBackend {
   /// addFrame() so the sample anchors to the keyframe that owns it,
   /// including a keyframe this pose just created. Non-keyframes stay on
   /// the previous keyframe. IMU propagation is not recorded.
-  void recordOdometrySample(const OdometryResult& odom_frame_sample);
+  void recordOdometrySample(const OdomFrameSample& odom_frame_sample);
 
   /// Replay recorded samples with each owning keyframe's optimized pose.
   /// A sample whose keyframe is not optimized yet uses T_map_odom(), which

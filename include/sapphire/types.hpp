@@ -59,10 +59,21 @@ struct NavigationState {
   bool valid = false;
 };
 
-/// Odometry pipeline output per LiDAR scan
+/// Map-frame pose returned by latestResult() / latestPropagatedResult().
+/// The stored frontend sample is an OdomFrameSample and is not premultiplied
+/// by T_map_odom.
 struct OdometryResult {
-  Isometry3d T_world_lidar;  // current pose in world frame
+  Isometry3d T_world_lidar;  // T_map_odom * T_odom_lidar
   Eigen::Vector3d v_world = Eigen::Vector3d::Zero();
+  double stamp = 0.0;
+  bool converged = false;
+};
+
+/// Accepted lidar sample in the odometry frame. Map correction stays in the
+/// publishers above; recording this into the pose graph must not apply it.
+struct OdomFrameSample {
+  Isometry3d T_odom_lidar = Isometry3d::Identity();
+  Eigen::Vector3d v_odom = Eigen::Vector3d::Zero();
   double stamp = 0.0;
   bool converged = false;
 };
