@@ -136,10 +136,6 @@ class OccupancyGridExporter {
 
 /// Neighbor count for loop-cloud covariances. Not a toml parameter.
 constexpr int kLoopCovarianceNeighbors = 20;
-/// Translation (m) and rotation (rad) convergence, fixed to match the
-/// intern GICP registrar. small_gicp checks rotation against rotation_eps
-/// and translation against translation_eps.
-constexpr double kLoopConvergenceEpsilon = 0.01;
 
 /// ISAM2 looks up a per-character relinearization threshold. Integer keys
 /// never match 'x', so every pose variable uses Symbol('x', id).
@@ -1020,28 +1016,19 @@ class PoseGraphBackend::Impl {
       alignment.min_eigenvalue = eigenvalues.eigenvalues().minCoeff();
     }
 
-    if (!result.converged) {
-      alignment.reason = "not converged";
-      return alignment;
-    }
-    if (!alignment.T_target_source.matrix().allFinite()) {
-      alignment.reason = "non-finite result";
-      return alignment;
-    }
-    if (alignment.inliers < min_points) {
-      alignment.reason = "too few inliers";
-      return alignment;
-    }
-    if (alignment.overlap < config_.lidar_min_overlap) {
-      alignment.reason = "overlap below minimum";
-      return alignment;
-    }
-    if (!std::isfinite(alignment.fitness) || alignment.fitness > config_.lidar_max_fitness_m2) {
-      alignment.reason = "fitness above maximum";
-      return alignment;
-    }
-    if (!curvature_ok || alignment.min_eigenvalue <= 0.0) {
-      alignment.reason = "singular Hessian";
+    LoopRegistrationGate gate;
+    gate.converged = result.converged;
+    gate.finite = alignment.T_target_source.matrix().allFinite();
+    gate.inliers = alignment.inliers;
+    gate.min_inliers = min_points;
+    gate.overlap = alignment.overlap;
+    gate.min_overlap = config_.lidar_min_overlap;
+    gate.fitness = alignment.fitness;
+    gate.max_fitness = config_.lidar_max_fitness_m2;
+    gate.curvature_ok = curvature_ok;
+    gate.min_eigenvalue = alignment.min_eigenvalue;
+    if (const char* reason = rejectLoopRegistration(gate)) {
+      alignment.reason = reason;
       return alignment;
     }
 

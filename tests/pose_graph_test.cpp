@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <string>
 #include <sapphire/backend/pose_graph.hpp>
 #include <stdexcept>
 #include <thread>
@@ -62,6 +64,48 @@ sapphire::PointCloudPtr transformCloud(const sapphire::PointCloudConstPtr& cloud
   auto transformed = std::make_shared<sapphire::PointCloud>();
   pcl::transformPointCloud(*cloud, *transformed, pose.matrix());
   return transformed;
+}
+
+void testLoopRegistrationGateStaysSeparate() {
+  expect(sapphire::kLoopConvergenceEpsilon == 0.01, "loop convergence epsilon stays the coded 0.01");
+  const sapphire::RegistrationConfig frontend;
+  expect(frontend.transformation_epsilon == 0.01, "frontend epsilon keeps its own RegistrationConfig default");
+
+  sapphire::LoopRegistrationGate gate;
+  gate.converged = true;
+  gate.finite = true;
+  gate.inliers = 80;
+  gate.min_inliers = 64;
+  gate.overlap = 0.5;
+  gate.min_overlap = 0.4;
+  gate.fitness = 0.1;
+  gate.max_fitness = 0.5;
+  gate.curvature_ok = true;
+  gate.min_eigenvalue = 1.0;
+  expect(sapphire::rejectLoopRegistration(gate) == nullptr, "a loop inside every loop gate must be accepted");
+
+  gate.converged = false;
+  expect(std::string(sapphire::rejectLoopRegistration(gate)) == "not converged", "loop convergence is its own gate");
+  gate.converged = true;
+  gate.finite = false;
+  expect(std::string(sapphire::rejectLoopRegistration(gate)) == "non-finite result", "non-finite loop pose is rejected");
+  gate.finite = true;
+  gate.inliers = 63;
+  expect(std::string(sapphire::rejectLoopRegistration(gate)) == "too few inliers", "loop inliers use lidar_min_inliers");
+  gate.inliers = 80;
+  gate.overlap = 0.39;
+  expect(std::string(sapphire::rejectLoopRegistration(gate)) == "overlap below minimum", "loop overlap is not a frontend gate");
+  gate.overlap = 0.5;
+  gate.fitness = 0.51;
+  expect(std::string(sapphire::rejectLoopRegistration(gate)) == "fitness above maximum", "loop fitness is not a frontend gate");
+  gate.fitness = std::numeric_limits<double>::infinity();
+  expect(std::string(sapphire::rejectLoopRegistration(gate)) == "fitness above maximum", "non-finite loop fitness is rejected");
+  gate.fitness = 0.1;
+  gate.curvature_ok = false;
+  expect(std::string(sapphire::rejectLoopRegistration(gate)) == "singular Hessian", "loop Hessian must solve");
+  gate.curvature_ok = true;
+  gate.min_eigenvalue = 0.0;
+  expect(std::string(sapphire::rejectLoopRegistration(gate)) == "singular Hessian", "non-positive loop Hessian eigenvalue is rejected");
 }
 
 void testOdometryOnlyGraphPreservesFrontendFrame() {
@@ -995,6 +1039,7 @@ void testTargetKeepsFramesPastQueryWindow() {
 }  // namespace
 
 int main() {
+  testLoopRegistrationGateStaysSeparate();
   testOdometryOnlyGraphPreservesFrontendFrame();
   testLoopClosureAddsConstraint();
   testLoopRelinearizationMovesDistantKeyframe();

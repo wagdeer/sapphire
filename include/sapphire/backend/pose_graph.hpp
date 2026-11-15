@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <memory>
 #include <sapphire/mapping/occupancy_grid.hpp>
@@ -7,6 +8,49 @@
 #include <vector>
 
 namespace sapphire {
+
+/// Loop GICP translation (m) and rotation (rad) convergence.
+/// Not registration.gicp.transformation_epsilon or rotation_epsilon.
+inline constexpr double kLoopConvergenceEpsilon = 0.01;
+
+/// Numbers the loop registrar already computed. This is not the frontend
+/// Registration::align gate.
+struct LoopRegistrationGate {
+  bool converged = false;
+  bool finite = false;
+  size_t inliers = 0;
+  size_t min_inliers = 0;
+  double overlap = 0.0;
+  double min_overlap = 0.0;
+  double fitness = 0.0;
+  double max_fitness = 0.0;
+  bool curvature_ok = false;
+  double min_eigenvalue = 0.0;
+};
+
+/// Nullptr when the loop registration is accepted. The covariance floor is
+/// applied by the caller after this returns.
+inline const char* rejectLoopRegistration(const LoopRegistrationGate& gate) {
+  if (!gate.converged) {
+    return "not converged";
+  }
+  if (!gate.finite) {
+    return "non-finite result";
+  }
+  if (gate.inliers < gate.min_inliers) {
+    return "too few inliers";
+  }
+  if (gate.overlap < gate.min_overlap) {
+    return "overlap below minimum";
+  }
+  if (!std::isfinite(gate.fitness) || gate.fitness > gate.max_fitness) {
+    return "fitness above maximum";
+  }
+  if (!gate.curvature_ok || gate.min_eigenvalue <= 0.0) {
+    return "singular Hessian";
+  }
+  return nullptr;
+}
 
 struct PoseGraphStats {
   size_t keyframes = 0;
