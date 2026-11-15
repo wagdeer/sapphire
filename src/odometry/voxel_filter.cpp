@@ -39,8 +39,7 @@ PointCloudPtr deterministicVoxelDownsample(const PointCloud& points, double leaf
 
   constexpr size_t kParallelPointThreshold = 4096;
   const int thread_count = std::max(1, std::min(max_threads, omp_get_max_threads()));
-  const bool use_parallel = points.size() >= kParallelPointThreshold && thread_count > 1;
-  const bool in_parallel = omp_in_parallel();
+  const bool use_parallel = points.size() >= kParallelPointThreshold && thread_count > 1 && !omp_in_parallel();
   const float inverse_leaf_size_f = 1.0f / static_cast<float>(leaf_size);
   // ── float can exactly represent integers up to 2^24 (≈16.8M).
   //    For voxel indices (leaf_size ≥ 0.01m, coordinate ≤ 10km the
@@ -67,15 +66,10 @@ PointCloudPtr deterministicVoxelDownsample(const PointCloud& points, double leaf
     voxels[static_cast<size_t>(i)] = voxel;
   };
 
-  // Dispatch: use outer parallel team when already inside a parallel
-  // region, otherwise create one. This avoids nested fork/join overhead.
+  // A caller already inside a parallel region gets a plain loop. omp for
+  // would require every thread in that team to reach this local array.
   const std::int64_t n = static_cast<std::int64_t>(points.size());
-  if (in_parallel) {
-#pragma omp for schedule(static)
-    for (std::int64_t i = 0; i < n; ++i) {
-      compute_voxel(i);
-    }
-  } else if (use_parallel) {
+  if (use_parallel) {
 #pragma omp parallel for schedule(static) num_threads(thread_count)
     for (std::int64_t i = 0; i < n; ++i) {
       compute_voxel(i);

@@ -196,8 +196,7 @@ PointCloudPtr transformScan(const ScanTimeline& timeline, const std::vector<Time
   constexpr int kMaxDeskewThreads = 4;
   const int thread_count = std::min(kMaxDeskewThreads, omp_get_max_threads());
   const auto group_count = static_cast<std::ptrdiff_t>(timeline.stamps.size());
-  const bool use_parallel = output->points.size() >= kParallelPointThreshold && group_count > 1;
-  const bool in_parallel = omp_in_parallel();
+  const bool use_parallel = output->points.size() >= kParallelPointThreshold && group_count > 1 && !omp_in_parallel();
 
   auto process_group = [&](size_t group_index) {
     const Isometry3f T_world_lidar = (poseFromState(states[group_index].state) * T_imu_lidar).cast<float>();
@@ -208,12 +207,9 @@ PointCloudPtr transformScan(const ScanTimeline& timeline, const std::vector<Time
     }
   };
 
-  if (in_parallel) {
-#pragma omp for schedule(static)
-    for (std::ptrdiff_t group = 0; group < group_count; ++group) {
-      process_group(static_cast<size_t>(group));
-    }
-  } else if (use_parallel) {
+  // A caller already inside a parallel region gets a plain loop. omp for
+  // would require every thread in that team to reach this local cloud.
+  if (use_parallel) {
 #pragma omp parallel for schedule(static) num_threads(thread_count)
     for (std::ptrdiff_t group = 0; group < group_count; ++group) {
       process_group(static_cast<size_t>(group));
