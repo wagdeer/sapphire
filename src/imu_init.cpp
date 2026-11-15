@@ -1,12 +1,11 @@
-#include <sapphire/imu_init.hpp>
+#include <spdlog/spdlog.h>
 
 #include <SO3.hpp>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <numeric>
-#include <spdlog/spdlog.h>
+#include <sapphire/imu_init.hpp>
 
 namespace sapphire {
 namespace {
@@ -15,319 +14,289 @@ constexpr double kStandardGravity = 9.80665;
 
 }  // namespace
 
-ImuInitializer::ImuInitializer(
-    const ImuInitConfig& config,
-    std::string accel_unit)
-    : cfg_(config)
-    , accel_unit_(std::move(accel_unit))
-{
-    // Reserve for 5s at 200Hz = 1000 samples — single allocation
-    constexpr int kExpectedMaxSamples = 1200;
-    samples_.reserve(kExpectedMaxSamples);
+ImuInitializer::ImuInitializer(const ImuInitConfig& config, std::string accel_unit) : cfg_(config), accel_unit_(std::move(accel_unit)) {
+  // Reserve for 5s at 200Hz = 1000 samples — single allocation
+  constexpr int kExpectedMaxSamples = 1200;
+  samples_.reserve(kExpectedMaxSamples);
 }
 
-std::optional<ImuInitializer::Result>
-ImuInitializer::feedImu(double stamp,
-                         const Eigen::Vector3d& accel,
-                         const Eigen::Vector3d& gyro) {
-    if (state_ == State::CONVERGED
-        || state_ == State::TIMEOUT
-        || state_ == State::FAILED) {
-        return std::nullopt;
-    }
-    if (!std::isfinite(stamp)
-        || !accel.allFinite()
-        || !gyro.allFinite()) {
-        spdlog::warn("[imu_init] dropping sample with non-finite values");
-        return std::nullopt;
-    }
-    if (!samples_.empty() && stamp <= samples_.back().stamp) {
-        spdlog::warn(
-            "[imu_init] dropping non-monotonic timestamp: "
-            "current={:.9f}, previous={:.9f}",
-            stamp,
-            samples_.back().stamp);
-        return std::nullopt;
-    }
-
-    if (samples_.empty()) {
-        start_stamp_ = stamp;
-        last_check_stamp_ = stamp;
-        state_ = State::CALIBRATING;
-        std::fprintf(stderr, "[imu_init] calibrating...\n");
-    }
-
-    samples_.push_back({stamp, accel, gyro});
-
-    if (static_cast<int>(samples_.size()) < cfg_.min_samples) {
-        return std::nullopt;
-    }
-
-    double elapsed = stamp - start_stamp_;
-    double since_last_check = stamp - last_check_stamp_;
-
-    if (since_last_check >= cfg_.check_interval_sec) {
-        last_check_stamp_ = stamp;
-
-        if (checkConvergence()) {
-            std::fprintf(stderr, "\n");
-            state_ = State::CONVERGED;
-            auto result = computeResult();
-            if (!result) {
-                state_ = State::FAILED;
-                return std::nullopt;
-            }
-            return result;
-        }
-    }
-
-    if (elapsed >= cfg_.timeout_sec) {
-        std::fprintf(stderr, "\n");
-        state_ = State::TIMEOUT;
-        auto result = computeResult();
-        if (!result) {
-            state_ = State::FAILED;
-            return std::nullopt;
-        }
-        spdlog::warn(
-            "[imu_init] timed out after {:.1f}s, using approximate result",
-            elapsed);
-        return result;
-    }
-
+std::optional<ImuInitializer::Result> ImuInitializer::feedImu(double stamp, const Eigen::Vector3d& accel, const Eigen::Vector3d& gyro) {
+  if (state_ == State::CONVERGED || state_ == State::TIMEOUT || state_ == State::FAILED) {
     return std::nullopt;
+  }
+  if (!std::isfinite(stamp) || !accel.allFinite() || !gyro.allFinite()) {
+    spdlog::warn("[imu_init] dropping sample with non-finite values");
+    return std::nullopt;
+  }
+  if (!samples_.empty() && stamp <= samples_.back().stamp) {
+    spdlog::warn(
+        "[imu_init] dropping non-monotonic timestamp: "
+        "current={:.9f}, previous={:.9f}",
+        stamp, samples_.back().stamp);
+    return std::nullopt;
+  }
+
+  if (samples_.empty()) {
+    start_stamp_ = stamp;
+    last_check_stamp_ = stamp;
+    state_ = State::CALIBRATING;
+    std::fprintf(stderr, "[imu_init] calibrating...\n");
+  }
+
+  samples_.push_back({stamp, accel, gyro});
+
+  if (static_cast<int>(samples_.size()) < cfg_.min_samples) {
+    return std::nullopt;
+  }
+
+  double elapsed = stamp - start_stamp_;
+  double since_last_check = stamp - last_check_stamp_;
+
+  if (since_last_check >= cfg_.check_interval_sec) {
+    last_check_stamp_ = stamp;
+
+    if (checkConvergence()) {
+      std::fprintf(stderr, "\n");
+      state_ = State::CONVERGED;
+      auto result = computeResult();
+      if (!result) {
+        state_ = State::FAILED;
+        return std::nullopt;
+      }
+      return result;
+    }
+  }
+
+  if (elapsed >= cfg_.timeout_sec) {
+    std::fprintf(stderr, "\n");
+    state_ = State::TIMEOUT;
+    auto result = computeResult();
+    if (!result) {
+      state_ = State::FAILED;
+      return std::nullopt;
+    }
+    spdlog::warn("[imu_init] timed out after {:.1f}s, using approximate result", elapsed);
+    return result;
+  }
+
+  return std::nullopt;
 }
 
 double ImuInitializer::computeMedian(std::vector<double>& v) {
-    if (v.empty()) return 0.0;
-    size_t n = v.size() / 2;
-    std::nth_element(v.begin(), v.begin() + static_cast<long>(n), v.end());
-    return v[n];
+  if (v.empty()) return 0.0;
+  size_t n = v.size() / 2;
+  std::nth_element(v.begin(), v.begin() + static_cast<long>(n), v.end());
+  return v[n];
 }
 
 void ImuInitializer::rejectOutliers() {
-    if (samples_.size() < 10) return;
+  if (samples_.size() < 10) return;
 
-    constexpr double kMADThreshold = 5.0;
-    constexpr double kMADScale    = 0.6745;  // σ = MAD / Φ^(-1)(3/4) for normal distribution
+  constexpr double kMADThreshold = 5.0;
+  constexpr double kMADScale = 0.6745;  // σ = MAD / Φ^(-1)(3/4) for normal distribution
 
-    std::vector<double> gyro_x, gyro_y, gyro_z;
-    std::vector<double> accel_x, accel_y, accel_z;
-    gyro_x.reserve(samples_.size());
-    gyro_y.reserve(samples_.size());
-    gyro_z.reserve(samples_.size());
-    accel_x.reserve(samples_.size());
-    accel_y.reserve(samples_.size());
-    accel_z.reserve(samples_.size());
+  std::vector<double> gyro_x, gyro_y, gyro_z;
+  std::vector<double> accel_x, accel_y, accel_z;
+  gyro_x.reserve(samples_.size());
+  gyro_y.reserve(samples_.size());
+  gyro_z.reserve(samples_.size());
+  accel_x.reserve(samples_.size());
+  accel_y.reserve(samples_.size());
+  accel_z.reserve(samples_.size());
 
-    for (const auto& s : samples_) {
-        gyro_x.push_back(s.gyro.x());
-        gyro_y.push_back(s.gyro.y());
-        gyro_z.push_back(s.gyro.z());
-        accel_x.push_back(s.accel.x());
-        accel_y.push_back(s.accel.y());
-        accel_z.push_back(s.accel.z());
+  for (const auto& s : samples_) {
+    gyro_x.push_back(s.gyro.x());
+    gyro_y.push_back(s.gyro.y());
+    gyro_z.push_back(s.gyro.z());
+    accel_x.push_back(s.accel.x());
+    accel_y.push_back(s.accel.y());
+    accel_z.push_back(s.accel.z());
+  }
+
+  double med_gx = computeMedian(gyro_x);
+  double med_gy = computeMedian(gyro_y);
+  double med_gz = computeMedian(gyro_z);
+  double med_ax = computeMedian(accel_x);
+  double med_ay = computeMedian(accel_y);
+  double med_az = computeMedian(accel_z);
+
+  auto mad = [](std::vector<double>& v, double median) {
+    for (auto& x : v) x = std::abs(x - median);
+    return computeMedian(v) / kMADScale;
+  };
+
+  double mad_gx = mad(gyro_x, med_gx);
+  double mad_gy = mad(gyro_y, med_gy);
+  double mad_gz = mad(gyro_z, med_gz);
+  double mad_ax = mad(accel_x, med_ax);
+  double mad_ay = mad(accel_y, med_ay);
+  double mad_az = mad(accel_z, med_az);
+
+  std::vector<Sample> filtered;
+  filtered.reserve(samples_.size());
+  for (const auto& s : samples_) {
+    bool outlier = false;
+    outlier |= (std::abs(s.gyro.x() - med_gx) > kMADThreshold * mad_gx);
+    outlier |= (std::abs(s.gyro.y() - med_gy) > kMADThreshold * mad_gy);
+    outlier |= (std::abs(s.gyro.z() - med_gz) > kMADThreshold * mad_gz);
+    outlier |= (std::abs(s.accel.x() - med_ax) > kMADThreshold * mad_ax);
+    outlier |= (std::abs(s.accel.y() - med_ay) > kMADThreshold * mad_ay);
+    outlier |= (std::abs(s.accel.z() - med_az) > kMADThreshold * mad_az);
+    if (!outlier) {
+      filtered.push_back(s);
     }
+  }
 
-    double med_gx = computeMedian(gyro_x);
-    double med_gy = computeMedian(gyro_y);
-    double med_gz = computeMedian(gyro_z);
-    double med_ax = computeMedian(accel_x);
-    double med_ay = computeMedian(accel_y);
-    double med_az = computeMedian(accel_z);
-
-    auto mad = [](std::vector<double>& v, double median) {
-        for (auto& x : v) x = std::abs(x - median);
-        return computeMedian(v) / kMADScale;
-    };
-
-    double mad_gx = mad(gyro_x, med_gx);
-    double mad_gy = mad(gyro_y, med_gy);
-    double mad_gz = mad(gyro_z, med_gz);
-    double mad_ax = mad(accel_x, med_ax);
-    double mad_ay = mad(accel_y, med_ay);
-    double mad_az = mad(accel_z, med_az);
-
-    std::vector<Sample> filtered;
-    filtered.reserve(samples_.size());
-    for (const auto& s : samples_) {
-        bool outlier = false;
-        outlier |= (std::abs(s.gyro.x() - med_gx) > kMADThreshold * mad_gx);
-        outlier |= (std::abs(s.gyro.y() - med_gy) > kMADThreshold * mad_gy);
-        outlier |= (std::abs(s.gyro.z() - med_gz) > kMADThreshold * mad_gz);
-        outlier |= (std::abs(s.accel.x() - med_ax) > kMADThreshold * mad_ax);
-        outlier |= (std::abs(s.accel.y() - med_ay) > kMADThreshold * mad_ay);
-        outlier |= (std::abs(s.accel.z() - med_az) > kMADThreshold * mad_az);
-        if (!outlier) {
-            filtered.push_back(s);
-        }
-    }
-
-    samples_.swap(filtered);
+  samples_.swap(filtered);
 }
 
 bool ImuInitializer::checkConvergence() {
-    rejectOutliers();
+  rejectOutliers();
 
-    if (samples_.size() < static_cast<size_t>(cfg_.min_samples)) {
-        return false;
-    }
+  if (samples_.size() < static_cast<size_t>(cfg_.min_samples)) {
+    return false;
+  }
 
-    Eigen::Vector3d gyro_sum = Eigen::Vector3d::Zero();
-    Eigen::Vector3d accel_sum = Eigen::Vector3d::Zero();
-    for (const auto& s : samples_) {
-        gyro_sum += s.gyro;
-        accel_sum += s.accel;
-    }
-    Eigen::Vector3d gyro_mean = gyro_sum / static_cast<double>(samples_.size());
-    Eigen::Vector3d accel_mean = accel_sum / static_cast<double>(samples_.size());
+  Eigen::Vector3d gyro_sum = Eigen::Vector3d::Zero();
+  Eigen::Vector3d accel_sum = Eigen::Vector3d::Zero();
+  for (const auto& s : samples_) {
+    gyro_sum += s.gyro;
+    accel_sum += s.accel;
+  }
+  Eigen::Vector3d gyro_mean = gyro_sum / static_cast<double>(samples_.size());
+  Eigen::Vector3d accel_mean = accel_sum / static_cast<double>(samples_.size());
 
-    Eigen::Vector3d gyro_var = Eigen::Vector3d::Zero();
-    Eigen::Vector3d accel_var = Eigen::Vector3d::Zero();
-    for (const auto& s : samples_) {
-        Eigen::Vector3d dg = s.gyro - gyro_mean;
-        Eigen::Vector3d da = s.accel - accel_mean;
-        gyro_var += dg.cwiseProduct(dg);
-        accel_var += da.cwiseProduct(da);
-    }
-    double n = static_cast<double>(samples_.size());
-    double gyro_std  = std::sqrt((gyro_var.x() + gyro_var.y() + gyro_var.z()) / n);
-    double accel_std = std::sqrt((accel_var.x() + accel_var.y() + accel_var.z()) / n);
+  Eigen::Vector3d gyro_var = Eigen::Vector3d::Zero();
+  Eigen::Vector3d accel_var = Eigen::Vector3d::Zero();
+  for (const auto& s : samples_) {
+    Eigen::Vector3d dg = s.gyro - gyro_mean;
+    Eigen::Vector3d da = s.accel - accel_mean;
+    gyro_var += dg.cwiseProduct(dg);
+    accel_var += da.cwiseProduct(da);
+  }
+  double n = static_cast<double>(samples_.size());
+  double gyro_std = std::sqrt((gyro_var.x() + gyro_var.y() + gyro_var.z()) / n);
+  double accel_std = std::sqrt((accel_var.x() + accel_var.y() + accel_var.z()) / n);
 
-    double elapsed = samples_.back().stamp - start_stamp_;
+  double elapsed = samples_.back().stamp - start_stamp_;
 
-    std::fprintf(stderr,
-        "\r[imu_init] %.1fs | %zu samples | "
-        "gyro_σ=%.4f/%.4f  accel_σ=%.3f/%.3f  ",
-        elapsed, samples_.size(),
-        gyro_std, cfg_.convergence_gyro_std,
-        accel_std, cfg_.convergence_accel_std);
-    std::fflush(stderr);
+  std::fprintf(stderr,
+               "\r[imu_init] %.1fs | %zu samples | "
+               "gyro_σ=%.4f/%.4f  accel_σ=%.3f/%.3f  ",
+               elapsed, samples_.size(), gyro_std, cfg_.convergence_gyro_std, accel_std, cfg_.convergence_accel_std);
+  std::fflush(stderr);
 
-    return gyro_std < cfg_.convergence_gyro_std
-        && accel_std < cfg_.convergence_accel_std;
+  return gyro_std < cfg_.convergence_gyro_std && accel_std < cfg_.convergence_accel_std;
 }
 
-std::optional<double> ImuInitializer::resolveAccelScale(
-    const Eigen::Vector3d& accel_mean) const
-{
-    const double magnitude = accel_mean.norm();
-    double scale = 1.0;
-    const char* resolved = nullptr;
-    if (accel_unit_ == "g") {
-        scale = kStandardGravity;
-        resolved = "g";
-    } else if (accel_unit_ == "m_s2") {
-        scale = 1.0;
-        resolved = "m_s2";
-    } else if (accel_unit_ == "auto") {
-        if (magnitude >= 0.5 && magnitude <= 1.5) {
-            scale = kStandardGravity;
-            resolved = "g";
-        } else if (magnitude >= 5.0 && magnitude <= 15.0) {
-            scale = 1.0;
-            resolved = "m_s2";
-        } else {
-            spdlog::warn(
-                "[imu_init] unknown acceleration unit: |accel_mean|={:.3f} "
-                "(expected [0.5, 1.5] for g or [5, 15] for m/s^2). "
-                "Set sensor.imu.accel_unit to \"g\" or \"m_s2\"",
-                magnitude);
-            return std::nullopt;
-        }
+std::optional<double> ImuInitializer::resolveAccelScale(const Eigen::Vector3d& accel_mean) const {
+  const double magnitude = accel_mean.norm();
+  double scale = 1.0;
+  const char* resolved = nullptr;
+  if (accel_unit_ == "g") {
+    scale = kStandardGravity;
+    resolved = "g";
+  } else if (accel_unit_ == "m_s2") {
+    scale = 1.0;
+    resolved = "m_s2";
+  } else if (accel_unit_ == "auto") {
+    if (magnitude >= 0.5 && magnitude <= 1.5) {
+      scale = kStandardGravity;
+      resolved = "g";
+    } else if (magnitude >= 5.0 && magnitude <= 15.0) {
+      scale = 1.0;
+      resolved = "m_s2";
     } else {
-        spdlog::warn(
-            "[imu_init] unknown sensor.imu.accel_unit '{}'",
-            accel_unit_);
-        return std::nullopt;
+      spdlog::warn(
+          "[imu_init] unknown acceleration unit: |accel_mean|={:.3f} "
+          "(expected [0.5, 1.5] for g or [5, 15] for m/s^2). "
+          "Set sensor.imu.accel_unit to \"g\" or \"m_s2\"",
+          magnitude);
+      return std::nullopt;
     }
+  } else {
+    spdlog::warn("[imu_init] unknown sensor.imu.accel_unit '{}'", accel_unit_);
+    return std::nullopt;
+  }
 
-    spdlog::info(
-        "[imu_init] acceleration unit={} |accel_mean|={:.3f} scale={:.5f}",
-        resolved,
-        magnitude,
-        scale);
-    return scale;
+  spdlog::info("[imu_init] acceleration unit={} |accel_mean|={:.3f} scale={:.5f}", resolved, magnitude, scale);
+  return scale;
 }
 
 std::optional<ImuInitializer::Result> ImuInitializer::computeResult() {
-    rejectOutliers();
+  rejectOutliers();
 
-    Eigen::Vector3d gyro_sum = Eigen::Vector3d::Zero();
-    Eigen::Vector3d accel_sum = Eigen::Vector3d::Zero();
-    for (const auto& s : samples_) {
-        gyro_sum += s.gyro;
-        accel_sum += s.accel;
+  Eigen::Vector3d gyro_sum = Eigen::Vector3d::Zero();
+  Eigen::Vector3d accel_sum = Eigen::Vector3d::Zero();
+  for (const auto& s : samples_) {
+    gyro_sum += s.gyro;
+    accel_sum += s.accel;
+  }
+  double n = static_cast<double>(samples_.size());
+  Eigen::Vector3d gyro_mean = gyro_sum / n;
+  Eigen::Vector3d accel_mean = accel_sum / n;
+
+  Eigen::Vector3d gyro_var = Eigen::Vector3d::Zero();
+  Eigen::Vector3d accel_var = Eigen::Vector3d::Zero();
+  for (const auto& s : samples_) {
+    Eigen::Vector3d dg = s.gyro - gyro_mean;
+    Eigen::Vector3d da = s.accel - accel_mean;
+    gyro_var += dg.cwiseProduct(dg);
+    accel_var += da.cwiseProduct(da);
+  }
+  double gyro_std = std::sqrt((gyro_var.x() + gyro_var.y() + gyro_var.z()) / n);
+  double accel_std = std::sqrt((accel_var.x() + accel_var.y() + accel_var.z()) / n);
+
+  const auto accel_scale = resolveAccelScale(accel_mean);
+  if (!accel_scale) {
+    return std::nullopt;
+  }
+  const Eigen::Vector3d accel_mps2 = accel_mean * (*accel_scale);
+
+  // ── Gravity alignment: IMU accel direction → world Z-up ────
+  //    At rest, accel measures support force = −g.
+  //    lie::SO3d(u, v) constructs the rotation mapping measured-up to world-up.
+  //    When the vectors are anti-parallel (IMU inverted), SO3's library-internal
+  //    fallback uses a non-deterministic random axis.  We handle that case here
+  //    with a deterministic perpendicular axis so that results are reproducible.
+  Eigen::Vector3d grav_imu = accel_mps2.normalized();
+  Eigen::Vector3d grav_world(0.0, 0.0, 1.0);  // world Z = up
+  Eigen::Quaterniond q_gravity;
+  if (grav_imu.dot(grav_world) < -0.999999) {
+    Eigen::Vector3d axis = grav_imu.cross(Eigen::Vector3d::UnitX());
+    if (axis.norm() < 1e-9) {
+      axis = grav_imu.cross(Eigen::Vector3d::UnitY());
     }
-    double n = static_cast<double>(samples_.size());
-    Eigen::Vector3d gyro_mean = gyro_sum / n;
-    Eigen::Vector3d accel_mean = accel_sum / n;
+    axis.normalize();
+    q_gravity = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, axis));
+  } else {
+    q_gravity = lie::SO3d(grav_imu, grav_world).q();
+  }
 
-    Eigen::Vector3d gyro_var = Eigen::Vector3d::Zero();
-    Eigen::Vector3d accel_var = Eigen::Vector3d::Zero();
-    for (const auto& s : samples_) {
-        Eigen::Vector3d dg = s.gyro - gyro_mean;
-        Eigen::Vector3d da = s.accel - accel_mean;
-        gyro_var += dg.cwiseProduct(dg);
-        accel_var += da.cwiseProduct(da);
-    }
-    double gyro_std  = std::sqrt((gyro_var.x() + gyro_var.y() + gyro_var.z()) / n);
-    double accel_std = std::sqrt((accel_var.x() + accel_var.y() + accel_var.z()) / n);
+  // Bias = mean(meas) − gravity_vector_in_imu_frame
+  // Gravity in IMU frame = q_gravity.inverse() * (0,0,g_mag)
+  //   = points downward in IMU coordinates
+  Eigen::Vector3d grav_in_imu = q_gravity.inverse() * Eigen::Vector3d(0, 0, cfg_.gravity_mag);
+  Eigen::Vector3d accel_bias = accel_mps2 - grav_in_imu;
+  Eigen::Vector3d gyro_bias = gyro_mean;
 
-    const auto accel_scale = resolveAccelScale(accel_mean);
-    if (!accel_scale) {
-        return std::nullopt;
-    }
-    const Eigen::Vector3d accel_mps2 = accel_mean * (*accel_scale);
+  double elapsed = samples_.back().stamp - start_stamp_;
 
-    // ── Gravity alignment: IMU accel direction → world Z-up ────
-    //    At rest, accel measures support force = −g.
-    //    lie::SO3d(u, v) constructs the rotation mapping measured-up to world-up.
-    //    When the vectors are anti-parallel (IMU inverted), SO3's library-internal
-    //    fallback uses a non-deterministic random axis.  We handle that case here
-    //    with a deterministic perpendicular axis so that results are reproducible.
-    Eigen::Vector3d grav_imu = accel_mps2.normalized();
-    Eigen::Vector3d grav_world(0.0, 0.0, 1.0);  // world Z = up
-    Eigen::Quaterniond q_gravity;
-    if (grav_imu.dot(grav_world) < -0.999999) {
-        Eigen::Vector3d axis = grav_imu.cross(Eigen::Vector3d::UnitX());
-        if (axis.norm() < 1e-9) {
-            axis = grav_imu.cross(Eigen::Vector3d::UnitY());
-        }
-        axis.normalize();
-        q_gravity = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, axis));
-    } else {
-        q_gravity = lie::SO3d(grav_imu, grav_world).q();
-    }
+  spdlog::info(
+      "[imu_init] calibration complete: {:.2f}s, {} samples, "
+      "gyro_bias=[{:.6f},{:.6f},{:.6f}], "
+      "accel_bias=[{:.6f},{:.6f},{:.6f}], "
+      "gyro_std={:.6f}, accel_std={:.6f}",
+      elapsed, static_cast<int>(samples_.size()), gyro_bias.x(), gyro_bias.y(), gyro_bias.z(), accel_bias.x(), accel_bias.y(), accel_bias.z(),
+      gyro_std, accel_std);
 
-    // Bias = mean(meas) − gravity_vector_in_imu_frame
-    // Gravity in IMU frame = q_gravity.inverse() * (0,0,g_mag)
-    //   = points downward in IMU coordinates
-    Eigen::Vector3d grav_in_imu =
-        q_gravity.inverse() * Eigen::Vector3d(0, 0, cfg_.gravity_mag);
-    Eigen::Vector3d accel_bias = accel_mps2 - grav_in_imu;
-    Eigen::Vector3d gyro_bias = gyro_mean;
-
-    double elapsed = samples_.back().stamp - start_stamp_;
-
-    spdlog::info(
-        "[imu_init] calibration complete: {:.2f}s, {} samples, "
-        "gyro_bias=[{:.6f},{:.6f},{:.6f}], "
-        "accel_bias=[{:.6f},{:.6f},{:.6f}], "
-        "gyro_std={:.6f}, accel_std={:.6f}",
-        elapsed,
-        static_cast<int>(samples_.size()),
-        gyro_bias.x(), gyro_bias.y(), gyro_bias.z(),
-        accel_bias.x(), accel_bias.y(), accel_bias.z(),
-        gyro_std, accel_std);
-
-    return Result{
-        .gyro_bias   = gyro_bias,
-        .accel_bias  = accel_bias,
-        .q_gravity   = q_gravity,
-        .accel_std   = accel_std,
-        .accel_scale = *accel_scale,
-    };
+  return Result{
+      .gyro_bias = gyro_bias,
+      .accel_bias = accel_bias,
+      .q_gravity = q_gravity,
+      .accel_std = accel_std,
+      .accel_scale = *accel_scale,
+  };
 }
 
 }  // namespace sapphire

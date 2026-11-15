@@ -1,16 +1,15 @@
 #pragma once
 
-#include <sapphire/backend/pose_graph.hpp>
-
 #include <cstddef>
 #include <filesystem>
+#include <sapphire/backend/pose_graph.hpp>
 #include <string>
 
 namespace sapphire {
 
 struct TumWriteResult {
-    size_t written = 0;
-    size_t skipped = 0;
+  size_t written = 0;
+  size_t skipped = 0;
 };
 
 /// Write a TUM RGB-D trajectory:
@@ -21,36 +20,30 @@ struct TumWriteResult {
 /// timestamp that does not strictly increase, is skipped so the file stays
 /// readable by evo. An empty result does not create `path`.
 /// Throws std::runtime_error when the file cannot be written.
-TumWriteResult writeTumTrajectory(
-    const std::filesystem::path& path,
-    const MapTrajectory& trajectory);
+TumWriteResult writeTumTrajectory(const std::filesystem::path& path, const MapTrajectory& trajectory);
 
 /// Outcome of one shutdown trajectory save.
 /// NotConfigured, Empty, and Written are successful process results.
 /// Only IoFailure must change the process exit status.
 enum class TrajectorySaveStatus {
-    NotConfigured,
-    Empty,
-    Written,
-    IoFailure,
+  NotConfigured,
+  Empty,
+  Written,
+  IoFailure,
 };
 
 struct TrajectorySaveReport {
-    TrajectorySaveStatus status = TrajectorySaveStatus::NotConfigured;
-    TumWriteResult result;
-    std::string error;
+  TrajectorySaveStatus status = TrajectorySaveStatus::NotConfigured;
+  TumWriteResult result;
+  std::string error;
 };
 
-inline bool trajectorySaveSucceeded(TrajectorySaveStatus status) {
-    return status != TrajectorySaveStatus::IoFailure;
-}
+inline bool trajectorySaveSucceeded(TrajectorySaveStatus status) { return status != TrajectorySaveStatus::IoFailure; }
 
 /// Save `trajectory` to `path` without throwing.
 /// An empty path is NotConfigured and creates nothing. A trajectory with no
 /// writable samples is Empty and creates nothing. Filesystem errors are
 /// reported as IoFailure.
-TrajectorySaveReport saveMapTrajectory(
-    const std::filesystem::path& path,
-    const MapTrajectory& trajectory);
+TrajectorySaveReport saveMapTrajectory(const std::filesystem::path& path, const MapTrajectory& trajectory);
 
 }  // namespace sapphire

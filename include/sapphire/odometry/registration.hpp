@@ -1,9 +1,9 @@
 #pragma once
 
-#include <sapphire/types.hpp>
-#include <small_gicp/registration/registration.hpp>
-#include <small_gicp/pcl/pcl_registration.hpp>
 #include <memory>
+#include <sapphire/types.hpp>
+#include <small_gicp/pcl/pcl_registration.hpp>
+#include <small_gicp/registration/registration.hpp>
 
 namespace sapphire {
 
@@ -19,32 +19,30 @@ namespace sapphire {
 ///   reg.setTarget(target_cloud);
 ///   auto result = reg.align(T_prior);
 class Registration {
-public:
-    using GicpType = small_gicp::RegistrationPCL<Point, Point>;
+ public:
+  using GicpType = small_gicp::RegistrationPCL<Point, Point>;
 
-    explicit Registration(
-        const RegistrationConfig& config = RegistrationConfig{},
-        const std::string& type = "GICP",
-        double vgicp_voxel_resolution = 0.5);
+  explicit Registration(const RegistrationConfig& config = RegistrationConfig{}, const std::string& type = "GICP",
+                        double vgicp_voxel_resolution = 0.5);
 
-    /// Set the source point cloud (current scan, deskewed).
-    void setSource(const PointCloudConstPtr& cloud);
+  /// Set the source point cloud (current scan, deskewed).
+  void setSource(const PointCloudConstPtr& cloud);
 
-    /// Set the target point cloud (previous scan or submap).
-    void setTarget(const PointCloudConstPtr& cloud);
+  /// Set the target point cloud (previous scan or submap).
+  void setTarget(const PointCloudConstPtr& cloud);
 
-    /// Run the configured GICP or VGICP alignment.
-    /// Both source and target clouds are already expressed in the world frame.
-    /// @param T_prior IMU-predicted world pose at the scan reference time.
-    /// @return global correction and corrected world-frame pose
-    RegistrationResult align(const Isometry3d& T_prior);
+  /// Run the configured GICP or VGICP alignment.
+  /// Both source and target clouds are already expressed in the world frame.
+  /// @param T_prior IMU-predicted world pose at the scan reference time.
+  /// @return global correction and corrected world-frame pose
+  RegistrationResult align(const Isometry3d& T_prior);
 
-private:
-    RegistrationConfig cfg_;
-    std::string type_;
-    GicpType gicp_;
-    bool target_set_ = false;
-    std::size_t source_point_count_ = 0;
+ private:
+  RegistrationConfig cfg_;
+  std::string type_;
+  GicpType gicp_;
+  bool target_set_ = false;
+  std::size_t source_point_count_ = 0;
 };
 
 }  // namespace sapphire

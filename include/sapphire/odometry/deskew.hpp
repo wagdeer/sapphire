@@ -1,10 +1,10 @@
 #pragma once
 
-#include <sapphire/types.hpp>
-#include <sapphire/ring_buffer.hpp>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <cstddef>
+#include <sapphire/ring_buffer.hpp>
+#include <sapphire/types.hpp>
 #include <vector>
 
 namespace sapphire {
@@ -16,22 +16,22 @@ inline constexpr std::size_t kImuBufferCapacity = 20000;
 using ImuBuffer = RingBuffer<ImuData, kImuBufferCapacity>;
 
 enum class DeskewStatus {
-    Success,
-    EmptyScan,
-    NoPointTimestamps,
-    EmptyImuBuffer,
-    InvalidTimeRange,
-    InvalidImuOrder,
-    InsufficientImuCoverage,
+  Success,
+  EmptyScan,
+  NoPointTimestamps,
+  EmptyImuBuffer,
+  InvalidTimeRange,
+  InvalidImuOrder,
+  InsufficientImuCoverage,
 };
 
 /// Result of per-point motion compensation
 struct DeskewResult {
-    PointCloudPtr cloud;                    // motion-corrected points in world frame
-    Isometry3d T_world_lidar_ref = Isometry3d::Identity();
-    Eigen::Vector3d v_world_ref = Eigen::Vector3d::Zero();
-    double reference_stamp = 0.0;
-    DeskewStatus status = DeskewStatus::EmptyScan;
+  PointCloudPtr cloud;  // motion-corrected points in world frame
+  Isometry3d T_world_lidar_ref = Isometry3d::Identity();
+  Eigen::Vector3d v_world_ref = Eigen::Vector3d::Zero();
+  double reference_stamp = 0.0;
+  DeskewStatus status = DeskewStatus::EmptyScan;
 };
 
 /// Deskew a LiDAR scan into the world frame using Gal(3) IMU preintegration.
@@ -55,14 +55,7 @@ struct DeskewResult {
 /// @param v_world_prev      IMU velocity in world at prev_stamp
 /// @param T_imu_lidar       calibrated LiDAR-to-IMU extrinsic
 /// @param gravity_world     world gravity acceleration, normally (0,0,-g)
-DeskewResult deskew(
-    const PointCloudConstPtr& scan,
-    const ImuBuffer& imu_buf,
-    double prev_stamp,
-    const Isometry3d& T_world_imu_prev,
-    const Eigen::Vector3d& v_world_prev,
-    const Isometry3d& T_imu_lidar,
-    const Eigen::Vector3d& gravity_world
-);
+DeskewResult deskew(const PointCloudConstPtr& scan, const ImuBuffer& imu_buf, double prev_stamp, const Isometry3d& T_world_imu_prev,
+                    const Eigen::Vector3d& v_world_prev, const Isometry3d& T_imu_lidar, const Eigen::Vector3d& gravity_world);
 
 }  // namespace sapphire

@@ -1,8 +1,7 @@
 #pragma once
 
-#include <sapphire/types.hpp>
-
 #include <cstddef>
+#include <sapphire/types.hpp>
 #include <vector>
 
 namespace sapphire {
@@ -12,49 +11,42 @@ namespace sapphire {
 /// Keyframe clouds are already expressed in the world frame. The active target
 /// is rebuilt only when the nearest-keyframe index set changes.
 class SubmapManager {
-public:
-    explicit SubmapManager(const Config::Odometry::Submap& config);
+ public:
+  explicit SubmapManager(const Config::Odometry::Submap& config);
 
-    /// Whether an accepted pose should become a keyframe.
-    bool shouldAddKeyframe(const Isometry3d& T_world_lidar) const;
+  /// Whether an accepted pose should become a keyframe.
+  bool shouldAddKeyframe(const Isometry3d& T_world_lidar) const;
 
-    /// Add an accepted world-frame scan. Returns true when the GICP target was
-    /// rebuilt because the active nearest-keyframe set changed.
-    bool addKeyframe(
-        const Isometry3d& T_world_lidar,
-        const PointCloudConstPtr& cloud_world);
+  /// Add an accepted world-frame scan. Returns true when the GICP target was
+  /// rebuilt because the active nearest-keyframe set changed.
+  bool addKeyframe(const Isometry3d& T_world_lidar, const PointCloudConstPtr& cloud_world);
 
-    /// Replace all local history with one current scan. Used only after the
-    /// active map has repeatedly failed to produce correspondences.
-    void resetKeyframes(
-        const Isometry3d& T_world_lidar,
-        const PointCloudConstPtr& cloud_world);
+  /// Replace all local history with one current scan. Used only after the
+  /// active map has repeatedly failed to produce correspondences.
+  void resetKeyframes(const Isometry3d& T_world_lidar, const PointCloudConstPtr& cloud_world);
 
-    size_t keyframeCount() const { return keyframes_.size(); }
-    const std::vector<size_t>& activeKeyframeIndices() const {
-        return active_indices_;
-    }
-    PointCloudConstPtr target() const { return target_; }
-    size_t targetRevision() const { return target_revision_; }
-    size_t storedPointCount() const { return stored_point_count_; }
+  size_t keyframeCount() const { return keyframes_.size(); }
+  const std::vector<size_t>& activeKeyframeIndices() const { return active_indices_; }
+  PointCloudConstPtr target() const { return target_; }
+  size_t targetRevision() const { return target_revision_; }
+  size_t storedPointCount() const { return stored_point_count_; }
 
-private:
-    std::vector<size_t> selectNearest(
-        const Eigen::Vector3d& position) const;
-    void rebuildTarget();
-    void pruneStaleKeyframes();
+ private:
+  std::vector<size_t> selectNearest(const Eigen::Vector3d& position) const;
+  void rebuildTarget();
+  void pruneStaleKeyframes();
 
-    struct Keyframe {
-        Isometry3d T_world_lidar = Isometry3d::Identity();
-        PointCloudConstPtr cloud_world;
-    };
+  struct Keyframe {
+    Isometry3d T_world_lidar = Isometry3d::Identity();
+    PointCloudConstPtr cloud_world;
+  };
 
-    Config::Odometry::Submap config_;
-    std::vector<Keyframe> keyframes_;
-    std::vector<size_t> active_indices_;
-    PointCloudConstPtr target_;
-    size_t target_revision_ = 0;
-    size_t stored_point_count_ = 0;
+  Config::Odometry::Submap config_;
+  std::vector<Keyframe> keyframes_;
+  std::vector<size_t> active_indices_;
+  PointCloudConstPtr target_;
+  size_t target_revision_ = 0;
+  size_t stored_point_count_ = 0;
 };
 
 }  // namespace sapphire

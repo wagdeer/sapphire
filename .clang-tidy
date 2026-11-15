@@ -1,0 +1,8 @@
+---
+Checks: '-*,readability-braces-around-statements'
+WarningsAsErrors: 'readability-braces-around-statements'
+HeaderFilterRegex: '(^|/)(include|src|tests)/([^./][^/]*/)*[^./][^/]*$'
+FormatStyle: file
+CheckOptions:
+  - key: readability-braces-around-statements.ShortStatementLines
+    value: '0'
