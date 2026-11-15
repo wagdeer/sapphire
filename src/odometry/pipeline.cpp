@@ -416,47 +416,28 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
   }
 
   if (!artifacts.result.accepted && recovery_build_frames_remaining_ > 0) {
-    const Isometry3d T_world_lidar_bootstrap = deskewed.T_world_lidar_ref;
-    const std::size_t keyframes_before = keyframeCount();
-    maybeUpdateSubmapTarget(T_world_lidar_bootstrap, registration_source, true);
-    if (keyframeCount() > keyframes_before) {
-      ++map_update_count_;
-    }
     --recovery_build_frames_remaining_;
     registration_reject_streak_ = 0;
-    pgo_backend_.addFrame(registration_source, T_world_lidar_bootstrap, deskewed.reference_stamp);
-    rememberPoseGraphSample(T_world_lidar_bootstrap, deskewed.v_world_ref, deskewed.reference_stamp);
-    {
-      std::lock_guard<std::mutex> lock(output_mutex_);
-      latest_deskewed_ = registration_source;
-      latest_result_.T_odom_lidar = T_world_lidar_bootstrap;
-      latest_result_.v_odom = deskewed.v_world_ref;
-      latest_result_.stamp = deskewed.reference_stamp;
-      latest_result_.converged = false;
-    }
+    ScanCommit commit;
+    commit.touch_submap = true;
+    commit.force_keyframe = true;
+    commit.record_pose_graph = true;
+    commit.record_before_output = true;
+    commitScan(deskewed.T_world_lidar_ref, registration_source, false, deskewed.v_world_ref, deskewed.reference_stamp, commit);
     return;
   }
 
   const std::size_t recovery_threshold = static_cast<std::size_t>(config_.odometry.submap.recovery_after_rejections);
   if (!artifacts.result.accepted && recovery_threshold > 0 && registration_reject_streak_ >= recovery_threshold &&
       recovery_count_ < kMaxRecoveryAttempts) {
-    const Isometry3d T_world_lidar_recovery = deskewed.T_world_lidar_ref;
-    submap_manager_.resetKeyframes(T_world_lidar_recovery, registration_source);
-    registration_.setTarget(submap_manager_.target());
     registration_reject_streak_ = 0;
     recovery_build_frames_remaining_ = kRecoveryBuildFrames;
     ++recovery_count_;
-    ++map_update_count_;
-    pgo_backend_.addFrame(registration_source, T_world_lidar_recovery, deskewed.reference_stamp);
-    rememberPoseGraphSample(T_world_lidar_recovery, deskewed.v_world_ref, deskewed.reference_stamp);
-    {
-      std::lock_guard<std::mutex> lock(output_mutex_);
-      latest_deskewed_ = registration_source;
-      latest_result_.T_odom_lidar = T_world_lidar_recovery;
-      latest_result_.v_odom = deskewed.v_world_ref;
-      latest_result_.stamp = deskewed.reference_stamp;
-      latest_result_.converged = false;
-    }
+    ScanCommit commit;
+    commit.reset_submap = true;
+    commit.record_pose_graph = true;
+    commit.record_before_output = true;
+    commitScan(deskewed.T_world_lidar_ref, registration_source, false, deskewed.v_world_ref, deskewed.reference_stamp, commit);
     spdlog::warn(
         "[pipeline] reset local registration map after {} consecutive "
         "rejections at stamp={:.6f}; attempt={}/{}",
@@ -568,28 +549,52 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
         fused_accel_bias.y(), fused_accel_bias.z(), fused_gyro_bias.x(), fused_gyro_bias.y(), fused_gyro_bias.z(), keyframeCount());
   }
 
-  if (fusion_accepted) {
+  const bool force_keyframe = fusion_accepted && recovery_build_frames_remaining_ > 0;
+  if (force_keyframe) {
+    --recovery_build_frames_remaining_;
+  }
+  ScanCommit commit;
+  commit.touch_submap = fusion_accepted;
+  commit.force_keyframe = force_keyframe;
+  commit.record_pose_graph = fusion_accepted;
+  commitScan(T_world_lidar_out, cloud_out, fusion_accepted, fused_state.v_world, deskewed.reference_stamp, commit);
+}
+
+void OdometryPipeline::commitScan(const Isometry3d& T_odom_lidar, const PointCloudConstPtr& cloud, bool converged, const Eigen::Vector3d& v_odom,
+                                  double stamp, const OdometryPipeline::ScanCommit& commit) {
+  if (commit.reset_submap) {
+    submap_manager_.resetKeyframes(T_odom_lidar, cloud);
+    registration_.setTarget(submap_manager_.target());
+    ++map_update_count_;
+  } else if (commit.touch_submap) {
     const std::size_t keyframes_before = keyframeCount();
-    const bool force_keyframe = recovery_build_frames_remaining_ > 0;
-    maybeUpdateSubmapTarget(T_world_lidar_out, cloud_out, force_keyframe);
+    maybeUpdateSubmapTarget(T_odom_lidar, cloud, commit.force_keyframe);
     if (keyframeCount() > keyframes_before) {
       ++map_update_count_;
     }
-    if (force_keyframe) {
-      --recovery_build_frames_remaining_;
-    }
   }
-  {
+
+  auto write_output = [&]() {
     std::lock_guard<std::mutex> lock(output_mutex_);
-    latest_deskewed_ = cloud_out;
-    latest_result_.T_odom_lidar = T_world_lidar_out;
-    latest_result_.v_odom = fused_state.v_world;
-    latest_result_.stamp = deskewed.reference_stamp;
-    latest_result_.converged = fusion_accepted;
-  }
-  if (fusion_accepted) {
-    pgo_backend_.addFrame(cloud_out, T_world_lidar_out, deskewed.reference_stamp);
-    rememberPoseGraphSample(T_world_lidar_out, fused_state.v_world, deskewed.reference_stamp);
+    latest_deskewed_ = cloud;
+    latest_result_.T_odom_lidar = T_odom_lidar;
+    latest_result_.v_odom = v_odom;
+    latest_result_.stamp = stamp;
+    latest_result_.converged = converged;
+  };
+  auto record = [&]() {
+    if (!commit.record_pose_graph) {
+      return;
+    }
+    pgo_backend_.addFrame(cloud, T_odom_lidar, stamp);
+    rememberPoseGraphSample(T_odom_lidar, v_odom, stamp);
+  };
+  if (commit.record_before_output) {
+    record();
+    write_output();
+  } else {
+    write_output();
+    record();
   }
 }
 

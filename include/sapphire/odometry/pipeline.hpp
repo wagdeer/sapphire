@@ -116,6 +116,22 @@ class OdometryPipeline {
   void maybeUpdateSubmapTarget(const Isometry3d& T_world_lidar, const PointCloudConstPtr& cloud, bool force_keyframe = false);
   void finalizeImuInitialization(ImuInitializer::Result&& result, const ImuData& trigger_sample);
 
+  /// How this scan's submap and pose-graph sample are committed.
+  /// Output is always written. Recovery thresholds stay at the call site.
+  struct ScanCommit {
+    bool touch_submap = false;
+    bool force_keyframe = false;
+    bool reset_submap = false;
+    bool record_pose_graph = false;
+    /// Recovery paths record the sample before publishing. The fused path publishes first.
+    bool record_before_output = false;
+  };
+
+  /// Commit this scan's output, submap, and pose-graph sample.
+  /// `converged` is only the published output flag.
+  void commitScan(const Isometry3d& T_odom_lidar, const PointCloudConstPtr& cloud, bool converged, const Eigen::Vector3d& v_odom, double stamp,
+                  const ScanCommit& commit);
+
   /// Anchor an accepted odom-frame lidar pose to the latest keyframe.
   /// addFrame() for this scan must already have run.
   void rememberPoseGraphSample(const Isometry3d& T_odom_lidar, const Eigen::Vector3d& v_odom, double stamp);
