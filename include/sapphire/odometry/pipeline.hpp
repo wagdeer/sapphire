@@ -106,11 +106,6 @@ class OdometryPipeline {
     double scan_end_stamp = 0.0;
   };
 
-  struct RegistrationArtifacts {
-    RegistrationResult result;
-    PointCloudConstPtr corrected_source;
-  };
-
   bool initializeFirstLidarTarget(double stamp, const PreprocessResult& preprocessed);
   void processLidarScan(const PreprocessResult& preprocessed);
   void maybeUpdateSubmapTarget(const Isometry3d& T_world_lidar, const PointCloudConstPtr& cloud, bool force_keyframe = false);

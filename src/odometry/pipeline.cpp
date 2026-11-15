@@ -361,11 +361,10 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
   }
 
   registration_.setSource(registration_source);
-  RegistrationArtifacts artifacts;
-  artifacts.result = registration_.align(deskewed.T_world_lidar_ref);
-  artifacts.corrected_source = registration_source;
+  const RegistrationResult registration = registration_.align(deskewed.T_world_lidar_ref);
+  PointCloudConstPtr cloud_out = registration_source;
   ++registration_attempt_count_;
-  if (!artifacts.result.accepted) {
+  if (!registration.accepted) {
     ++registration_reject_count_;
     ++registration_reject_streak_;
     registration_accept_streak_ = 0;
@@ -379,7 +378,7 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
                  100.0 * static_cast<double>(registration_reject_count_) / static_cast<double>(registration_attempt_count_));
   }
 
-  if (!artifacts.result.accepted && recovery_build_frames_remaining_ > 0) {
+  if (!registration.accepted && recovery_build_frames_remaining_ > 0) {
     --recovery_build_frames_remaining_;
     registration_reject_streak_ = 0;
     ScanCommit commit;
@@ -392,7 +391,7 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
   }
 
   const std::size_t recovery_threshold = static_cast<std::size_t>(config_.odometry.submap.recovery_after_rejections);
-  if (!artifacts.result.accepted && recovery_threshold > 0 && registration_reject_streak_ >= recovery_threshold &&
+  if (!registration.accepted && recovery_threshold > 0 && registration_reject_streak_ >= recovery_threshold &&
       recovery_count_ < kMaxRecoveryAttempts) {
     registration_reject_streak_ = 0;
     recovery_build_frames_remaining_ = kRecoveryBuildFrames;
@@ -409,13 +408,13 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
     return;
   }
 
-  if (artifacts.result.accepted && !useEskf()) {
+  if (registration.accepted && !useEskf()) {
     auto transformed_source = std::make_shared<PointCloud>();
-    pcl::transformPointCloud(*registration_source, *transformed_source, artifacts.result.T_correction.matrix());
-    artifacts.corrected_source = transformed_source;
+    pcl::transformPointCloud(*registration_source, *transformed_source, registration.T_correction.matrix());
+    cloud_out = transformed_source;
   }
   const Isometry3d T_world_imu_prior = deskewed.T_world_lidar_ref * config_.extrinsics.T_imu_lidar.inverse();
-  const Isometry3d T_world_imu_corrected = artifacts.result.T_world_lidar * config_.extrinsics.T_imu_lidar.inverse();
+  const Isometry3d T_world_imu_corrected = registration.T_world_lidar * config_.extrinsics.T_imu_lidar.inverse();
   NavigationState prior_state;
   prior_state.stamp = deskewed.reference_stamp;
   prior_state.T_world_imu = T_world_imu_prior;
@@ -425,12 +424,12 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
   NavigationState fused_state;
   Eigen::Vector3d fused_accel_bias;
   Eigen::Vector3d fused_gyro_bias;
-  bool fusion_accepted = artifacts.result.accepted;
+  bool fusion_accepted = registration.accepted;
 
   if (useEskf()) {
     std::optional<Eskf::Mat6> hessian;
-    if (artifacts.result.hessian_valid) {
-      hessian = artifacts.result.hessian;
+    if (registration.hessian_valid) {
+      hessian = registration.hessian;
     }
     // Hold IMU/state locks for the whole correct + bias rebase so pushImu
     // cannot interleave predicts against a mid-update filter.
@@ -444,7 +443,7 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
             "initialization");
       }
       const EskfUpdate eskf_update =
-          eskf_.correctAt(deskewed.reference_stamp, prior_state, T_world_imu_corrected, artifacts.result.accepted, imu_buffer_, hessian);
+          eskf_.correctAt(deskewed.reference_stamp, prior_state, T_world_imu_corrected, registration.accepted, imu_buffer_, hessian);
       fused_state = eskf_update.state;
       fused_accel_bias = eskf_update.accel_bias;
       fused_gyro_bias = eskf_update.gyro_bias;
@@ -462,22 +461,21 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
       gyro_bias = gyro_bias_;
     }
     const ObserverUpdate observer_update = applyGeometricObserver(prior_state, T_world_imu_corrected, previous_state_stamp, accel_bias, gyro_bias,
-                                                                  config_.odometry.observer, artifacts.result.accepted);
+                                                                  config_.odometry.observer, registration.accepted);
     fused_state = observer_update.state;
     fused_accel_bias = observer_update.accel_bias;
     fused_gyro_bias = observer_update.gyro_bias;
-    fusion_accepted = artifacts.result.accepted;
+    fusion_accepted = registration.accepted;
     rebasePropagation(fused_state, fused_accel_bias, fused_gyro_bias);
   }
 
   // Observer keeps the DLIO pattern (publish/map use full GICP pose).
   // ESKF must keep map, output, and IMU state on the same fused pose;
   // otherwise the submap races ahead of the filter and drifts in seconds.
-  Isometry3d T_world_lidar_out = artifacts.result.T_world_lidar;
-  PointCloudConstPtr cloud_out = artifacts.corrected_source;
+  Isometry3d T_world_lidar_out = registration.T_world_lidar;
   if (useEskf()) {
     T_world_lidar_out = fused_state.T_world_imu * config_.extrinsics.T_imu_lidar;
-    if (artifacts.result.accepted) {
+    if (registration.accepted) {
       const Isometry3d T_combined = T_world_lidar_out * deskewed.T_world_lidar_ref.inverse();
       if (!T_combined.matrix().isIdentity(1e-9)) {
         auto aligned = std::make_shared<PointCloud>();
@@ -503,12 +501,12 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
         "v={:.2f} ({:.2f},{:.2f},{:.2f}) "
         "p={:.2f},{:.2f},{:.2f} yaw={:.1f} "
         "ba={:.3f},{:.3f},{:.3f} bg={:.4f},{:.4f},{:.4f} kf={}",
-        registration_attempt_count_, static_cast<int>(deskewed.status), registration_source->size(), artifacts.result.num_inliers,
-        artifacts.result.inlier_ratio, artifacts.result.iterations, artifacts.result.solver_error, artifacts.result.rotation_min_eigenvalue,
-        artifacts.result.translation_min_eigenvalue, artifacts.result.rotation_condition, artifacts.result.translation_condition,
-        artifacts.result.conditioning_valid, registration_reject_streak_, registration_reject_streak_max_, registration_accept_streak_,
-        map_update_count_, recovery_count_, artifacts.result.accepted ? 1 : 0, fusion_accepted ? 1 : 0, artifacts.result.attempted_trans_m,
-        artifacts.result.attempted_sensor_trans_m, artifacts.result.attempted_rot_deg, injected_m, fused_state.v_world.norm(),
+        registration_attempt_count_, static_cast<int>(deskewed.status), registration_source->size(), registration.num_inliers,
+        registration.inlier_ratio, registration.iterations, registration.solver_error, registration.rotation_min_eigenvalue,
+        registration.translation_min_eigenvalue, registration.rotation_condition, registration.translation_condition,
+        registration.conditioning_valid, registration_reject_streak_, registration_reject_streak_max_, registration_accept_streak_,
+        map_update_count_, recovery_count_, registration.accepted ? 1 : 0, fusion_accepted ? 1 : 0, registration.attempted_trans_m,
+        registration.attempted_sensor_trans_m, registration.attempted_rot_deg, injected_m, fused_state.v_world.norm(),
         fused_state.v_world.x(), fused_state.v_world.y(), fused_state.v_world.z(), p.x(), p.y(), p.z(), yaw_deg, fused_accel_bias.x(),
         fused_accel_bias.y(), fused_accel_bias.z(), fused_gyro_bias.x(), fused_gyro_bias.y(), fused_gyro_bias.z(), keyframeCount());
   }
