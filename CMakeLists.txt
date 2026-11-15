@@ -72,7 +72,7 @@ add_library(sapphire STATIC
     src/odometry/registration.cpp
     src/odometry/submap.cpp
     src/odometry/voxel_filter.cpp
-    src/imu_init.cpp
+    src/odometry/imu_init.cpp
 )
 target_include_directories(sapphire PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

@@ -9,7 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <sapphire/backend/pose_graph.hpp>
-#include <sapphire/imu_init.hpp>
+#include <sapphire/odometry/imu_init.hpp>
 #include <sapphire/odometry/deskew.hpp>
 #include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
 #include <sapphire/odometry/eskf.hpp>

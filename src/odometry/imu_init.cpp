@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <numeric>
-#include <sapphire/imu_init.hpp>
+#include <sapphire/odometry/imu_init.hpp>
 
 namespace sapphire {
 namespace {
