@@ -101,7 +101,9 @@ rotation_epsilon = 0.01
 # VLP-16 ring spacing is ~0.35 m at 10 m and ~0.7 m at 20 m.
 max_correspondence_dist = 0.5
 k_correspondences = 16
-min_num_points = 64
+min_preprocessed_points = 64
+min_source_points = 64
+min_inliers = 64
 max_correction_trans = 1.0
 max_correction_rot_deg = 20.0
 

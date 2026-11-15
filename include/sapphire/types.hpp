@@ -114,7 +114,13 @@ struct RegistrationConfig {
   double rotation_epsilon = 0.01;        // rad
   double max_correspondence_dist = 0.5;  // m
   int k_correspondences = 16;
-  int min_num_points = 64;
+  /// Drop a scan after crop and preprocess when fewer points remain.
+  int min_preprocessed_points = 64;
+  /// Drop a scan after voxel downsampling when the registration source is smaller.
+  int min_source_points = 64;
+  /// Reject Registration::align when GICP or VGICP inliers are below this count.
+  /// Loop closure uses pgo.lidar_min_inliers instead.
+  int min_inliers = 64;
   /// Sensor displacement of C * T_prior, in meters. Not ||C.translation()||:
   /// a yaw about the sensor far from the origin puts the lever arm there.
   double max_correction_trans = 1.0;

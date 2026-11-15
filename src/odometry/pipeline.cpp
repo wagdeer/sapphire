@@ -352,11 +352,11 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
   // NoPointTimestamps still carries the world-frame fallback cloud.
   const PointCloudConstPtr registration_source = downsamplePoints(deskewed.cloud);
 
-  if (registration_source->size() < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
+  if (registration_source->size() < static_cast<size_t>(config_.registration.gicp.min_source_points)) {
     spdlog::warn(
         "[pipeline] skipping LiDAR scan: {} points after voxel "
         "downsampling (minimum {}, input {})",
-        registration_source->size(), config_.registration.gicp.min_num_points, deskewed.cloud->size());
+        registration_source->size(), config_.registration.gicp.min_source_points, deskewed.cloud->size());
     return;
   }
 
@@ -577,11 +577,11 @@ void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points)
   }
 
   const PreprocessResult preprocessed = preprocessPoints(points);
-  if (preprocessed.cloud->size() < static_cast<size_t>(config_.registration.gicp.min_num_points)) {
+  if (preprocessed.cloud->size() < static_cast<size_t>(config_.registration.gicp.min_preprocessed_points)) {
     spdlog::warn(
         "[pipeline] skipping LiDAR scan: {} points after preprocessing "
         "(minimum {})",
-        preprocessed.cloud->size(), config_.registration.gicp.min_num_points);
+        preprocessed.cloud->size(), config_.registration.gicp.min_preprocessed_points);
     return;
   }
 

@@ -82,7 +82,7 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
   result.attempted_sensor_trans_m = sensor_trans_m;
   result.attempted_rot_deg = corr_rot_deg;
 
-  bool accepted = converged && finite && reg_result.num_inliers >= static_cast<size_t>(cfg_.min_num_points);
+  bool accepted = converged && finite && reg_result.num_inliers >= static_cast<size_t>(cfg_.min_inliers);
   if (sensor_trans_m > cfg_.max_correction_trans) {
     accepted = false;
   }
@@ -93,7 +93,7 @@ RegistrationResult Registration::align(const Isometry3d& T_prior) {
     spdlog::warn(
         "[registration] {} rejected: converged={} finite={} "
         "inliers={}/{} lever={:.3f}m sensor={:.3f}m rot={:.1f}deg",
-        type_, converged, finite, reg_result.num_inliers, cfg_.min_num_points, lever_trans_m, sensor_trans_m, corr_rot_deg);
+        type_, converged, finite, reg_result.num_inliers, cfg_.min_inliers, lever_trans_m, sensor_trans_m, corr_rot_deg);
   }
 
   if (accepted) {

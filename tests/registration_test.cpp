@@ -84,7 +84,7 @@ sapphire::Isometry3d poseAt(double x, double yaw_rad) {
 sapphire::RegistrationConfig makeConfig() {
   sapphire::RegistrationConfig config;
   config.k_correspondences = 10;
-  config.min_num_points = 50;
+  config.min_inliers = 50;
   return config;
 }
 
@@ -116,7 +116,7 @@ void testTranslationIsRecovered() {
 
 void testVgicpTranslationIsRecovered() {
   auto config = makeConfig();
-  config.min_num_points = 30;
+  config.min_inliers = 30;
   sapphire::Registration registration(config, "VGICP", 0.5);
   registration.setTarget(makeAsymmetricCloud());
   registration.setSource(makeAsymmetricCloud(-0.2f));
@@ -143,7 +143,7 @@ void testExcessiveCorrectionIsRejected() {
 
 void testSensorYawFarFromOriginIsAccepted() {
   auto config = makeConfig();
-  config.min_num_points = 30;
+  config.min_inliers = 30;
   config.max_correspondence_dist = 1.0;
   config.max_correction_trans = 1.0;
   config.max_correction_rot_deg = 20.0;

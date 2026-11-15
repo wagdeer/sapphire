@@ -403,7 +403,9 @@ const IntField kInts[] = {
     // None: one message covers the whole integer group.
     INT("registration.gicp.max_iterations", registration.gicp.max_iterations, IntRule::None),
     INT("registration.gicp.k_correspondences", registration.gicp.k_correspondences, IntRule::None),
-    INT("registration.gicp.min_num_points", registration.gicp.min_num_points, IntRule::None),
+    INT("registration.gicp.min_preprocessed_points", registration.gicp.min_preprocessed_points, IntRule::None),
+    INT("registration.gicp.min_source_points", registration.gicp.min_source_points, IntRule::None),
+    INT("registration.gicp.min_inliers", registration.gicp.min_inliers, IntRule::None),
     INT("pgo.loop_search_stride", pgo.loop_search_stride, IntRule::None),
     INT("pgo.target_frame_count", pgo.target_frame_count, IntRule::None),
     INT("pgo.source_max_frames", pgo.source_max_frames, IntRule::Positive),
@@ -575,7 +577,8 @@ void validateConfig(const Config& config) {
   if (config.odometry.submap.recovery_after_rejections < 0) {
     throw std::invalid_argument("odometry.submap.recovery_after_rejections must be nonnegative");
   }
-  if (gicp.max_iterations <= 0 || gicp.k_correspondences <= 0 || gicp.min_num_points <= 0) {
+  if (gicp.max_iterations <= 0 || gicp.k_correspondences <= 0 || gicp.min_preprocessed_points <= 0 || gicp.min_source_points <= 0 ||
+      gicp.min_inliers <= 0) {
     throw std::invalid_argument("registration.gicp integer limits must be positive");
   }
   if (config.pgo.loop_search_stride <= 0 || config.pgo.target_frame_count < 0) {

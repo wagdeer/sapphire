@@ -98,7 +98,9 @@ void testFirstLidarScanInitializesDeskewedTarget() {
   config.imu.init.min_samples = 5;
   config.imu.init.check_interval_sec = 0.05;
   config.imu.init.timeout_sec = 1.0;
-  config.registration.gicp.min_num_points = 50;
+  config.registration.gicp.min_preprocessed_points = 50;
+  config.registration.gicp.min_source_points = 50;
+  config.registration.gicp.min_inliers = 50;
   config.registration.gicp.k_correspondences = 10;
   // Keep this small synthetic lattice effectively unchanged; production
   // downsampling at 0.25 m is covered by the loaded Mid-360 configuration.
@@ -244,7 +246,9 @@ void testEskfFusionRecoversTranslation() {
   config.imu.init.min_samples = 5;
   config.imu.init.check_interval_sec = 0.05;
   config.imu.init.timeout_sec = 1.0;
-  config.registration.gicp.min_num_points = 50;
+  config.registration.gicp.min_preprocessed_points = 50;
+  config.registration.gicp.min_source_points = 50;
+  config.registration.gicp.min_inliers = 50;
   config.registration.gicp.k_correspondences = 10;
   config.odometry.voxel_size = 0.01;
   config.odometry.fusion = "eskf";
@@ -286,7 +290,9 @@ void testDirectionalEskfPipelineUsesHessian() {
   config.imu.init.min_samples = 5;
   config.imu.init.check_interval_sec = 0.05;
   config.imu.init.timeout_sec = 1.0;
-  config.registration.gicp.min_num_points = 50;
+  config.registration.gicp.min_preprocessed_points = 50;
+  config.registration.gicp.min_source_points = 50;
+  config.registration.gicp.min_inliers = 50;
   config.registration.gicp.k_correspondences = 10;
   config.odometry.voxel_size = 0.01;
   config.odometry.fusion = "eskf";
@@ -329,7 +335,9 @@ void testGravityUnitScalesBufferedSamples() {
   config.imu.init.min_samples = 5;
   config.imu.init.check_interval_sec = 0.05;
   config.imu.init.timeout_sec = 1.0;
-  config.registration.gicp.min_num_points = 50;
+  config.registration.gicp.min_preprocessed_points = 50;
+  config.registration.gicp.min_source_points = 50;
+  config.registration.gicp.min_inliers = 50;
   config.odometry.voxel_size = 0.01;
 
   sapphire::OdometryPipeline pipeline(config);
@@ -422,7 +430,9 @@ void testLargeGyroIsNotRescaled() {
   config.imu.init.min_samples = 5;
   config.imu.init.check_interval_sec = 0.05;
   config.imu.init.timeout_sec = 1.0;
-  config.registration.gicp.min_num_points = 50;
+  config.registration.gicp.min_preprocessed_points = 50;
+  config.registration.gicp.min_source_points = 50;
+  config.registration.gicp.min_inliers = 50;
   config.odometry.voxel_size = 0.01;
 
   sapphire::OdometryPipeline pipeline(config);
@@ -453,7 +463,9 @@ void testImuStatePropagatesBetweenLidarScans() {
   config.imu.init.min_samples = 5;
   config.imu.init.check_interval_sec = 0.05;
   config.imu.init.timeout_sec = 1.0;
-  config.registration.gicp.min_num_points = 50;
+  config.registration.gicp.min_preprocessed_points = 50;
+  config.registration.gicp.min_source_points = 50;
+  config.registration.gicp.min_inliers = 50;
   config.odometry.voxel_size = 0.01;
 
   sapphire::OdometryPipeline pipeline(config);
