@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include <sapphire/odometry/deskew.hpp>
+#include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
 #include <sapphire/odometry/pipeline.hpp>
 #include <sapphire/odometry/voxel_filter.hpp>
 #include <stdexcept>
@@ -35,6 +36,7 @@ OdometryResult applyGlobalCorrection(const OdomFrameSample& sample, const Isomet
 OdometryPipeline::OdometryPipeline(const Config& config)
     : config_(config),
       imu_initializer_(config.imu.init, config.sensor.imu.accel_unit),
+      propagation_integrator_(std::make_unique<detail::MeanOnlyGal3Integrator>()),
       eskf_(config.odometry.eskf, config.imu.noise, Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag)),
       submap_manager_(config.odometry.submap),
       pgo_backend_(config.pgo),
@@ -45,6 +47,8 @@ OdometryPipeline::OdometryPipeline(const Config& config)
   spdlog::info("[pipeline] ready: fusion={}, registration={}, submap_kf={}", config.odometry.fusion, config.registration.type,
                config.odometry.submap.max_keyframes);
 }
+
+OdometryPipeline::~OdometryPipeline() = default;
 
 OdometryResult OdometryPipeline::latestResult() const {
   OdomFrameSample sample;
@@ -163,7 +167,7 @@ void OdometryPipeline::recoverPropagatedStateLocked(double stamp) {
       imu_state_.T_world_imu.translation(),
   };
   const Gal3 initial_state(imu_state_.T_world_imu.rotation(), initial_isometries, 0.0);
-  const Gal3 propagated = detail::recoverWorldState(propagation_integrator_.Upsilon(), initial_state, gravity_world_);
+  const Gal3 propagated = detail::recoverWorldState(propagation_integrator_->Upsilon(), initial_state, gravity_world_);
 
   propagated_state_.stamp = stamp;
   propagated_state_.T_world_imu = Isometry3d::Identity();
@@ -185,7 +189,7 @@ void OdometryPipeline::propagateStateLocked(const ImuData& imu) {
   }
 
   const double dt = imu.stamp - propagated_state_.stamp;
-  propagation_integrator_.integrate(imu, dt);
+  propagation_integrator_->integrate(imu, dt);
   recoverPropagatedStateLocked(imu.stamp);
 }
 
@@ -239,7 +243,7 @@ void OdometryPipeline::rebasePropagation(const NavigationState& corrected_state,
     return;
   }
 
-  propagation_integrator_.reset();
+  propagation_integrator_->reset();
   for (const ImuData& imu : imu_buffer_) {
     propagateStateLocked(imu);
   }

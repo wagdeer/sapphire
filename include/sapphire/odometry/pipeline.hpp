@@ -11,7 +11,6 @@
 #include <sapphire/backend/pose_graph.hpp>
 #include <sapphire/odometry/imu_init.hpp>
 #include <sapphire/odometry/deskew.hpp>
-#include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
 #include <sapphire/odometry/eskf.hpp>
 #include <sapphire/odometry/observer.hpp>
 #include <sapphire/odometry/registration.hpp>
@@ -20,6 +19,10 @@
 #include <stdexcept>
 
 namespace sapphire {
+
+namespace detail {
+class MeanOnlyGal3Integrator;
+}
 
 /// OdometryPipeline — LiDAR-inertial front-end odometry
 ///
@@ -34,6 +37,7 @@ namespace sapphire {
 class OdometryPipeline {
  public:
   explicit OdometryPipeline(const Config& config);
+  ~OdometryPipeline();
 
   /// Whether IMU initialization has completed.
   bool initialized() const { return initialized_.load(std::memory_order_acquire); }
@@ -198,7 +202,7 @@ class OdometryPipeline {
   // ── Corrected IMU state used as the next integration baseline ──
   NavigationState imu_state_;
   NavigationState propagated_state_;
-  detail::MeanOnlyGal3Integrator propagation_integrator_;
+  std::unique_ptr<detail::MeanOnlyGal3Integrator> propagation_integrator_;
   Eskf eskf_;
   Eigen::Vector3d accel_bias_ = Eigen::Vector3d::Zero();
   Eigen::Vector3d gyro_bias_ = Eigen::Vector3d::Zero();
