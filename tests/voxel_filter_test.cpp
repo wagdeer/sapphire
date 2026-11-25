@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <sapphire/odometry/voxel_filter.hpp>
 #include <stdexcept>
 #include <string>
@@ -33,6 +34,23 @@ sapphire::Point makePoint(float x, float y, float z, float intensity, double tim
   point.intensity = intensity;
   point.timestamp = timestamp;
   return point;
+}
+
+void testLidarPreprocessing() {
+  sapphire::Config::Odometry::CropBox box{-0.5, -0.5, -0.5, 0.5, 0.5, 0.5};
+  sapphire::PointCloud input;
+  input.push_back(makePoint(0.5f, 0.0f, 0.0f, 0.0f, 10.0));
+  input.push_back(makePoint(0.6f, 0.0f, 0.0f, 0.0f, -1.0));
+  input.push_back(makePoint(0.7f, 0.0f, 0.0f, 0.0f, -2.0));
+  input.push_back(makePoint(2.0f, 0.0f, 0.0f, 0.0f, 2.0));
+  input.push_back(makePoint(0.8f, 0.0f, 0.0f, 0.0f, std::numeric_limits<double>::quiet_NaN()));
+
+  const auto unbounded = sapphire::preprocessLidar(input, box);
+  expect(unbounded.pc->size() == 3 && unbounded.end_time == 2.0, "default crop keeps distant points");
+  const auto bounded = sapphire::preprocessLidar(input, box, 1.0);
+  expect(bounded.pc->size() == 2 && bounded.start_time == -2.0 && bounded.end_time == -1.0,
+         "time bounds must come from retained points even when timestamps arrive unordered");
+  expect(bounded.pc->front().timestamp == -1.0, "retained point order must stay unchanged");
 }
 
 void testCentroidsPreserveFields() {
@@ -98,6 +116,7 @@ void testInvalidLeafSizeRejected() {
 }  // namespace
 
 int main() {
+  testLidarPreprocessing();
   testCentroidsPreserveFields();
   testNegativeCoordinatesUseFloor();
   testParallelPathIsDeterministic();

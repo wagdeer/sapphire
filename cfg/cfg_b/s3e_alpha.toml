@@ -1,0 +1,43 @@
+# S3E Alpha Velodyne and IMU.
+
+[methodB]
+map_range_m = 80.0
+local_feedback = true
+local_feedback_ba = false
+gravity_aligned_output = true
+enabled = true
+map_directory = "s3e_alpha-method-b-map"
+voxel_capacity = 350000
+
+[imu]
+gravity = 9.79172227
+
+[odometry]
+voxel_size = 0.25
+
+[odometry.crop_box]
+min_x = -0.5
+min_y = -0.5
+min_z = -0.5
+max_x = 0.5
+max_y = 0.5
+max_z = 0.5
+
+[pgo]
+enabled = true
+map_voxel_size = 0.8
+
+[pgo.occupancy]
+enabled = false
+
+[sensor.lidar]
+time_field = "time"
+time_unit = "s"
+time_ref = "relative"
+max_scan_duration = 0.2
+header_tolerance = 0.5
+require_point_time = true
+
+[extrinsics.T_imu_lidar]
+translation = [0.047665376129920, -0.144120962294238, 0.010086423805523]
+rotation_xyzw = [0.00038180, 0.00468820, 0.01579472, 0.99986419]

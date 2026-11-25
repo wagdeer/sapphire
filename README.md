@@ -4,6 +4,10 @@ LiDAR-inertial odometry. Deskew and IMU propagation use the same Gal(3) preinteg
 
 [中文说明](README.zh.md)
 
+## Method B
+
+Load `cfg/cfg_b/nclt.toml` and pass it to `sapphire::OdometryPipeline`. The configuration selects point-to-plane odometry with a rolling voxel map and asynchronous submap BA and pose graph optimization. Set `methodB.map_directory` to a fresh directory for each empty-map session. The frontend shares `odometry.crop_box` with the main pipeline. Set `methodB.max_range_m` to apply an optional far-range cutoff. The sealed submap packer uses the separate `methodB.map_range_m` setting. After stopping sensor input, call `finishMapping()` before reading the final trajectory or requested map.
+
 ## Demos
 
 **S3E**
@@ -28,6 +32,7 @@ LiDAR-inertial odometry. Deskew and IMU propagation use the same Gal(3) preinteg
 |---|---|
 | CMake | 3.16+ |
 | Compiler | C++17 |
+| TBB | |
 | Eigen | 3.4 |
 | PCL | 1.12+ |
 | OpenMP | |
@@ -46,7 +51,7 @@ To build only the core on Ubuntu 22.04:
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake git software-properties-common \
-  libeigen3-dev libpcl-dev libomp-dev libspdlog-dev
+  libeigen3-dev libpcl-dev libomp-dev libspdlog-dev libtbb-dev
 sudo add-apt-repository -y ppa:borglab/gtsam-release-4.3
 sudo apt install -y libgtsam-dev
 ```

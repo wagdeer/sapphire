@@ -7,7 +7,7 @@
 #include <sapphire/odometry/detail/mean_only_gal3_integrator.hpp>
 #include <stdexcept>
 
-#include "integrate_measurement.hpp"
+#include <sapphire/testing/integrate_measurement.hpp>
 
 namespace {
 

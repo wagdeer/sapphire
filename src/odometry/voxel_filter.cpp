@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <sapphire/odometry/voxel_filter.hpp>
 #include <small_gicp/util/sort_omp.hpp>
 #include <stdexcept>
@@ -22,6 +23,24 @@ struct IndexedVoxel {
 bool sameVoxel(const IndexedVoxel& lhs, const IndexedVoxel& rhs) { return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z; }
 
 }  // namespace
+
+LidarData preprocessLidar(const PointCloud& points, const Config::Odometry::CropBox& box, double max_range_m) {
+  auto cloud = std::make_shared<PointCloud>();
+  cloud->reserve(points.size());
+  double start = std::numeric_limits<double>::infinity();
+  double end = -start;
+  const double far_squared = max_range_m * max_range_m;
+  for (const auto& point : points) {
+    if (!point.getVector3fMap().allFinite() || !std::isfinite(point.timestamp)) continue;
+    if (box.contains(point)) continue;
+    if (max_range_m > 0. && point.getVector3fMap().squaredNorm() > far_squared) continue;
+    start = std::min(start, point.timestamp);
+    end = std::max(end, point.timestamp);
+    cloud->push_back(point);
+  }
+  if (cloud->empty()) return {0., 0., std::move(cloud)};
+  return {start, end, std::move(cloud)};
+}
 
 PointCloudPtr deterministicVoxelDownsample(const PointCloud& points, double leaf_size, int max_threads) {
   if (!std::isfinite(leaf_size) || leaf_size <= 0.0) {

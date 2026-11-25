@@ -231,12 +231,15 @@ void testTrajectoryPathRequiresPgo() {
          "the rejection must name trajectory_dir and pgo.enabled");
 }
 
+constexpr auto kNcltProfile = "nclt.toml";
+
 void testShippedProfilesLoad() {
   const std::filesystem::path cfg = std::filesystem::path(SAPPHIRE_SOURCE_DIR) / "cfg";
   int count = 0;
   std::vector<sapphire::Config> configs;
   for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(cfg)) {
-    if (entry.path().extension() != ".toml") {
+    // NCLT is checked against its Method B profile below.
+    if (entry.path().extension() != ".toml" || entry.path().filename() == kNcltProfile) {
       continue;
     }
     try {
@@ -252,6 +255,27 @@ void testShippedProfilesLoad() {
   }
   expect(count == 9, "every shipped profile must load");
   expect(configs.size() == 9, "every shipped algorithm config must compare");
+}
+
+void testMethodBProfiles() {
+  const auto cfg = std::filesystem::path(SAPPHIRE_SOURCE_DIR) / "cfg";
+  for (const auto* profile : {kNcltProfile, "hilti_2022_handheld.toml", "s3e_alpha.toml"}) {
+    const auto main = sapphire::loadConfig(cfg / profile);
+    const auto method_b = sapphire::loadConfig(cfg / "cfg_b" / profile);
+    expect(!main.methodB.enabled, "main profile must select the original pipeline");
+    expect(method_b.methodB.enabled && method_b.pgo.enabled, "methodB must start the pose graph");
+    expect(!method_b.methodB.map_directory.empty(), "methodB needs a map directory");
+    expectNear(method_b.imu.init.gravity_mag, main.imu.init.gravity_mag, "shared gravity");
+    const auto& main_box = main.odometry.crop_box;
+    const auto& method_box = method_b.odometry.crop_box;
+    expectNear(method_box.min_x, main_box.min_x, "shared crop minimum X");
+    expectNear(method_box.min_y, main_box.min_y, "shared crop minimum Y");
+    expectNear(method_box.min_z, main_box.min_z, "shared crop minimum Z");
+    expectNear(method_box.max_x, main_box.max_x, "shared crop maximum X");
+    expectNear(method_box.max_y, main_box.max_y, "shared crop maximum Y");
+    expectNear(method_box.max_z, main_box.max_z, "shared crop maximum Z");
+    expect(method_b.extrinsics.T_imu_lidar.matrix().isApprox(main.extrinsics.T_imu_lidar.matrix()), "shared LiDAR extrinsics");
+  }
 }
 
 void testTrajectoryFileMustStayRelative() {
@@ -357,6 +381,7 @@ int main() {
   testTrajectoryOutputPath();
   testTrajectoryPathRequiresPgo();
   testShippedProfilesLoad();
+  testMethodBProfiles();
   testTrajectoryFileMustStayRelative();
   testProjectConfig();
   testQuaternionNormalization();

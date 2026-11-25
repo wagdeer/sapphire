@@ -20,6 +20,9 @@
 
 namespace sapphire {
 
+class Pipeline2;
+struct LidarData;
+
 namespace detail {
 class MeanOnlyGal3Integrator;
 }
@@ -40,16 +43,11 @@ class OdometryPipeline {
   ~OdometryPipeline();
 
   /// Whether IMU initialization has completed.
-  bool initialized() const { return initialized_.load(std::memory_order_acquire); }
+  bool initialized() const;
 
   /// Access the IMU initialization result (valid after initialized()).
   /// Throws std::logic_error if called before initialization completes.
-  const ImuInitializer::Result& imuInitResult() const {
-    if (!imu_init_result_.has_value()) {
-      throw std::logic_error("imuInitResult() called before IMU initialization completes");
-    }
-    return *imu_init_result_;
-  }
+  const ImuInitializer::Result& imuInitResult() const;
 
   /// Wall-clock budget for a later scan to wait until buffered IMU covers
   /// its newest remaining point time. Sensor time and ROS time do not
@@ -93,25 +91,25 @@ class OdometryPipeline {
   PointCloudConstPtr latestDeskewed() const;
 
   /// Submap diagnostics, primarily useful for deterministic verification.
-  size_t keyframeCount() const { return submap_manager_.keyframeCount(); }
-  size_t submapTargetRevision() const { return submap_manager_.targetRevision(); }
+  size_t keyframeCount() const;
+  size_t submapTargetRevision() const;
   /// Lidar-rate trajectory in the map frame. Empty when pose-graph
   /// optimization is disabled. History follows each sample's keyframe.
   MapTrajectory mapTrajectory() const { return pgo_backend_.mapTrajectory(); }
+
+  /// Finish the open submap before exporting the final map or trajectory.
+  void finishMapping() { pgo_backend_.finish(); }
 
   PoseGraphSnapshot poseGraphSnapshot() const { return pgo_backend_.snapshot(); }
   void requestPoseGraphSnapshot() { pgo_backend_.requestSnapshot(); }
   void requestPoseGraphMap() { pgo_backend_.requestGlobalMap(); }
   PointCloudConstPtr latestPoseGraphMap() const { return pgo_backend_.latestGlobalMap(); }
+  void requestOccupancyGrid() { pgo_backend_.requestOccupancyGrid(); }
+  std::shared_ptr<const OccupancyGridMsg> latestOccupancyGrid() const { return pgo_backend_.latestOccupancyGrid(); }
 
  private:
-  struct PreprocessResult {
-    PointCloudConstPtr cloud;
-    double scan_end_stamp = 0.0;
-  };
-
-  bool initializeFirstLidarTarget(double stamp, const PreprocessResult& preprocessed);
-  void processLidarScan(const PreprocessResult& preprocessed);
+  bool initializeFirstLidarTarget(double stamp, const LidarData& preprocessed);
+  void processLidarScan(const LidarData& preprocessed);
   void maybeUpdateSubmapTarget(const Isometry3d& T_world_lidar, const PointCloudConstPtr& cloud, bool force_keyframe = false);
   void finalizeImuInitialization(ImuInitializer::Result&& result, const ImuData& trigger_sample);
 
@@ -134,10 +132,6 @@ class OdometryPipeline {
   /// Anchor an accepted odom-frame lidar pose to the latest keyframe.
   /// addFrame() for this scan must already have run.
   void rememberPoseGraphSample(const Isometry3d& T_odom_lidar, const Eigen::Vector3d& v_odom, double stamp);
-
-  /// Drop non-finite xyz and timestamps, then apply the crop box.
-  /// scan_end_stamp is the maximum remaining absolute timestamp.
-  PreprocessResult preprocessPoints(const PointCloudConstPtr& points) const;
 
   /// Uniformly downsample a world-frame deskewed scan for registration.
   PointCloudConstPtr downsamplePoints(const PointCloudConstPtr& points) const;
@@ -216,9 +210,10 @@ class OdometryPipeline {
   std::atomic<bool> has_first_scan_{false};
   SubmapManager submap_manager_;
   PoseGraphBackend pgo_backend_;
+  std::unique_ptr<Pipeline2> pipeline2_;
 
   // ── GICP Registration ─────────────────────────────────────────
-  Registration registration_;
+  std::unique_ptr<Registration> registration_;
   std::size_t registration_attempt_count_ = 0;
   std::size_t registration_reject_count_ = 0;
   std::size_t registration_reject_streak_ = 0;
