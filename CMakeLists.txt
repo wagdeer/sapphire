@@ -43,6 +43,7 @@ pkg_check_modules(LZ4 REQUIRED IMPORTED_TARGET liblz4)
 find_package(GTSAM REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
+find_package(TBB REQUIRED)
 
 find_package(small_gicp REQUIRED)
 
@@ -64,6 +65,12 @@ add_library(sapphire STATIC
     src/config.cpp
     src/io/tum.cpp
     src/backend/pose_graph.cpp
+    src/backend/submap.cpp
+    src/backend/submap_arxiv.cpp
+    src/mapping/voxelmap.cpp
+    src/odometry/pipeline2.cpp
+    src/odometry/registration2.cpp
+    src/odometry/ieskf.cpp
     src/mapping/occupancy_grid.cpp
     src/odometry/pipeline.cpp
     src/odometry/deskew.cpp
@@ -76,10 +83,12 @@ add_library(sapphire STATIC
 )
 target_include_directories(sapphire PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/preintegration>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/lie>
     $<INSTALL_INTERFACE:include>
     $<INSTALL_INTERFACE:include/sapphire/external/lie>
+    $<INSTALL_INTERFACE:include/sapphire/external>
 )
 target_link_libraries(sapphire PUBLIC
     Eigen3::Eigen
@@ -91,11 +100,33 @@ target_link_libraries(sapphire PUBLIC
     small_gicp::small_gicp
     Threads::Threads
     tomlplusplus::tomlplusplus
+    PRIVATE TBB::tbb
 )
 sapphire_enable_release_ipo(sapphire)
 
+option(SAPPHIRE_BUILD_BENCHMARKS "Build the NCLT replay benchmark" OFF)
+if(SAPPHIRE_BUILD_BENCHMARKS)
+    add_executable(sapphire_nclt_replay benchmarks/nclt_replay.cpp)
+    target_link_libraries(sapphire_nclt_replay PRIVATE sapphire TBB::tbb)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(sapphire_voxelmap_io_test tests/voxelmap_io_test.cpp)
+    target_link_libraries(sapphire_voxelmap_io_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_voxelmap_io_test)
+    add_test(NAME sapphire_voxelmap_io_test COMMAND sapphire_voxelmap_io_test)
+
+    add_executable(sapphire_registration2_test tests/registration2_test.cpp)
+    target_link_libraries(sapphire_registration2_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_registration2_test)
+    add_test(NAME sapphire_registration2_test COMMAND sapphire_registration2_test)
+
+    add_executable(sapphire_pipeline2_imu_boundary_test tests/pipeline2_imu_boundary_test.cpp)
+    target_link_libraries(sapphire_pipeline2_imu_boundary_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_pipeline2_imu_boundary_test)
+    add_test(NAME sapphire_pipeline2_imu_boundary_test COMMAND sapphire_pipeline2_imu_boundary_test)
+
     add_executable(sapphire_cloud_ingest_test
         tests/cloud_ingest_test.cpp
     )
@@ -243,8 +274,6 @@ if(BUILD_TESTING)
     )
 endif()
 
-# TODO: add as modules are implemented:
-#   find_package(TBB)        → submap/odometry parallelism
 # Install
 include(CMakePackageConfigHelpers)
 configure_package_config_file(
@@ -256,11 +285,17 @@ write_basic_package_version_file(
     VERSION ${PROJECT_VERSION}
     COMPATIBILITY SameMajorVersion)
 install(TARGETS sapphire EXPORT sapphireTargets)
-install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY include/ DESTINATION include
+    PATTERN "benchmarks" EXCLUDE
+    PATTERN "testing" EXCLUDE)
+install(DIRECTORY external/tsl/
+    DESTINATION include/sapphire/external/tsl
+    FILES_MATCHING PATTERN "*.h")
 install(DIRECTORY external/lie/
     DESTINATION include/sapphire/external/lie
     FILES_MATCHING PATTERN "*.hpp")
 install(DIRECTORY cfg/ DESTINATION share/sapphire/cfg)
+install(DIRECTORY licenses/ DESTINATION share/sapphire/licenses)
 install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/sapphireConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/sapphireConfigVersion.cmake"

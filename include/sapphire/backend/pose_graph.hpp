@@ -52,6 +52,11 @@ inline const char* rejectLoopRegistration(const LoopRegistrationGate& gate) {
   return nullptr;
 }
 
+class Pipeline2;
+class RevisitExchange;
+class LocalPlaneExchange;
+struct InertialFrame;
+
 struct PoseGraphStats {
   size_t keyframes = 0;
   size_t optimized_poses = 0;
@@ -68,6 +73,11 @@ struct PoseGraphStats {
   double correction_translation = 0.0;
   double correction_rotation = 0.0;
   size_t revision = 0;
+  size_t dropped_frames = 0;
+  size_t solver_poses = 0;
+  size_t solver_factors = 0;
+  size_t glc_summaries = 0;
+  double isam_odometry_ms = 0.;
 };
 
 /// Loop endpoints for visualization. `source` is the query keyframe and
@@ -117,6 +127,8 @@ class PoseGraphBackend {
   PoseGraphBackend& operator=(const PoseGraphBackend&) = delete;
 
   bool enabled() const;
+  /// After the last sensor callback, seal the open submap and join the worker.
+  void finish();
 
   /// Submit an accepted frontend frame. Keyframe selection is independent
   /// from the frontend submap policy.
@@ -159,6 +171,14 @@ class PoseGraphBackend {
   std::shared_ptr<const OccupancyGridMsg> latestOccupancyGrid() const;
 
  private:
+  friend class OdometryPipeline;
+  friend class Pipeline2;
+  explicit PoseGraphBackend(const Config& config);
+  bool addInertialFrame(InertialFrame frame);
+  void setLiveCorrection(const Isometry3d& transform, double stamp, const Eigen::Vector3d& gravity_odom);
+  RevisitExchange& revisitExchange();
+  LocalPlaneExchange& localPlanes();
+
   class Impl;
   std::unique_ptr<Impl> impl_;
 };

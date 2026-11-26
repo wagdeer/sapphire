@@ -15,11 +15,15 @@
 #include <Eigen/Eigenvalues>
 #include <SO3.hpp>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
+#include <exception>
+#include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -37,6 +41,10 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#include <sapphire/backend/submap.hpp>
+#include <sapphire/backend/submap_arxiv.hpp>
+#include <sapphire/mapping/voxelmap.hpp>
 
 namespace sapphire {
 namespace {
@@ -332,50 +340,314 @@ std::shared_ptr<small_gicp::PointCloud> toGicpCloud(const PointCloud& cloud) {
 }  // namespace
 
 class PoseGraphBackend::Impl {
+  class SubmapState {
+   public:
+    explicit SubmapState(const Config& config)
+        : config_(config),
+          arxiv_(config.methodB.map_directory),
+          submap_(arxiv_, config.methodB) {
+      if (config_.pgo.occupancy.enabled) {
+        occupancy_directory_ = std::filesystem::path(config.methodB.map_directory) / "rays";
+        if (!std::filesystem::create_directory(occupancy_directory_)) {
+          throw std::runtime_error("map directory already contains ray scans");
+        }
+      }
+    }
+
+    bool addFrame(InertialFrame&& frame) {
+      const auto tail = tail_.load(std::memory_order_relaxed);
+      if (tail - head_.load(std::memory_order_acquire) == queue_.size()) {
+        ++dropped_;
+        return false;
+      }
+      queue_[tail % queue_.size()] = std::move(frame);
+      tail_.store(tail + 1, std::memory_order_release);
+      return true;
+    }
+
+    void record(const OdomFrameSample& sample) {
+      std::lock_guard lock(samples_mutex_);
+      samples_.push_back(sample);
+    }
+
+    void setCorrection(const Isometry3d& correction, double stamp, const Eigen::Vector3d& gravity_odom) {
+      std::lock_guard lock(correction_mutex_);
+      correction_.graph_from_odom = correction;
+      if (!config_.methodB.gravity_aligned_output || !gravity_odom.allFinite() || gravity_odom.squaredNorm() < 1.e-6) return;
+
+      constexpr double smoothing_seconds = 1.0;
+      if (gravity_stamp_) {
+        const double weight = -std::expm1(-std::max(0., stamp - *gravity_stamp_) / smoothing_seconds);
+        gravity_ += weight * (gravity_odom - gravity_);
+      } else {
+        gravity_ = gravity_odom;
+      }
+      gravity_stamp_ = stamp;
+
+      // The solver and tracking maps keep their working frames. A single
+      // rigid change of basis gives every public view a gravity-aligned Z.
+      const Eigen::Vector3d gravity_graph = correction.linear() * gravity_;
+      correction_.map_from_graph.linear() =
+          Eigen::Quaterniond::FromTwoVectors(gravity_graph, -Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    }
+
+    Isometry3d correction() const {
+      const auto frames = correctionFrames();
+      return frames.map_from_graph * frames.graph_from_odom;
+    }
+
+    MapTrajectory mapTrajectory() const {
+      MapTrajectory trajectory;
+      const auto solution = std::atomic_load(&solution_);
+      const auto frames = correctionFrames();
+      std::vector<OdomFrameSample> samples;
+      {
+        std::lock_guard lock(samples_mutex_);
+        samples = samples_;
+      }
+      trajectory.samples.reserve(samples.size());
+      if (solution) trajectory.revision = solution->stats.revision;
+      std::size_t next = 0;
+      for (const auto& sample : samples) {
+        auto transform = frames.graph_from_odom;
+        if (solution && !solution->keyframes.empty()) {
+          const auto& keyframes = solution->keyframes;
+          while (next + 1 < keyframes.size() && keyframes[next + 1].stamp <= sample.stamp) ++next;
+          if (keyframes[next].stamp <= sample.stamp && sample.stamp <= keyframes.back().stamp) {
+            transform = keyframes[next].correction;
+          }
+        }
+        transform = frames.map_from_graph * transform;
+        trajectory.samples.push_back({sample.stamp, next, transform * sample.T_odom_lidar, transform.linear() * sample.v_odom});
+      }
+      return trajectory;
+    }
+
+    PoseGraphStats stats() const {
+      const auto solution = std::atomic_load(&solution_);
+      auto result = solution ? solution->stats : PoseGraphStats{};
+      result.keyframes = tail_.load(std::memory_order_acquire);
+      result.dropped_frames = dropped_.load(std::memory_order_relaxed);
+      const auto alignment = correction();
+      result.correction_translation = alignment.translation().norm();
+      result.correction_rotation = Eigen::AngleAxisd(alignment.linear()).angle();
+      return result;
+    }
+
+    PoseGraphSnapshot snapshot() const {
+      const auto snapshot = std::atomic_load(&snapshot_);
+      auto result = snapshot ? *snapshot : PoseGraphSnapshot{};
+      result.stats = stats();
+      return result;
+    }
+
+    RevisitExchange& revisitExchange() { return arxiv_.revisitExchange(); }
+    LocalPlaneExchange& localPlanes() { return submap_.localPlanes(); }
+    bool requestSnapshot() { return request(Snapshot); }
+    bool requestGlobalMap() { return request(Map); }
+    PointCloudConstPtr latestGlobalMap() const { return std::atomic_load(&map_); }
+    bool requestOccupancyGrid() { return request(Occupancy); }
+    std::shared_ptr<const OccupancyGridMsg> latestOccupancyGrid() const { return std::atomic_load(&occupancy_); }
+
+    bool hasFrames() const { return head_.load(std::memory_order_relaxed) != tail_.load(std::memory_order_acquire); }
+    bool hasRequests() const { return requests_.load(std::memory_order_acquire) != 0; }
+
+    void processFrames() {
+      auto head = head_.load(std::memory_order_relaxed);
+      const auto tail = tail_.load(std::memory_order_acquire);
+      while (head != tail) {
+        auto& frame = queue_[head % queue_.size()];
+        if (!occupancy_directory_.empty()) recordRays(head, *frame.frame.cloud);
+        odom_poses_.push_back(frame.frame.odom);
+        if (submap_.update(std::move(frame))) {
+          submap_.seal();
+          publish();
+        }
+        frame = {};
+        head_.store(++head, std::memory_order_release);
+      }
+    }
+
+    void processRequests() { processRequests(requests_.exchange(0, std::memory_order_acq_rel)); }
+
+    void drain() {
+      submap_.seal();
+      publish();
+      processRequests(requested_views_.load(std::memory_order_acquire));
+    }
+
+   private:
+    enum Request : unsigned { Snapshot = 1, Map = 2, Occupancy = 4 };
+
+    bool request(Request request) {
+      requested_views_.fetch_or(request, std::memory_order_relaxed);
+      return !(requests_.fetch_or(request, std::memory_order_release) & request);
+    }
+
+    struct Keyframe {
+      double stamp;
+      Isometry3d correction;
+    };
+
+    struct Solution {
+      PoseGraphStats stats;
+      std::vector<Keyframe> keyframes;
+    };
+
+    void publish() {
+      const auto optimized = submap_.optimizedFrames();
+      auto solution = std::make_shared<Solution>();
+      solution->stats = submap_.stats();
+      solution->keyframes.reserve(optimized.size());
+      for (std::size_t i = 0; i < optimized.size(); ++i) {
+        const auto& [stamp, pose] = optimized[i];
+        solution->keyframes.push_back({stamp, pose * odom_poses_[i].inverse()});
+      }
+      std::atomic_store(&solution_, std::shared_ptr<const Solution>(std::move(solution)));
+    }
+
+    std::filesystem::path rayPath(std::size_t index) const { return occupancy_directory_ / (std::to_string(index) + ".bin"); }
+
+    void recordRays(std::size_t index, const PointCloud& cloud) {
+      const auto sampled = deterministicVoxelDownsample(cloud, config_.pgo.occupancy.cloud_voxel_size);
+      std::ofstream file(rayPath(index), std::ios::binary);
+      for (const auto& point : *sampled) {
+        const std::array<float, 3> xyz{point.x, point.y, point.z};
+        file.write(reinterpret_cast<const char*>(xyz.data()), sizeof(xyz));
+      }
+      file.close();
+      if (!file) throw std::runtime_error("cannot write submap occupancy rays");
+    }
+
+    void updateOccupancy(const std::vector<std::pair<double, Isometry3d>>& poses, const Isometry3d& map_from_graph) {
+      if (!config_.pgo.occupancy.enabled) return;
+      OccupancyGrid grid(config_.pgo.occupancy);
+      const auto T_lidar_imu = config_.extrinsics.T_imu_lidar.inverse();
+      for (std::size_t i = 0; i < poses.size(); ++i) {
+        std::ifstream file(rayPath(i), std::ios::binary);
+        if (!file) throw std::runtime_error("cannot read submap occupancy rays");
+        auto hits = std::make_shared<PointCloud>();
+        std::array<float, 3> xyz;
+        while (file.read(reinterpret_cast<char*>(xyz.data()), sizeof(xyz))) {
+          Point point{};
+          point.getVector3fMap() = (T_lidar_imu * Eigen::Map<Eigen::Vector3f>(xyz.data()).cast<double>()).cast<float>();
+          point.data[3] = 1.f;
+          hits->push_back(point);
+        }
+        if (!file.eof() || file.gcount() != 0) throw std::runtime_error("invalid submap occupancy rays");
+        grid.insertScan(hits, map_from_graph * poses[i].second * config_.extrinsics.T_imu_lidar);
+      }
+      auto result = std::make_shared<OccupancyGridMsg>(grid.toMsg());
+      result->revision = submap_.stats().revision;
+      std::atomic_store(&occupancy_, std::shared_ptr<const OccupancyGridMsg>(std::move(result)));
+    }
+
+    void processRequests(unsigned requests) {
+      if (!requests) return;
+      const auto map_from_graph = correctionFrames().map_from_graph;
+      if (requests & Snapshot) {
+        auto snapshot = std::make_shared<PoseGraphSnapshot>(submap_.snapshot());
+        for (auto& pose : snapshot->optimized_poses) pose = map_from_graph * pose * config_.extrinsics.T_imu_lidar;
+        std::atomic_store(&snapshot_, std::shared_ptr<const PoseGraphSnapshot>(std::move(snapshot)));
+      }
+      if (requests & Map) {
+        spdlog::debug("[methodB] map_export_begin");
+        auto map = submap_.globalMap(config_.pgo.map_voxel_size);
+        if (config_.methodB.gravity_aligned_output) {
+          const auto rotation = map_from_graph.linear().cast<float>().eval();
+          for (auto& point : *map) point.getVector3fMap() = (rotation * point.getVector3fMap()).eval();
+        }
+        std::atomic_store(&map_, PointCloudConstPtr(std::move(map)));
+        spdlog::debug("[methodB] map_export_end");
+      }
+      if ((requests & Occupancy) && config_.pgo.occupancy.enabled) {
+        const auto previous = std::atomic_load(&occupancy_);
+        if (!previous || previous->revision != submap_.stats().revision || !occupancy_frame_.matrix().isApprox(map_from_graph.matrix())) {
+          updateOccupancy(submap_.optimizedFrames(), map_from_graph);
+          occupancy_frame_ = map_from_graph;
+        }
+      }
+    }
+
+    PointCloudConstPtr map_;
+    std::shared_ptr<const OccupancyGridMsg> occupancy_;
+    const Config config_;
+    SubmapArxiv arxiv_;
+    Submap submap_;
+    std::filesystem::path occupancy_directory_;
+    std::vector<Isometry3d> odom_poses_;
+    std::vector<OdomFrameSample> samples_;
+    mutable std::mutex samples_mutex_, correction_mutex_;
+    struct CorrectionFrames {
+      Isometry3d graph_from_odom = Isometry3d::Identity();
+      Isometry3d map_from_graph = Isometry3d::Identity();
+    };
+
+    CorrectionFrames correctionFrames() const {
+      std::lock_guard lock(correction_mutex_);
+      return correction_;
+    }
+
+    CorrectionFrames correction_;
+    Eigen::Vector3d gravity_ = Eigen::Vector3d::Zero();
+    std::optional<double> gravity_stamp_;
+    Isometry3d occupancy_frame_ = Isometry3d::Identity();
+    std::shared_ptr<const Solution> solution_;
+    std::shared_ptr<const PoseGraphSnapshot> snapshot_;
+    std::array<InertialFrame, 32> queue_;
+    std::atomic<std::size_t> head_{0}, tail_{0}, dropped_{0};
+    std::atomic<unsigned> requests_{0}, requested_views_{0};
+  };
+
  public:
-  explicit Impl(const Config::Pgo& config) : config_(config) {
-    if (!config_.enabled) {
-      return;
+  explicit Impl(const Config::Pgo& config) : config_(config) { start(); }
+
+  explicit Impl(const Config& config) : config_(config.pgo) {
+    if (config.methodB.enabled) {
+      if (!config.pgo.enabled || config.methodB.map_directory.empty() || config.methodB.voxel_capacity < 2 ||
+          !std::isfinite(config.methodB.max_range_m) || config.methodB.max_range_m < 0. ||
+          !std::isfinite(config.methodB.map_range_m) || config.methodB.map_range_m <= 0.) {
+        throw std::invalid_argument("invalid methodB configuration");
+      }
+      submap_state_ = std::make_unique<SubmapState>(config);
     }
-
-    gtsam::ISAM2GaussNewtonParams gauss_newton(kGaussNewtonWildfire);
-    gtsam::ISAM2Params params(gauss_newton);
-    gtsam::ISAM2ThresholdMap thresholds;
-    thresholds[kPoseSymbol] = (gtsam::Vector(6) << kRelinearizeRotationRad, kRelinearizeRotationRad, kRelinearizeRotationRad,
-                               kRelinearizeTranslationM, kRelinearizeTranslationM, kRelinearizeTranslationM)
-                                  .finished();
-    params.relinearizeThreshold = thresholds;
-    params.relinearizeSkip = 1;
-    isam2_ = std::make_unique<gtsam::ISAM2>(params);
-
-    gtsam::Vector6 prior_variances;
-    prior_variances << 1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12;
-    prior_noise_ = gtsam::noiseModel::Diagonal::Variances(prior_variances);
-
-    gtsam::Vector6 odom_variances;
-    odom_variances << 1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4;
-    odom_noise_ = gtsam::noiseModel::Diagonal::Variances(odom_variances);
-
-    if (config_.occupancy.enabled) {
-      occupancy_export_ = std::make_unique<OccupancyGridExporter>(config_.occupancy);
-      spdlog::info("[pgo] occupancy grid enabled (reso={:.2f}m, d_max={:.2f}m)", config_.occupancy.resolution, config_.occupancy.d_max);
-    }
-
-    worker_ = std::thread([this]() { workerLoop(); });
-    spdlog::info("[pgo] asynchronous pose-graph backend enabled");
+    start();
   }
 
   ~Impl() {
-    stop_.store(true, std::memory_order_release);
-    wake_cv_.notify_all();
-    if (worker_.joinable()) {
-      worker_.join();
+    try {
+      finish();
+    } catch (const std::exception& error) {
+      spdlog::error("[pgo] submap processing failed: {}", error.what());
     }
   }
+
+  void finish() {
+    stop_.store(true, std::memory_order_release);
+    wake_cv_.notify_all();
+    if (worker_.joinable()) worker_.join();
+    if (submap_error_) std::rethrow_exception(submap_error_);
+  }
+
+  bool addInertialFrame(InertialFrame&& frame) {
+    if (!submap_state_ || stop_.load(std::memory_order_acquire) || submap_failed_.load(std::memory_order_acquire) ||
+        !submap_state_->addFrame(std::move(frame))) {
+      return false;
+    }
+    wake_cv_.notify_one();
+    return true;
+  }
+
+  void setLiveCorrection(const Isometry3d& correction, double stamp, const Eigen::Vector3d& gravity_odom) {
+    submap_state_->setCorrection(correction, stamp, gravity_odom);
+  }
+  RevisitExchange& revisitExchange() { return submap_state_->revisitExchange(); }
+  LocalPlaneExchange& localPlanes() { return submap_state_->localPlanes(); }
 
   bool enabled() const { return config_.enabled; }
 
   void addFrame(const PointCloudConstPtr& cloud_odom, const Isometry3d& T_odom_lidar, double stamp) {
+    if (submap_state_) return;
     if (!config_.enabled || !cloud_odom || cloud_odom->empty() || !T_odom_lidar.matrix().allFinite() || !std::isfinite(stamp)) {
       return;
     }
@@ -400,6 +672,10 @@ class PoseGraphBackend::Impl {
   }
 
   void recordOdometrySample(const OdomFrameSample& sample) {
+    if (submap_state_) {
+      submap_state_->record(sample);
+      return;
+    }
     if (!config_.enabled || !sample.converged || !std::isfinite(sample.stamp) || !sample.T_odom_lidar.matrix().allFinite() ||
         !sample.v_odom.allFinite()) {
       return;
@@ -424,6 +700,7 @@ class PoseGraphBackend::Impl {
   }
 
   MapTrajectory mapTrajectory() const {
+    if (submap_state_) return submap_state_->mapTrajectory();
     std::vector<OdometrySample> samples;
     {
       std::lock_guard<std::mutex> lock(samples_mutex_);
@@ -461,11 +738,13 @@ class PoseGraphBackend::Impl {
   }
 
   Isometry3d correction() const {
+    if (submap_state_) return submap_state_->correction();
     std::lock_guard<std::mutex> lock(output_mutex_);
     return T_map_odom_;
   }
 
   PoseGraphStats stats() const {
+    if (submap_state_) return submap_state_->stats();
     std::scoped_lock lock(input_mutex_, output_mutex_);
     PoseGraphStats result = stats_;
     result.keyframes = input_frames_.size();
@@ -473,6 +752,7 @@ class PoseGraphBackend::Impl {
   }
 
   PoseGraphSnapshot snapshot() const {
+    if (submap_state_) return submap_state_->snapshot();
     PoseGraphSnapshot result;
     {
       std::lock_guard<std::mutex> lock(output_mutex_);
@@ -488,6 +768,10 @@ class PoseGraphBackend::Impl {
   }
 
   void requestSnapshot() {
+    if (submap_state_) {
+      if (!stop_.load(std::memory_order_acquire) && submap_state_->requestSnapshot()) wake_cv_.notify_one();
+      return;
+    }
     if (config_.enabled) {
       snapshot_requested_.store(true, std::memory_order_release);
       wake_cv_.notify_one();
@@ -495,6 +779,10 @@ class PoseGraphBackend::Impl {
   }
 
   void requestGlobalMap() {
+    if (submap_state_) {
+      if (!stop_.load(std::memory_order_acquire) && submap_state_->requestGlobalMap()) wake_cv_.notify_one();
+      return;
+    }
     if (config_.enabled) {
       map_requested_.store(true, std::memory_order_release);
       wake_cv_.notify_one();
@@ -502,11 +790,16 @@ class PoseGraphBackend::Impl {
   }
 
   PointCloudConstPtr latestGlobalMap() const {
+    if (submap_state_) return submap_state_->latestGlobalMap();
     std::lock_guard<std::mutex> lock(output_mutex_);
     return global_map_;
   }
 
   void requestOccupancyGrid() {
+    if (submap_state_) {
+      if (!stop_.load(std::memory_order_acquire) && submap_state_->requestOccupancyGrid()) wake_cv_.notify_one();
+      return;
+    }
     if (config_.enabled && occupancy_export_) {
       occupancy_requested_.store(true, std::memory_order_release);
       wake_cv_.notify_one();
@@ -514,6 +807,7 @@ class PoseGraphBackend::Impl {
   }
 
   std::shared_ptr<const OccupancyGridMsg> latestOccupancyGrid() const {
+    if (submap_state_) return submap_state_->latestOccupancyGrid();
     if (!occupancy_export_) {
       return nullptr;
     }
@@ -567,7 +861,63 @@ class PoseGraphBackend::Impl {
     size_t mid_id = 0;
   };
 
+  void start() {
+    if (!config_.enabled) return;
+    if (!submap_state_) initializeGraph();
+    worker_ = std::thread([this] { workerLoop(); });
+    if (!submap_state_) spdlog::info("[pgo] asynchronous pose-graph backend enabled");
+  }
+
+  void initializeGraph() {
+    gtsam::ISAM2GaussNewtonParams gauss_newton(kGaussNewtonWildfire);
+    gtsam::ISAM2Params params(gauss_newton);
+    gtsam::ISAM2ThresholdMap thresholds;
+    thresholds[kPoseSymbol] = (gtsam::Vector(6) << kRelinearizeRotationRad, kRelinearizeRotationRad, kRelinearizeRotationRad,
+                               kRelinearizeTranslationM, kRelinearizeTranslationM, kRelinearizeTranslationM)
+                                  .finished();
+    params.relinearizeThreshold = thresholds;
+    params.relinearizeSkip = 1;
+    isam2_ = std::make_unique<gtsam::ISAM2>(params);
+
+    gtsam::Vector6 prior_variances;
+    prior_variances << 1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12;
+    prior_noise_ = gtsam::noiseModel::Diagonal::Variances(prior_variances);
+
+    gtsam::Vector6 odom_variances;
+    odom_variances << 1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4;
+    odom_noise_ = gtsam::noiseModel::Diagonal::Variances(odom_variances);
+
+    if (config_.occupancy.enabled) {
+      occupancy_export_ = std::make_unique<OccupancyGridExporter>(config_.occupancy);
+      spdlog::info("[pgo] occupancy grid enabled (reso={:.2f}m, d_max={:.2f}m)", config_.occupancy.resolution, config_.occupancy.d_max);
+    }
+  }
+
+  void processSubmaps() {
+    auto& submaps = *submap_state_;
+    try {
+      while (true) {
+        std::unique_lock lock(wake_mutex_);
+        wake_cv_.wait_for(lock, std::chrono::milliseconds(1), [&] {
+          return stop_.load(std::memory_order_acquire) || submaps.hasFrames() || submaps.hasRequests();
+        });
+        lock.unlock();
+        submaps.processFrames();
+        if (stop_.load(std::memory_order_acquire) && !submaps.hasFrames()) break;
+        submaps.processRequests();
+      }
+      submaps.drain();
+    } catch (...) {
+      submap_error_ = std::current_exception();
+      submap_failed_.store(true, std::memory_order_release);
+    }
+  }
+
   void workerLoop() {
+    if (submap_state_) {
+      processSubmaps();
+      return;
+    }
     const auto period = std::chrono::duration<double>(config_.update_period_sec);
     while (!stop_.load(std::memory_order_acquire)) {
       std::unique_lock<std::mutex> lock(wake_mutex_);
@@ -1440,6 +1790,9 @@ class PoseGraphBackend::Impl {
   std::atomic<bool> map_requested_{false};
   std::atomic<bool> occupancy_requested_{false};
 
+  std::unique_ptr<SubmapState> submap_state_;
+  std::exception_ptr submap_error_;
+  std::atomic<bool> submap_failed_{false};
   std::atomic<bool> stop_{false};
   std::mutex wake_mutex_;
   std::condition_variable wake_cv_;
@@ -1448,15 +1801,28 @@ class PoseGraphBackend::Impl {
 
 PoseGraphBackend::PoseGraphBackend(const Config::Pgo& config) : impl_(std::make_unique<Impl>(config)) {}
 
+PoseGraphBackend::PoseGraphBackend(const Config& config) : impl_(std::make_unique<Impl>(config)) {}
+
 PoseGraphBackend::~PoseGraphBackend() = default;
 
 bool PoseGraphBackend::enabled() const { return impl_->enabled(); }
+
+void PoseGraphBackend::finish() { impl_->finish(); }
+
+bool PoseGraphBackend::addInertialFrame(InertialFrame frame) { return impl_->addInertialFrame(std::move(frame)); }
+void PoseGraphBackend::setLiveCorrection(const Isometry3d& transform, double stamp, const Eigen::Vector3d& gravity_odom) {
+  impl_->setLiveCorrection(transform, stamp, gravity_odom);
+}
+RevisitExchange& PoseGraphBackend::revisitExchange() { return impl_->revisitExchange(); }
+LocalPlaneExchange& PoseGraphBackend::localPlanes() { return impl_->localPlanes(); }
 
 void PoseGraphBackend::addFrame(const PointCloudConstPtr& cloud_odom, const Isometry3d& T_odom_lidar, double stamp) {
   impl_->addFrame(cloud_odom, T_odom_lidar, stamp);
 }
 
-void PoseGraphBackend::recordOdometrySample(const OdomFrameSample& odom_frame_sample) { impl_->recordOdometrySample(odom_frame_sample); }
+void PoseGraphBackend::recordOdometrySample(const OdomFrameSample& sample) {
+  impl_->recordOdometrySample(sample);
+}
 
 MapTrajectory PoseGraphBackend::mapTrajectory() const { return impl_->mapTrajectory(); }
 
@@ -1466,14 +1832,22 @@ PoseGraphStats PoseGraphBackend::stats() const { return impl_->stats(); }
 
 PoseGraphSnapshot PoseGraphBackend::snapshot() const { return impl_->snapshot(); }
 
-void PoseGraphBackend::requestSnapshot() { impl_->requestSnapshot(); }
+void PoseGraphBackend::requestSnapshot() {
+  impl_->requestSnapshot();
+}
 
-void PoseGraphBackend::requestGlobalMap() { impl_->requestGlobalMap(); }
+void PoseGraphBackend::requestGlobalMap() {
+  impl_->requestGlobalMap();
+}
 
 PointCloudConstPtr PoseGraphBackend::latestGlobalMap() const { return impl_->latestGlobalMap(); }
 
-void PoseGraphBackend::requestOccupancyGrid() { impl_->requestOccupancyGrid(); }
+void PoseGraphBackend::requestOccupancyGrid() {
+  impl_->requestOccupancyGrid();
+}
 
-std::shared_ptr<const OccupancyGridMsg> PoseGraphBackend::latestOccupancyGrid() const { return impl_->latestOccupancyGrid(); }
+std::shared_ptr<const OccupancyGridMsg> PoseGraphBackend::latestOccupancyGrid() const {
+  return impl_->latestOccupancyGrid();
+}
 
 }  // namespace sapphire

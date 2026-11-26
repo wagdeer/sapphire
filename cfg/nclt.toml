@@ -1,0 +1,153 @@
+# NCLT LiDAR and IMU profile for the main pipeline.
+
+[imu]
+gravity = 9.8
+
+# Initialization parameters for the main frontend.
+[imu.init]
+convergence_gyro_std = 0.025
+convergence_accel_std = 0.05
+timeout_sec = 2.5
+check_interval_sec = 0.4
+min_samples = 100
+
+# Noise calibration used by the main NCLT replay.
+[imu.noise]
+accel_noise_density = 1.0919628856399554e-02
+gyro_noise_density = 1.0451440924866223e-02
+accel_random_walk = 2.1851827629113259e-04
+gyro_random_walk = 8.1770009351257180e-05
+accel_bias_rw_sigma = 2.1851827629113259e-04
+gyro_bias_rw_sigma = 8.1770009351257180e-05
+
+[odometry]
+voxel_size = 0.25
+fusion = "eskf"
+
+# Frontend settings for the main path.
+[odometry.crop_box]
+min_x = -0.5
+min_y = -0.5
+min_z = -0.5
+max_x = 0.5
+max_y = 0.5
+max_z = 0.5
+
+[odometry.observer]
+position_gain = 4.5
+velocity_gain = 11.25
+orientation_gain = 4.0
+accel_bias_gain = 2.25
+gyro_bias_gain = 1.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
+
+[odometry.eskf]
+chart = "euclidean"
+sigma_rotation = 0.02
+sigma_translation = 0.05
+icp_covariance_scale = 25.0
+use_hessian = true
+hessian_min_information = 1e-6
+hessian_max_condition = 10000.0
+hessian_degenerate_sigma = 1.0
+hessian_max_sigma = 10.0
+mahalanobis_threshold = -1.0
+inject_full_pose = false
+inject_directional_pose = true
+velocity_correction_gain = 8.0
+bias_update_scale = 0.0
+accel_bias_max = 10.0
+gyro_bias_max = 0.5
+init_sigma_theta = 0.1
+init_sigma_velocity = 0.5
+init_sigma_position = 0.5
+specific_force_model_density = 0.0
+position_model_diffusion = 0.0
+
+[odometry.submap]
+splitting_distance = 2.0
+splitting_rotation = 0.7853981633974483
+max_keyframes = 10
+voxel_size = 0.25
+recovery_after_rejections = 5
+
+[registration]
+type = "VGICP"
+
+[registration.gicp]
+max_iterations = 32
+transformation_epsilon = 0.01
+rotation_epsilon = 0.01
+max_correspondence_dist = 0.5
+k_correspondences = 16
+min_preprocessed_points = 64
+min_source_points = 64
+min_inliers = 64
+max_correction_trans = 1.0
+max_correction_rot_deg = 20.0
+
+[registration.vgicp]
+voxel_resolution = 0.5
+
+[pgo]
+enabled = true
+map_voxel_size = 0.8
+
+# Keyframe and loop settings for the main pose graph.
+keyframe_distance = 1.5
+keyframe_rotation = 0.5235987756
+loop_min_time_separation = 30.0
+loop_min_travel_distance = 30.0
+loop_max_rotation = 3.14
+loop_search_radius = 30.0
+loop_search_stride = 1
+target_frame_count = 50
+source_voxel_size = 0.4
+target_voxel_size = 0.4
+source_travel_radius_m = 10.0
+source_max_range_m = 20.0
+source_max_frames = 256
+lidar_min_inliers = 64
+lidar_max_iterations = 32
+lidar_max_correspondence_m = 2.0
+lidar_min_overlap = 0.5
+lidar_max_fitness_m2 = 0.5
+lidar_translation_sigma_m = 0.2
+lidar_rotation_sigma_rad = 0.1
+max_constraint_error_sigma = 3.0
+update_period_sec = 1.0
+map_frame_stride = 3
+
+[pgo.occupancy]
+enabled = false
+resolution = 0.1
+h_clearance = 2.0
+ground_margin = 0.0
+clear_height_eps = 0.05
+d_max = 3.0
+occ_threshold = 0.3
+usable_range = 40.0
+min_range = 0.5
+cloud_voxel_size = 0.2
+margin = 5.0
+
+[sensor.lidar]
+time_field = "time"
+time_unit = "s"
+time_ref = "relative"
+max_scan_duration = 0.2
+header_tolerance = 0.5
+require_point_time = true
+
+[sensor.imu]
+accel_unit = "m_s2"
+
+[extrinsics.T_imu_lidar]
+translation = [0.112, 0.176, -0.247]
+rotation_xyzw = [0.00597961207123351, -0.003992138132931053, -0.7114202101992785, 0.702730098681293]
+
+[output]
+# Set trajectory_dir to enable automatic TUM export.
+trajectory_dir = ""
+trajectory_file = "trajectory.tum"

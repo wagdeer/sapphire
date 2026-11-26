@@ -247,11 +247,13 @@ enum class Gate {
   Occupancy,
 };
 
+enum class Required { Never, Always, Main };
+
 struct NumberField {
   const char* path;
   void (*set)(Config&, double);
   double (*get)(const Config&);
-  bool required;
+  Required required;
   NumberRule rule;
   Gate gate;
 };
@@ -281,9 +283,10 @@ struct StringField {
     path, [](Config& config, double value) { config.member = value; }, [](const Config& config) { return config.member; }, required, rule, gate \
   }
 
-#define OPT(path, member, rule) FIELD(path, member, false, rule, Gate::Always)
-#define REQ(path, member, rule) FIELD(path, member, true, rule, Gate::Always)
-#define WHEN_OCC(path, member, rule) FIELD(path, member, false, rule, Gate::Occupancy)
+#define OPT(path, member, rule) FIELD(path, member, Required::Never, rule, Gate::Always)
+#define REQ(path, member, rule) FIELD(path, member, Required::Always, rule, Gate::Always)
+#define REQ_MAIN(path, member, rule) FIELD(path, member, Required::Main, rule, Gate::Always)
+#define WHEN_OCC(path, member, rule) FIELD(path, member, Required::Never, rule, Gate::Occupancy)
 
 #define INT(path, member, rule)                                                                                              \
   IntField {                                                                                                                 \
@@ -311,10 +314,10 @@ const NumberField kNumbers[] = {
     OPT("imu.init.convergence_accel_std", imu.init.convergence_accel_std, NumberRule::Positive),
     OPT("imu.init.timeout_sec", imu.init.timeout_sec, NumberRule::Positive),
     OPT("imu.init.check_interval_sec", imu.init.check_interval_sec, NumberRule::Positive),
-    REQ("imu.noise.accel_noise_density", imu.noise.accel_noise_density, NumberRule::Positive),
-    REQ("imu.noise.gyro_noise_density", imu.noise.gyro_noise_density, NumberRule::Positive),
-    REQ("imu.noise.accel_random_walk", imu.noise.accel_random_walk, NumberRule::Positive),
-    REQ("imu.noise.gyro_random_walk", imu.noise.gyro_random_walk, NumberRule::Positive),
+    REQ_MAIN("imu.noise.accel_noise_density", imu.noise.accel_noise_density, NumberRule::Positive),
+    REQ_MAIN("imu.noise.gyro_noise_density", imu.noise.gyro_noise_density, NumberRule::Positive),
+    REQ_MAIN("imu.noise.accel_random_walk", imu.noise.accel_random_walk, NumberRule::Positive),
+    REQ_MAIN("imu.noise.gyro_random_walk", imu.noise.gyro_random_walk, NumberRule::Positive),
     // Zero is the stationary-bias default. Negative values stay legal.
     OPT("imu.noise.accel_bias_rw_sigma", imu.noise.accel_bias_rw_sigma, NumberRule::None),
     OPT("imu.noise.gyro_bias_rw_sigma", imu.noise.gyro_bias_rw_sigma, NumberRule::None),
@@ -392,11 +395,14 @@ const NumberField kNumbers[] = {
     WHEN_OCC("pgo.occupancy.cloud_voxel_size", pgo.occupancy.cloud_voxel_size, NumberRule::Nonnegative),
     WHEN_OCC("pgo.occupancy.margin", pgo.occupancy.margin, NumberRule::Positive),
 
+    OPT("methodB.max_range_m", methodB.max_range_m, NumberRule::Nonnegative),
+    OPT("methodB.map_range_m", methodB.map_range_m, NumberRule::Positive),
     OPT("sensor.lidar.max_scan_duration", sensor.lidar.max_scan_duration, NumberRule::Positive),
     OPT("sensor.lidar.header_tolerance", sensor.lidar.header_tolerance, NumberRule::Nonnegative),
 };
 
 const IntField kInts[] = {
+    INT("methodB.voxel_capacity", methodB.voxel_capacity, IntRule::Positive),
     INT("imu.init.min_samples", imu.init.min_samples, IntRule::Positive),
     INT("odometry.submap.max_keyframes", odometry.submap.max_keyframes, IntRule::Positive),
     INT("odometry.submap.recovery_after_rejections", odometry.submap.recovery_after_rejections, IntRule::None),
@@ -415,6 +421,10 @@ const IntField kInts[] = {
 };
 
 const BoolField kBools[] = {
+    BOOL_FIELD("methodB.enabled", methodB.enabled),
+    BOOL_FIELD("methodB.local_feedback", methodB.local_feedback),
+    BOOL_FIELD("methodB.local_feedback_ba", methodB.local_feedback_ba),
+    BOOL_FIELD("methodB.gravity_aligned_output", methodB.gravity_aligned_output),
     BOOL_FIELD("odometry.eskf.use_hessian", odometry.eskf.use_hessian),
     BOOL_FIELD("odometry.eskf.inject_full_pose", odometry.eskf.inject_full_pose),
     BOOL_FIELD("odometry.eskf.inject_directional_pose", odometry.eskf.inject_directional_pose),
@@ -434,6 +444,7 @@ EskfChart eskfChartFromString(const std::string& chart) {
 }
 
 const StringField kStrings[] = {
+    STR("methodB.map_directory", methodB.map_directory, nullptr, nullptr),
     STR("odometry.fusion", odometry.fusion, kFusionChoices, "odometry.fusion must be \"observer\" or \"eskf\""),
     STR("registration.type", registration.type, kRegistrationChoices, "registration.type must be GICP or VGICP"),
     STR("sensor.lidar.time_field", sensor.lidar.time_field, sensor::timeFieldChoices(), nullptr),
@@ -447,6 +458,7 @@ const StringField kStrings[] = {
 #undef FIELD
 #undef OPT
 #undef REQ
+#undef REQ_MAIN
 #undef WHEN_OCC
 #undef INT
 #undef BOOL_FIELD
@@ -471,9 +483,15 @@ void applyNumberRule(const NumberField& field, double value) {
 }
 
 void loadSchema(ParseContext& ctx, toml::table& root, Config& config) {
+  for (const BoolField& field : kBools) {
+    const NodeView node = root.at_path(field.path);
+    if (const auto value = optionalBool(ctx, node, field.path)) {
+      field.set(config, *value);
+    }
+  }
   for (const NumberField& field : kNumbers) {
     const NodeView node = root.at_path(field.path);
-    if (field.required) {
+    if (field.required == Required::Always || (field.required == Required::Main && !config.methodB.enabled)) {
       field.set(config, requiredNumber(ctx, node, field.path));
     } else if (const auto value = optionalNumber(ctx, node, field.path)) {
       field.set(config, *value);
@@ -482,12 +500,6 @@ void loadSchema(ParseContext& ctx, toml::table& root, Config& config) {
   for (const IntField& field : kInts) {
     const NodeView node = root.at_path(field.path);
     if (const auto value = optionalInt(ctx, node, field.path)) {
-      field.set(config, *value);
-    }
-  }
-  for (const BoolField& field : kBools) {
-    const NodeView node = root.at_path(field.path);
-    if (const auto value = optionalBool(ctx, node, field.path)) {
       field.set(config, *value);
     }
   }
@@ -601,6 +613,9 @@ void validateConfig(const Config& config) {
   }
 
   requireRelativeTrajectoryFile(config.output.trajectory_file);
+  if (config.methodB.enabled && (!config.pgo.enabled || config.methodB.map_directory.empty() || config.methodB.voxel_capacity < 2)) {
+    throw std::invalid_argument("methodB requires pgo.enabled, a map directory, and at least two voxels");
+  }
   if (!config.pgo.enabled && !trajectoryOutputPath(config).empty()) {
     throw std::invalid_argument(
         "output.trajectory_dir is set but pgo.enabled is false; "

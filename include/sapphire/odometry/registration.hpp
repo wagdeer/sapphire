@@ -1,6 +1,10 @@
 #pragma once
 
 #include <memory>
+#ifdef _OPENMP
+// The registration reduction calls omp_get_thread_num from its template.
+#include <omp.h>
+#endif
 #include <sapphire/types.hpp>
 #include <small_gicp/pcl/pcl_registration.hpp>
 #include <small_gicp/registration/registration.hpp>

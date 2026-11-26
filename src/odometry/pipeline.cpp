@@ -1,3 +1,4 @@
+#include <sapphire/odometry/pipeline2.hpp>
 #include <omp.h>
 #include <pcl/common/transforms.h>
 #include <spdlog/spdlog.h>
@@ -20,8 +21,6 @@ constexpr double kImuGapWarningSec = 0.1;
 constexpr int kRecoveryBuildFrames = 5;
 constexpr std::size_t kMaxRecoveryAttempts = 3;
 
-bool isFiniteImu(const ImuData& imu) { return std::isfinite(imu.stamp) && imu.accel.allFinite() && imu.gyro.allFinite(); }
-
 OdometryResult applyGlobalCorrection(const OdomFrameSample& sample, const Isometry3d& T_map_odom) {
   OdometryResult result;
   result.T_world_lidar = T_map_odom * sample.T_odom_lidar;
@@ -36,21 +35,47 @@ OdometryResult applyGlobalCorrection(const OdomFrameSample& sample, const Isomet
 OdometryPipeline::OdometryPipeline(const Config& config)
     : config_(config),
       imu_initializer_(config.imu.init, config.sensor.imu.accel_unit),
-      propagation_integrator_(std::make_unique<detail::MeanOnlyGal3Integrator>()),
+      propagation_integrator_(config.methodB.enabled ? nullptr : std::make_unique<detail::MeanOnlyGal3Integrator>()),
       eskf_(config.odometry.eskf, config.imu.noise, Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag)),
       submap_manager_(config.odometry.submap),
-      pgo_backend_(config.pgo),
-      registration_(config.registration.gicp, config.registration.type, config.registration.vgicp.voxel_resolution) {
+      pgo_backend_(config),
+      pipeline2_(config.methodB.enabled ? std::make_unique<Pipeline2>(config, pgo_backend_) : nullptr),
+      registration_(config.methodB.enabled ? nullptr : std::make_unique<Registration>(
+          config.registration.gicp, config.registration.type, config.registration.vgicp.voxel_resolution)) {
   latest_result_.T_odom_lidar = Isometry3d::Identity();
   gravity_world_ = Eigen::Vector3d(0.0, 0.0, -config.imu.init.gravity_mag);
 
-  spdlog::info("[pipeline] ready: fusion={}, registration={}, submap_kf={}", config.odometry.fusion, config.registration.type,
-               config.odometry.submap.max_keyframes);
+  if (pipeline2_) {
+    spdlog::info("[pipeline] ready: methodB");
+  } else {
+    spdlog::info("[pipeline] ready: fusion={}, registration={}, submap_kf={}", config.odometry.fusion, config.registration.type,
+                 config.odometry.submap.max_keyframes);
+  }
 }
 
 OdometryPipeline::~OdometryPipeline() = default;
 
+bool OdometryPipeline::initialized() const {
+  return pipeline2_ ? pipeline2_->initialized() : initialized_.load(std::memory_order_acquire);
+}
+
+const ImuInitializer::Result& OdometryPipeline::imuInitResult() const {
+  if (pipeline2_) return pipeline2_->imuInitResult();
+  if (!initialized()) throw std::logic_error("imuInitResult() called before IMU initialization completes");
+  return *imu_init_result_;
+}
+
+size_t OdometryPipeline::keyframeCount() const {
+  return pipeline2_ ? pgo_backend_.stats().keyframes : submap_manager_.keyframeCount();
+}
+
+size_t OdometryPipeline::submapTargetRevision() const {
+  return pipeline2_ ? pipeline2_->mapRevision() : submap_manager_.targetRevision();
+}
+
+
 OdometryResult OdometryPipeline::latestResult() const {
+  if (pipeline2_) return applyGlobalCorrection(pipeline2_->latest(), pgo_backend_.T_map_odom());
   OdomFrameSample sample;
   {
     std::lock_guard<std::mutex> lock(output_mutex_);
@@ -60,6 +85,7 @@ OdometryResult OdometryPipeline::latestResult() const {
 }
 
 PointCloudConstPtr OdometryPipeline::latestDeskewed() const {
+  if (pipeline2_) return pipeline2_->deskewed(pgo_backend_.T_map_odom());
   PointCloudConstPtr cloud;
   {
     std::lock_guard<std::mutex> lock(output_mutex_);
@@ -74,6 +100,11 @@ PointCloudConstPtr OdometryPipeline::latestDeskewed() const {
 }
 
 std::optional<OdometryResult> OdometryPipeline::latestPropagatedResult() const {
+  if (pipeline2_) {
+    const auto sample = pipeline2_->propagated();
+    if (!sample) return std::nullopt;
+    return applyGlobalCorrection(*sample, pgo_backend_.T_map_odom());
+  }
   OdomFrameSample sample;
   {
     std::scoped_lock lock(state_mutex_, output_mutex_);
@@ -90,56 +121,18 @@ std::optional<OdometryResult> OdometryPipeline::latestPropagatedResult() const {
 }
 
 Eigen::Vector3d OdometryPipeline::accelBias() const {
+  if (pipeline2_) return pipeline2_->accelBias();
   std::lock_guard<std::mutex> lock(state_mutex_);
   return accel_bias_;
 }
 
 Eigen::Vector3d OdometryPipeline::gyroBias() const {
+  if (pipeline2_) return pipeline2_->gyroBias();
   std::lock_guard<std::mutex> lock(state_mutex_);
   return gyro_bias_;
 }
 
 // ── LiDAR preprocessing ─────────────────────────────────────────────
-
-OdometryPipeline::PreprocessResult OdometryPipeline::preprocessPoints(const PointCloudConstPtr& points) const {
-  auto output = std::make_shared<PointCloud>();
-  output->points.reserve(points->points.size());
-
-  const auto& box = config_.odometry.crop_box;
-  double scan_end = 0.0;
-  bool have_time = false;
-  for (const Point& point : points->points) {
-    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z) || !std::isfinite(point.timestamp)) {
-      continue;
-    }
-
-    // Remove points inside the crop box (robot body / mounting blind zone).
-    const bool inside_crop_box =
-        point.x >= box.min_x && point.x <= box.max_x && point.y >= box.min_y && point.y <= box.max_y && point.z >= box.min_z && point.z <= box.max_z;
-    if (inside_crop_box) {
-      continue;
-    }
-
-    output->points.push_back(point);
-    if (!have_time) {
-      scan_end = point.timestamp;
-      have_time = true;
-    } else {
-      scan_end = std::max(scan_end, point.timestamp);
-    }
-  }
-
-  output->width = output->points.size();
-  output->height = 1;
-  output->is_dense = true;
-
-  PreprocessResult result;
-  result.cloud = output;
-  if (have_time) {
-    result.scan_end_stamp = scan_end;
-  }
-  return result;
-}
 
 PointCloudConstPtr OdometryPipeline::downsamplePoints(const PointCloudConstPtr& points) const {
   return deterministicVoxelDownsample(*points, config_.odometry.voxel_size);
@@ -265,7 +258,7 @@ bool OdometryPipeline::waitForImuCoverage(double end_stamp) {
 
 // ── LiDAR callback ──────────────────────────────────────────────────
 
-bool OdometryPipeline::initializeFirstLidarTarget(double stamp, const PreprocessResult& preprocessed) {
+bool OdometryPipeline::initializeFirstLidarTarget(double stamp, const LidarData& preprocessed) {
   // DLIO first-valid-scan path: do not integrate from the calibration
   // timestamp. Assume no motion, apply the gravity-aligned initial pose,
   // and establish this scan as the first registration target.
@@ -288,11 +281,11 @@ bool OdometryPipeline::initializeFirstLidarTarget(double stamp, const Preprocess
   corrected_state.stamp = stamp;
   const Isometry3d T_world_lidar = corrected_state.T_world_imu * config_.extrinsics.T_imu_lidar;
   auto world_scan = std::make_shared<PointCloud>();
-  pcl::transformPointCloud(*preprocessed.cloud, *world_scan, T_world_lidar.matrix());
+  pcl::transformPointCloud(*preprocessed.pc, *world_scan, T_world_lidar.matrix());
   const PointCloudConstPtr downsampled = downsamplePoints(world_scan);
 
   submap_manager_.addKeyframe(T_world_lidar, downsampled);
-  registration_.setTarget(submap_manager_.target());
+  registration_->setTarget(submap_manager_.target());
 
   {
     std::lock_guard<std::mutex> lock(output_mutex_);
@@ -323,11 +316,11 @@ void OdometryPipeline::maybeUpdateSubmapTarget(const Isometry3d& T_world_lidar, 
     return;
   }
 
-  registration_.setTarget(submap_manager_.target());
+  registration_->setTarget(submap_manager_.target());
 }
 
-void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
-  const double scan_end = preprocessed.scan_end_stamp;
+void OdometryPipeline::processLidarScan(const LidarData& preprocessed) {
+  const double scan_end = preprocessed.end_time;
   if (!waitForImuCoverage(scan_end)) {
     return;
   }
@@ -335,7 +328,7 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
   // ── Phase 1: deskew ──
   DeskewResult deskewed;
   try {
-    deskewed = deskewPointcloud(preprocessed.cloud);
+    deskewed = deskewPointcloud(preprocessed.pc);
   } catch (const std::exception& e) {
     spdlog::error("[pipeline] deskewPointcloud threw: {}", e.what());
   }
@@ -364,8 +357,8 @@ void OdometryPipeline::processLidarScan(const PreprocessResult& preprocessed) {
     return;
   }
 
-  registration_.setSource(registration_source);
-  const RegistrationResult registration = registration_.align(deskewed.T_world_lidar_ref);
+  registration_->setSource(registration_source);
+  const RegistrationResult registration = registration_->align(deskewed.T_world_lidar_ref);
   PointCloudConstPtr cloud_out = registration_source;
   ++registration_attempt_count_;
   if (!registration.accepted) {
@@ -530,7 +523,7 @@ void OdometryPipeline::commitScan(const Isometry3d& T_odom_lidar, const PointClo
                                   double stamp, const OdometryPipeline::ScanCommit& commit) {
   if (commit.reset_submap) {
     submap_manager_.resetKeyframes(T_odom_lidar, cloud);
-    registration_.setTarget(submap_manager_.target());
+    registration_->setTarget(submap_manager_.target());
     ++map_update_count_;
   } else if (commit.touch_submap) {
     const std::size_t keyframes_before = keyframeCount();
@@ -574,16 +567,17 @@ void OdometryPipeline::rememberPoseGraphSample(const Isometry3d& T_odom_lidar, c
 }
 
 void OdometryPipeline::pushLidar(double stamp, const PointCloudConstPtr& points) {
+  if (pipeline2_) return pipeline2_->pushLidar(points);
   if (!initialized_.load(std::memory_order_acquire) || !points || points->empty()) {
     return;
   }
 
-  const PreprocessResult preprocessed = preprocessPoints(points);
-  if (preprocessed.cloud->size() < static_cast<size_t>(config_.registration.gicp.min_preprocessed_points)) {
+  const auto preprocessed = preprocessLidar(*points, config_.odometry.crop_box);
+  if (preprocessed.pc->size() < static_cast<size_t>(config_.registration.gicp.min_preprocessed_points)) {
     spdlog::warn(
         "[pipeline] skipping LiDAR scan: {} points after preprocessing "
         "(minimum {})",
-        preprocessed.cloud->size(), config_.registration.gicp.min_preprocessed_points);
+        preprocessed.pc->size(), config_.registration.gicp.min_preprocessed_points);
     return;
   }
 
@@ -625,7 +619,8 @@ void OdometryPipeline::finalizeImuInitialization(ImuInitializer::Result&& result
 }
 
 void OdometryPipeline::pushImu(const ImuData& imu) {
-  if (!isFiniteImu(imu)) {
+  if (pipeline2_) return pipeline2_->pushImu(imu);
+  if (!imu.isFinite()) {
     spdlog::warn("[pipeline] dropping IMU sample with non-finite values");
     return;
   }

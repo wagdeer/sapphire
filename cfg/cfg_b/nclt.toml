@@ -1,0 +1,43 @@
+# NCLT LiDAR and IMU profile for Method B.
+
+[methodB]
+local_feedback = true
+local_feedback_ba = false
+gravity_aligned_output = true
+enabled = true
+map_directory = "nclt-patrol-map"
+voxel_capacity = 350000
+max_range_m = 40.0
+
+[imu]
+gravity = 9.8
+
+[odometry]
+voxel_size = 0.25
+
+[odometry.crop_box]
+min_x = -0.5
+min_y = -0.5
+min_z = -0.5
+max_x = 0.5
+max_y = 0.5
+max_z = 0.5
+
+[pgo]
+enabled = true
+map_voxel_size = 0.8
+
+[pgo.occupancy]
+enabled = false
+
+[sensor.lidar]
+time_field = "time"
+time_unit = "s"
+time_ref = "relative"
+max_scan_duration = 0.2
+header_tolerance = 0.5
+require_point_time = true
+
+[extrinsics.T_imu_lidar]
+translation = [0.112, 0.176, -0.247]
+rotation_xyzw = [0.00597961207123351, -0.003992138132931053, -0.7114202101992785, 0.702730098681293]

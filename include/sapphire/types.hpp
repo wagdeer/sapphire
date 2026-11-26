@@ -2,6 +2,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <cmath>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -49,6 +50,8 @@ struct ImuData {
   double stamp = 0.0;     // seconds
   Eigen::Vector3d accel;  // m/s^2, in IMU frame
   Eigen::Vector3d gyro;   // rad/s, in IMU frame
+
+  bool isFinite() const { return std::isfinite(stamp) && accel.allFinite() && gyro.allFinite(); }
 };
 
 /// IMU navigation state at a specific timestamp.
@@ -304,6 +307,10 @@ struct Config {
       double max_x = 1.0;
       double max_y = 1.0;
       double max_z = 1.0;
+
+      bool contains(const Point& point) const {
+        return point.x >= min_x && point.x <= max_x && point.y >= min_y && point.y <= max_y && point.z >= min_z && point.z <= max_z;
+      }
     } crop_box;
     struct Submap {
       double splitting_distance = 2.0;
@@ -417,6 +424,17 @@ struct Config {
       double margin = 5.0;
     } occupancy;
   } pgo;
+
+  struct MethodB {
+    bool enabled = false;
+    std::string map_directory;
+    int voxel_capacity = 350000;
+    double max_range_m = 0.0;  // Zero disables the optional frontend far-range cutoff.
+    double map_range_m = 30.0;  // Per-keyframe range for sealed mapping geometry.
+    bool local_feedback = false;  // Use recent planes in scan matching.
+    bool local_feedback_ba = true;  // Adjust the recent poses before fitting feedback planes.
+    bool gravity_aligned_output = false;  // Use the estimated gravity for the public map's vertical axis.
+  } methodB;
 
   ImuConfig imu;
 
