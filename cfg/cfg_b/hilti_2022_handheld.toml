@@ -1,7 +1,6 @@
 # HILTI 2022 Hesai PandarXT-32 and Alphasense IMU.
 
 [methodB]
-enabled = true
 map_directory = "hilti_2022_handheld-method-b-map"
 voxel_capacity = 350000
 

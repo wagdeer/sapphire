@@ -34,12 +34,7 @@ endfunction()
 # Dependencies (only what the skeleton actually uses)
 find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
-# Point types and transforms are PCL common. small_gicp::RegistrationPCL
-# includes pcl::Registration, and that header instantiates FLANN code which
-# calls lz4. The library does not call PCL registration or FLANN.
 find_package(PCL REQUIRED COMPONENTS common)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LZ4 REQUIRED IMPORTED_TARGET liblz4)
 find_package(GTSAM REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
@@ -68,33 +63,22 @@ add_library(sapphire STATIC
     src/backend/submap.cpp
     src/backend/submap_arxiv.cpp
     src/mapping/voxelmap.cpp
-    src/odometry/pipeline2.cpp
-    src/odometry/registration2.cpp
     src/odometry/ieskf.cpp
     src/mapping/occupancy_grid.cpp
     src/odometry/pipeline.cpp
-    src/odometry/deskew.cpp
-    src/odometry/eskf.cpp
-    src/odometry/observer.cpp
     src/odometry/registration.cpp
-    src/odometry/submap.cpp
     src/odometry/voxel_filter.cpp
-    src/odometry/imu_init.cpp
 )
 target_include_directories(sapphire PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/preintegration>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/lie>
     $<INSTALL_INTERFACE:include>
-    $<INSTALL_INTERFACE:include/sapphire/external/lie>
     $<INSTALL_INTERFACE:include/sapphire/external>
 )
 target_link_libraries(sapphire PUBLIC
     Eigen3::Eigen
     spdlog::spdlog
     pcl_common
-    PkgConfig::LZ4
     gtsam
     OpenMP::OpenMP_CXX
     small_gicp::small_gicp
@@ -117,15 +101,15 @@ if(BUILD_TESTING)
     sapphire_enable_release_ipo(sapphire_voxelmap_io_test)
     add_test(NAME sapphire_voxelmap_io_test COMMAND sapphire_voxelmap_io_test)
 
-    add_executable(sapphire_registration2_test tests/registration2_test.cpp)
-    target_link_libraries(sapphire_registration2_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_registration2_test)
-    add_test(NAME sapphire_registration2_test COMMAND sapphire_registration2_test)
+    add_executable(sapphire_registration_test tests/registration_test.cpp)
+    target_link_libraries(sapphire_registration_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_registration_test)
+    add_test(NAME sapphire_registration_test COMMAND sapphire_registration_test)
 
-    add_executable(sapphire_pipeline2_imu_boundary_test tests/pipeline2_imu_boundary_test.cpp)
-    target_link_libraries(sapphire_pipeline2_imu_boundary_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_pipeline2_imu_boundary_test)
-    add_test(NAME sapphire_pipeline2_imu_boundary_test COMMAND sapphire_pipeline2_imu_boundary_test)
+    add_executable(sapphire_pipeline_imu_boundary_test tests/pipeline_imu_boundary_test.cpp)
+    target_link_libraries(sapphire_pipeline_imu_boundary_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_pipeline_imu_boundary_test)
+    add_test(NAME sapphire_pipeline_imu_boundary_test COMMAND sapphire_pipeline_imu_boundary_test)
 
     add_executable(sapphire_cloud_ingest_test
         tests/cloud_ingest_test.cpp
@@ -153,13 +137,6 @@ if(BUILD_TESTING)
     sapphire_enable_release_ipo(sapphire_config_test)
     add_test(NAME sapphire_config_test COMMAND sapphire_config_test)
 
-    add_executable(sapphire_deskew_test
-        tests/deskew_test.cpp
-    )
-    target_link_libraries(sapphire_deskew_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_deskew_test)
-    add_test(NAME sapphire_deskew_test COMMAND sapphire_deskew_test)
-
     add_executable(sapphire_ring_buffer_test
         tests/ring_buffer_test.cpp
     )
@@ -170,51 +147,6 @@ if(BUILD_TESTING)
         COMMAND sapphire_ring_buffer_test
     )
 
-    add_executable(sapphire_preintegration_test
-        tests/preintegration_test.cpp
-    )
-    target_link_libraries(sapphire_preintegration_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_preintegration_test)
-    add_test(
-        NAME sapphire_preintegration_test
-        COMMAND sapphire_preintegration_test
-    )
-
-    add_executable(sapphire_mean_only_gal3_integrator_test
-        tests/mean_only_gal3_integrator_test.cpp
-    )
-    target_link_libraries(
-        sapphire_mean_only_gal3_integrator_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_mean_only_gal3_integrator_test)
-    add_test(
-        NAME sapphire_mean_only_gal3_integrator_test
-        COMMAND sapphire_mean_only_gal3_integrator_test
-    )
-
-    add_executable(sapphire_gal3_independent_test
-        tests/gal3_independent_test.cpp
-    )
-    target_link_libraries(sapphire_gal3_independent_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_gal3_independent_test)
-    add_test(
-        NAME sapphire_gal3_independent_test
-        COMMAND sapphire_gal3_independent_test
-    )
-
-    add_executable(sapphire_pipeline_test
-        tests/pipeline_test.cpp
-    )
-    target_link_libraries(sapphire_pipeline_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_pipeline_test)
-    add_test(NAME sapphire_pipeline_test COMMAND sapphire_pipeline_test)
-
-    add_executable(sapphire_pose_graph_test
-        tests/pose_graph_test.cpp
-    )
-    target_link_libraries(sapphire_pose_graph_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_pose_graph_test)
-    add_test(NAME sapphire_pose_graph_test COMMAND sapphire_pose_graph_test)
-
     add_executable(sapphire_occupancy_grid_test
         tests/occupancy_grid_test.cpp
     )
@@ -224,44 +156,6 @@ if(BUILD_TESTING)
         NAME sapphire_occupancy_grid_test
         COMMAND sapphire_occupancy_grid_test
     )
-
-    add_executable(sapphire_observer_test
-        tests/observer_test.cpp
-    )
-    target_link_libraries(sapphire_observer_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_observer_test)
-    add_test(NAME sapphire_observer_test COMMAND sapphire_observer_test)
-
-    add_executable(sapphire_gal3_eskf_test
-        tests/gal3_eskf_test.cpp
-    )
-    target_link_libraries(sapphire_gal3_eskf_test PRIVATE sapphire)
-    target_compile_definitions(sapphire_gal3_eskf_test PRIVATE
-        SAPPHIRE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-    )
-    sapphire_enable_release_ipo(sapphire_gal3_eskf_test)
-    add_test(NAME sapphire_gal3_eskf_test COMMAND sapphire_gal3_eskf_test)
-
-    add_executable(sapphire_eskf_test
-        tests/eskf_test.cpp
-    )
-    target_link_libraries(sapphire_eskf_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_eskf_test)
-    add_test(NAME sapphire_eskf_test COMMAND sapphire_eskf_test)
-
-    add_executable(sapphire_registration_test
-        tests/registration_test.cpp
-    )
-    target_link_libraries(sapphire_registration_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_registration_test)
-    add_test(NAME sapphire_registration_test COMMAND sapphire_registration_test)
-
-    add_executable(sapphire_submap_test
-        tests/submap_test.cpp
-    )
-    target_link_libraries(sapphire_submap_test PRIVATE sapphire)
-    sapphire_enable_release_ipo(sapphire_submap_test)
-    add_test(NAME sapphire_submap_test COMMAND sapphire_submap_test)
 
     add_executable(sapphire_voxel_filter_test
         tests/voxel_filter_test.cpp
@@ -286,14 +180,10 @@ write_basic_package_version_file(
     COMPATIBILITY SameMajorVersion)
 install(TARGETS sapphire EXPORT sapphireTargets)
 install(DIRECTORY include/ DESTINATION include
-    PATTERN "benchmarks" EXCLUDE
-    PATTERN "testing" EXCLUDE)
+    PATTERN "benchmarks" EXCLUDE)
 install(DIRECTORY external/tsl/
     DESTINATION include/sapphire/external/tsl
     FILES_MATCHING PATTERN "*.h")
-install(DIRECTORY external/lie/
-    DESTINATION include/sapphire/external/lie
-    FILES_MATCHING PATTERN "*.hpp")
 install(DIRECTORY cfg/ DESTINATION share/sapphire/cfg)
 install(DIRECTORY licenses/ DESTINATION share/sapphire/licenses)
 install(FILES

@@ -5,7 +5,6 @@ map_range_m = 80.0
 local_feedback = true
 local_feedback_ba = false
 gravity_aligned_output = true
-enabled = true
 map_directory = "s3e_alpha-method-b-map"
 voxel_capacity = 350000
 

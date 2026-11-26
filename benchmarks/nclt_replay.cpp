@@ -47,15 +47,6 @@ class ExportLog : public spdlog::sinks::base_sink<std::mutex> {
   std::ofstream revisits_;
 };
 
-template <typename Predicate>
-void waitFor(Predicate ready) {
-  const auto deadline = Clock::now() + std::chrono::minutes(45);
-  while (!ready()) {
-    if (Clock::now() >= deadline) throw std::runtime_error("mapping output timed out");
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-  }
-}
-
 class Runner {
  public:
   Runner(const sapphire::Config& config, const std::filesystem::path& directory)
@@ -95,31 +86,9 @@ class Runner {
 
   void finish() {
     recordMemory(directory_, "online_end");
-    if (config_.methodB.enabled) {
-      pipeline_.requestPoseGraphSnapshot();
-      pipeline_.requestPoseGraphMap();
-      pipeline_.finishMapping();
-    } else {
-      if (!pipeline_.poseGraphSnapshot().stats.keyframes) {
-        throw std::runtime_error("no mapping keyframes after replay");
-      }
-      // A snapshot request can be serviced using a batch that was copied
-      // before the last keyframe arrived. Request it after the graph catches up.
-      waitFor([&] {
-        const auto stats = pipeline_.poseGraphSnapshot().stats;
-        return stats.optimized_poses == stats.keyframes;
-      });
-      pipeline_.requestPoseGraphSnapshot();
-      waitFor([&] {
-        const auto snapshot = pipeline_.poseGraphSnapshot();
-        return snapshot.optimized_poses.size() == snapshot.stats.keyframes;
-      });
-      recordMemory(directory_, "map_begin");
-      pipeline_.requestPoseGraphMap();
-      waitFor([&] { return pipeline_.latestPoseGraphMap() != nullptr; });
-      recordMemory(directory_, "map_end");
-      pipeline_.finishMapping();
-    }
+    pipeline_.requestPoseGraphSnapshot();
+    pipeline_.requestPoseGraphMap();
+    pipeline_.finishMapping();
     const auto snapshot = pipeline_.poseGraphSnapshot();
     const auto map = pipeline_.latestPoseGraphMap();
     const auto trajectory = pipeline_.mapTrajectory();
@@ -154,21 +123,18 @@ class Runner {
 
 int main(int argc, char** argv) {
   try {
-    if (argc != 7) throw std::invalid_argument("usage: sapphire_nclt_replay main|methodB profile.toml hits.bin imu.csv output duration_s");
-    const std::string_view mode(argv[1]);
-    if (mode != "main" && mode != "methodB") throw std::invalid_argument("expected main or methodB");
-    const std::filesystem::path output(argv[5]);
+    if (argc != 6) throw std::invalid_argument("usage: sapphire_nclt_replay profile.toml hits.bin imu.csv output duration_s");
+    auto config = sapphire::loadConfig(argv[1]);
+    const std::filesystem::path output(argv[4]);
     if (!std::filesystem::create_directory(output)) throw std::runtime_error("the output directory must be new");
     std::ofstream(output / "memory.csv") << "phase,rss_kib,peak_kib\n";
-    auto config = sapphire::loadConfig(argv[2]);
-    if (config.methodB.enabled != (mode == "methodB")) throw std::invalid_argument("replay mode does not match methodB.enabled");
-    if (config.methodB.enabled) config.methodB.map_directory = (output / "submaps").string();
+    config.methodB.map_directory = (output / "submaps").string();
     config.output.trajectory_dir.clear();
     spdlog::set_default_logger(std::make_shared<spdlog::logger>("benchmark", std::make_shared<ExportLog>(output)));
     spdlog::set_level(spdlog::level::debug);
     tbb::global_control threads(tbb::global_control::max_allowed_parallelism, 2);
     Runner runner(config, output);
-    replay(runner, argv[3], argv[4], 0., std::stod(argv[6]));
+    replay(runner, argv[2], argv[3], 0., std::stod(argv[5]));
     runner.finish();
     return 0;
   } catch (const std::exception& error) {

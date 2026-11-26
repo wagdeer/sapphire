@@ -1,0 +1,42 @@
+# S3E Bob Velodyne and IMU.
+
+[methodB]
+map_range_m = 80.0
+local_feedback = true
+local_feedback_ba = false
+gravity_aligned_output = true
+map_directory = "s3e_bob-method-b-map"
+voxel_capacity = 350000
+
+[imu]
+gravity = 9.79172227
+
+[odometry]
+voxel_size = 0.25
+
+[odometry.crop_box]
+min_x = -0.5
+min_y = -0.5
+min_z = -0.5
+max_x = 0.5
+max_y = 0.5
+max_z = 0.5
+
+[pgo]
+enabled = true
+map_voxel_size = 0.8
+
+[pgo.occupancy]
+enabled = false
+
+[sensor.lidar]
+time_field = "time"
+time_unit = "s"
+time_ref = "relative"
+max_scan_duration = 0.2
+header_tolerance = 0.5
+require_point_time = true
+
+[extrinsics.T_imu_lidar]
+translation = [0.049603512631594, -0.092737045313503, 0.015313004887488]
+rotation_xyzw = [0.00246397, 0.00864399, 0.00555991, 0.99994415]

@@ -1,52 +1,113 @@
 #pragma once
 
-#include <memory>
-#ifdef _OPENMP
-// The registration reduction calls omp_get_thread_num from its template.
-#include <omp.h>
-#endif
-#include <sapphire/types.hpp>
-#include <small_gicp/pcl/pcl_registration.hpp>
-#include <small_gicp/registration/registration.hpp>
+#include <deque>
+#include <optional>
+#include <sapphire/odometry/ieskf.hpp>
+#include <sapphire/odometry/localmap.hpp>
+#include <sapphire/odometry/voxel_filter.hpp>
+
+#include "tsl/robin_hood.h"
 
 namespace sapphire {
 
-/// small_gicp registration wrapper for scan-to-submap alignment.
-///
-/// Uses small_gicp::RegistrationPCL with sapphire::Point type and supports
-/// both GICP and VGICP.
-/// Covariances are computed automatically by small_gicp via setInputSource/Target.
-///
-/// Usage:
-///   Registration reg(config);
-///   reg.setSource(source_cloud);
-///   reg.setTarget(target_cloud);
-///   auto result = reg.align(T_prior);
+class RevisitExchange;
+class LocalPlaneExchange;
+struct RevisitTarget;
+struct GaussianVoxelMap;
+
+struct MeasureGroup {
+  LidarData lidar;
+  std::deque<FilterImuSample> imu;
+  FilterImuSample end_imu;
+};
+
 class Registration {
  public:
-  using GicpType = small_gicp::RegistrationPCL<Point, Point>;
-
-  explicit Registration(const RegistrationConfig& config = RegistrationConfig{}, const std::string& type = "GICP",
-                        double vgicp_voxel_resolution = 0.5);
-
-  /// Set the source point cloud (current scan, deskewed).
-  void setSource(const PointCloudConstPtr& cloud);
-
-  /// Set the target point cloud (previous scan or submap).
-  void setTarget(const PointCloudConstPtr& cloud);
-
-  /// Run the configured GICP or VGICP alignment.
-  /// Both source and target clouds are already expressed in the world frame.
-  /// @param T_prior IMU-predicted world pose at the scan reference time.
-  /// @return global correction and corrected world-frame pose
-  RegistrationResult align(const Isometry3d& T_prior);
+  Registration(const Config& config, RevisitExchange& exchange, LocalPlaneExchange& local_planes);
+  bool process(MeasureGroup scan);
+  void rememberKeyframe(double stamp, const Isometry3d& pose);
+  const Isometry3d& globalFromOdom() const { return global_from_odom_; }
+  std::size_t revisitVersion() const { return version_; }
+  bool initialized() const { return state_ != &Registration::initializeFilter; }
+  const iEskf& filter() const { return filter_; }
+  PointCloudConstPtr deskewed() const { return deskewed_; }
+  std::size_t matches() const { return matches_; }
+  double accelerationStd() const { return accel_scale_ * std::sqrt(accel_variation_ / imu_count_); }
+  float accelerationScale() const { return accel_scale_; }
 
  private:
-  RegistrationConfig cfg_;
-  std::string type_;
-  GicpType gicp_;
-  bool target_set_ = false;
-  std::size_t source_point_count_ = 0;
+  friend struct RegistrationTestAccess;
+
+  struct VerificationScan {
+    double stamp;
+    Isometry3d prediction;
+    VV3 points;
+  };
+
+  struct Keyframe {
+    double stamp;
+    Isometry3d odom_pose;
+    std::optional<VerificationScan> next_scan;
+  };
+
+  const GaussianVoxelMap* updateRevisit(double stamp, const Isometry3d& odom, const VV3& scan);
+  void verifyRevisit(const RevisitTarget& target, double stamp, const Keyframe& anchor);
+
+  RevisitExchange& exchange_;
+  LocalPlaneExchange& local_planes_;
+  std::deque<Keyframe> keyframes_;
+  const RevisitTarget* active_ = nullptr;
+  std::size_t attempted_ = 0, version_ = 0;
+  Eigen::Isometry3d global_from_odom_ = Eigen::Isometry3d::Identity();
+  Eigen::Isometry3f target_from_odom_ = Eigen::Isometry3f::Identity();
+
+  class VoxelSampler {
+   public:
+    explicit VoxelSampler(float leaf_size);
+    void filter(const PointCloud& input, PointCloud& output);
+
+   private:
+    float voxel_size_;
+    float inv_voxel_size_;
+    robin_hood::unordered_flat_map<std::size_t, std::size_t> voxel_map_;
+    std::vector<Point, Eigen::aligned_allocator<Point>> points_;
+    std::vector<float> dist2_;
+    const Eigen::Vector3i offset_ = Eigen::Vector3i(1000, 1000, 1000);
+  };
+
+  bool initializeFilter();
+  bool initializeMap();
+  bool track();
+  void deskew();
+  void observe();
+  void insertScan();
+
+  using KNNHeapType = KNNHeap<5, Eigen::Vector3f>;
+  using State = bool (Registration::*)();
+  State state_ = &Registration::initializeFilter;
+  iEskf filter_;
+  LocalMap<V3, scalar> map_;
+  VoxelSampler sampler_;
+  FilterPose lidar_to_imu_;
+  MeasureGroup measures_;
+  double gravity_;
+  int imu_count_ = 0;
+  double accel_variation_ = 0.;
+  V3 mean_gyro_ = V3::Zero();
+  V3 mean_accel_ = V3::Zero();
+  float accel_scale_ = 1.f;
+  FilterPose initial_pose_;
+  int initial_scans_ = 0;
+  PointCloudPtr deskewed_ = std::make_shared<PointCloud>();
+  PointCloudPtr sampled_ = std::make_shared<PointCloud>();
+  std::vector<DynamicState> imu_states_;
+  VV3 world_points_, scan_points_;
+  std::vector<std::array<double, 4>> planes_;
+  std::vector<int> match_indices_;
+  std::vector<float> point_ranges_;
+  std::vector<std::uint8_t> plane_mask_, neighbor_mask_;
+  std::size_t matches_ = 0;
+  std::size_t search_count_ = 0;
 };
 
 }  // namespace sapphire

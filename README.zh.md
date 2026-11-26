@@ -1,26 +1,8 @@
 # Sapphire
 
-激光-惯性里程计。点云去畸变和 IMU 传播使用同一套 Gal(3) 预积分。核心库是 C++17，不依赖 ROS。
+激光惯性 SLAM。前端采用点到平面匹配与滚动体素地图，后端异步执行子图 BA 和位姿图优化。核心库使用 C++17，无 ROS 依赖。
 
 [English](README.md)
-
-## 演示
-
-**S3E**
-
-![S3E RViz 建图](docs/sapphire.gif)
-
-**HILTI 2022**
-
-![HILTI 2022 施工楼梯 RViz 建图](docs/hilti-2022.gif)
-
-**HILTI 2023**
-
-![HILTI 2023 RViz 建图](docs/hilti-2023.gif)
-
-**Newer College 2020**
-
-![Newer College RViz 建图](docs/newer_college.gif)
 
 ## 依赖
 
@@ -28,6 +10,7 @@
 |---|---|
 | CMake | 3.16+ |
 | 编译器 | C++17 |
+| TBB | |
 | Eigen | 3.4 |
 | PCL | 1.12+ |
 | OpenMP | |
@@ -46,7 +29,7 @@
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake git software-properties-common \
-  libeigen3-dev libpcl-dev libomp-dev libspdlog-dev
+  libeigen3-dev libpcl-dev libomp-dev libspdlog-dev libtbb-dev
 sudo add-apt-repository -y ppa:borglab/gtsam-release-4.3
 sudo apt install -y libgtsam-dev
 ```
@@ -71,7 +54,7 @@ sudo cmake --install /tmp/small_gicp/build
 ## 编译
 
 ```bash
-git clone https://github.com/wagdeer/sapphire.git
+git clone --branch method_b https://github.com/wagdeer/sapphire.git
 cd sapphire
 cmake -S . -B build
 cmake --build build -j"$(nproc)"
@@ -103,23 +86,22 @@ ws/src/
 └── sapphire_ros1/    或 sapphire_ros2/
 ```
 
-传感器配置在 `cfg/`。公开数据集的回放步骤见 [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md)。
+传感器配置在 `cfg/cfg_b/`。公开数据集的回放步骤见 [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md)。
 
 ## 致谢
 
 - [DLIO](https://github.com/vectr-ucla/direct_lidar_inertial_odometry)：管线与子图
-- [Equivariant IMU Preintegration with Biases](https://github.com/aau-cns/equivariant-preintegration)：Gal(3) 预积分
-- [small_gicp](https://github.com/koide3/small_gicp)：GICP 与 VGICP
+- [small_gicp](https://github.com/koide3/small_gicp)：近邻索引和并行排序
 - [GTSAM](https://github.com/borglab/gtsam)：位姿图优化
 
 ## 许可证
 
-MIT.
+见[组件许可证说明](licenses/NOTICE.md)。
 
 ## Method B
 
 `methodB` 沿用 `sapphire::OdometryPipeline` 的 `pushImu`、`pushLidar` 和地图查询入口。点到平面关联使用前端的滚动八叉体素地图和迭代滤波。建图线程用激光惯性 BA 优化子图内部，压缩已通过边界检查的子图，并用 iSAM2 求解回环。重访时，前端可以读取后台发布的已验证历史平面，继续更新当前地图。
 
-用 `cfg/cfg_b/nclt.toml` 载入 NCLT 的传感器外参和 `methodB` 参数。每次从空图启动时使用一个新的 `methodB.map_directory`，该目录保存子图和检索数据。两种前端共用 `odometry.crop_box` 裁剪车体，`methodB.max_range_m` 可选设定远距上限。子图打包的取点范围由 `methodB.map_range_m` 设置。其他数据需要使用对应的传感器外参。停止送入传感器数据后调用 `finishMapping()`，封存最后一组关键帧，再读取最终 `mapTrajectory()`。申请地图和图快照的接口与常规建图相同。
+用 `cfg/cfg_b/nclt.toml` 载入 NCLT 的传感器外参和 `methodB` 参数。每次从空图启动时使用一个新的 `methodB.map_directory`，该目录保存子图和检索数据。前端用 `odometry.crop_box` 裁剪车体，可用 `methodB.max_range_m` 设置远距上限。子图打包的取点范围由 `methodB.map_range_m` 设置。停止送入传感器数据后，先请求地图和图快照，再调用 `finishMapping()` 封存最后一组关键帧，随后读取已请求的结果及 `mapTrajectory()`。
 
-库保持 C++17，`methodB` 前端使用 TBB。
+A/B 使用 `main` 和 `method_b` 各自编译的程序，回放同一组雷达和 IMU 输入。评分方法见[回放说明](benchmarks/README.md)，历史测试结果见[对比表](benchmarks/method_b.md)。

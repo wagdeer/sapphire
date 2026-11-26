@@ -1,17 +1,21 @@
-# NCLT A/B 回放
+# NCLT 回放和 A/B
 
-在仓库根目录构建回放程序，然后指定同一条 NCLT 序列的原始雷达和 IMU 文件。`main` 和 `methodB` 在同一构建里顺序运行，使用相同的输入、外参和回放节奏，各自从空图启动。配置分别是 `cfg/nclt.toml` 和 `cfg/cfg_b/nclt.toml`。
+在 `method_b` 工作区构建并独立运行 Method B。最后一个参数是传感器回放时长，示例覆盖 NCLT 2012-01-08 的完整序列。
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSAPPHIRE_BUILD_BENCHMARKS=ON
 cmake --build build --target sapphire_nclt_replay -j4
-benchmarks/run_nclt_ab.sh build/sapphire_nclt_replay /data/hits.bin /data/ms25.csv /tmp/nclt-ab
+mkdir -p /tmp/nclt-ab
+REPLAY_RATE=12 OMP_NUM_THREADS=2 OMP_THREAD_LIMIT=2 build/sapphire_nclt_replay cfg/cfg_b/nclt.toml \
+  /data/hits.bin /data/ms25.csv /tmp/nclt-ab/methodB 5634
 ```
 
-提供同一序列的 TUM 真值可以生成对照表。评分环境需要 NumPy、SciPy 和 evo。
+从 `main` 的独立工作区构建基准，用链接到该分支的外部回放程序记录同样的输入和传感器时间范围，并把输出放到 `/tmp/nclt-ab/main`。两组各自从空图启动，采用相同的外参、回放节奏与计时范围。Method B 的 NCLT 回放程序只链接本分支的 Sapphire。
+
+两组结果目录需要有 `online.tum`、`mapped.tum`、`events.csv` 和 `memory.csv`。事件表包含 `stamp,ms,fresh,converged`，内存表包含 `phase,rss_kib,peak_kib`，记录 `online_end` 和 `map_end`。用同一份 TUM 真值评分，环境需要 NumPy、SciPy 和 evo。
 
 ```sh
 python3 benchmarks/compare_nclt.py /tmp/nclt-ab /data/groundtruth.tum
 ```
 
-`events.csv` 保存逐帧耗时，`online.tum` 与 `mapped.tum` 分别是在线与最终轨迹。`memory.csv` 记录在线结束、地图导出前后和轨迹导出结束时的 RSS 与累计峰值。`revisits.log` 记录 `methodB` 采用的历史约束与验证结果。
+Method B 把封存子图与回环检索数据写入其回放结果的 `submaps/`，`revisits.log` 记录历史约束和验证结果。

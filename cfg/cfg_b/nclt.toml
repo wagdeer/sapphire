@@ -4,8 +4,7 @@
 local_feedback = true
 local_feedback_ba = false
 gravity_aligned_output = true
-enabled = true
-map_directory = "nclt-patrol-map"
+map_directory = "nclt-method-b-map"
 voxel_capacity = 350000
 max_range_m = 40.0
 

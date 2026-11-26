@@ -1,30 +1,14 @@
 # Sapphire
 
-LiDAR-inertial odometry. Deskew and IMU propagation use the same Gal(3) preintegration. The library is C++17 and has no ROS dependency.
+LiDAR-inertial SLAM with point-to-plane odometry, a rolling voxel map, and asynchronous submap BA and pose graph optimization. The core is C++17 and has no ROS dependency.
 
 [中文说明](README.zh.md)
 
 ## Method B
 
-Load `cfg/cfg_b/nclt.toml` and pass it to `sapphire::OdometryPipeline`. The configuration selects point-to-plane odometry with a rolling voxel map and asynchronous submap BA and pose graph optimization. Set `methodB.map_directory` to a fresh directory for each empty-map session. The frontend shares `odometry.crop_box` with the main pipeline. Set `methodB.max_range_m` to apply an optional far-range cutoff. The sealed submap packer uses the separate `methodB.map_range_m` setting. After stopping sensor input, call `finishMapping()` before reading the final trajectory or requested map.
+Load the sensor profile from `cfg/cfg_b/` and pass it to `sapphire::OdometryPipeline`. Set `methodB.map_directory` to a fresh directory when starting from an empty map. The frontend uses `odometry.crop_box` to crop the robot body and the optional `methodB.max_range_m` to cap range. The submap packer uses `methodB.map_range_m`. Request the map or pose graph snapshot before calling `finishMapping()`. The backend seals the last submap and completes the requested exports.
 
-## Demos
-
-**S3E**
-
-![S3E RViz mapping](docs/sapphire.gif)
-
-**HILTI 2022**
-
-![HILTI 2022 construction stairs RViz mapping](docs/hilti-2022.gif)
-
-**HILTI 2023**
-
-![HILTI 2023 RViz mapping](docs/hilti-2023.gif)
-
-**Newer College 2020**
-
-![Newer College RViz mapping](docs/newer_college.gif)
+Build the `main` and `method_b` checkouts separately and replay the same input in each for [A/B comparisons](benchmarks/README.md).
 
 ## Dependencies
 
@@ -76,7 +60,7 @@ sudo cmake --install /tmp/small_gicp/build
 ## Build
 
 ```bash
-git clone https://github.com/wagdeer/sapphire.git
+git clone --branch method_b https://github.com/wagdeer/sapphire.git
 cd sapphire
 cmake -S . -B build
 cmake --build build -j"$(nproc)"
@@ -108,18 +92,17 @@ ws/src/
 └── sapphire_ros1/    or sapphire_ros2/
 ```
 
-Sensor profiles are in `cfg/`. Replaying a recorded dataset is described in [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md).
+Sensor profiles are in `cfg/cfg_b/`. Replaying a recorded dataset is described in [docs/DATASET_REPLAY.md](docs/DATASET_REPLAY.md).
 
 ## Credits
 
 - [DLIO](https://github.com/vectr-ucla/direct_lidar_inertial_odometry): pipeline and submap design
-- [Equivariant IMU Preintegration with Biases](https://github.com/aau-cns/equivariant-preintegration): Gal(3) preintegration
-- [small_gicp](https://github.com/koide3/small_gicp): GICP and VGICP
+- [small_gicp](https://github.com/koide3/small_gicp): nearest-neighbor indexing and parallel sorting
 - [GTSAM](https://github.com/borglab/gtsam): pose-graph optimization
 
 ## License
 
-MIT.
+See [component notices](licenses/NOTICE.md).
 
 ## Method B benchmark
 

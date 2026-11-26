@@ -1,202 +1,77 @@
-#include <Eigen/Geometry>
-#include <cmath>
-#include <cstdlib>
-#include <iostream>
+#include <sapphire/backend/submap_arxiv.hpp>
 #include <sapphire/odometry/registration.hpp>
-#include <string>
+
+#include <stdexcept>
+
+namespace sapphire {
+struct RegistrationTestAccess {
+  static const GaussianVoxelMap* update(Registration& registration, double stamp, const Isometry3d& pose, const VV3& scan) {
+    return registration.updateRevisit(stamp, pose, scan);
+  }
+};
+}  // namespace sapphire
 
 namespace {
 
-[[noreturn]] void fail(const std::string& message) {
-  std::cerr << "FAILED: " << message << '\n';
-  std::exit(EXIT_FAILURE);
-}
+using namespace sapphire;
 
-void expect(bool condition, const std::string& message) {
-  if (!condition) {
-    fail(message);
-  }
-}
+struct RevisitFixture {
+  RevisitExchange exchange;
+  LocalPlaneExchange local_planes;
+  Registration tracking{Config{}, exchange, local_planes};
+  VV3 scanner;
+  std::unique_ptr<GaussianVoxelMap> map = std::make_unique<GaussianVoxelMap>();
 
-sapphire::PointCloud::Ptr makeCloud(float x_offset = 0.0f) {
-  auto cloud = std::make_shared<sapphire::PointCloud>();
-  for (int x = 0; x < 5; ++x) {
-    for (int y = 0; y < 5; ++y) {
-      for (int z = 0; z < 4; ++z) {
-        sapphire::Point point{};
-        point.x = x_offset + 0.25f * static_cast<float>(x);
-        point.y = 0.30f * static_cast<float>(y);
-        point.z = 0.40f * static_cast<float>(z);
-        point.data[3] = 1.0f;
-        cloud->points.push_back(point);
+  RevisitFixture() {
+    // Three mutually orthogonal planes constrain all six pose directions.
+    for (int normal = 0; normal < 3; ++normal) {
+      for (int a = -3; a <= 3; ++a) {
+        for (int b = -3; b <= 3; ++b) {
+          Eigen::Vector3f center;
+          center[normal] = -4.5f;
+          center[(normal + 1) % 3] = a + .5f;
+          center[(normal + 2) % 3] = b + .5f;
+          scanner.push_back(center);
+          if (!map->insert(key(center), {{center, Eigen::Vector3f::Unit(normal), .45f, .05f}, {}})) {
+            throw std::runtime_error("test planes overlap");
+          }
+        }
       }
     }
+    tracking.rememberKeyframe(10., Isometry3d::Identity());
   }
-  cloud->width = cloud->points.size();
-  cloud->height = 1;
-  cloud->is_dense = true;
-  return cloud;
-}
 
-sapphire::PointCloud::Ptr makeAsymmetricCloud(float x_offset = 0.0f) {
-  auto cloud = std::make_shared<sapphire::PointCloud>();
-  for (int x = 0; x < 10; ++x) {
-    for (int y = 0; y < 10; ++y) {
-      for (int z = 0; z < 2; ++z) {
-        sapphire::Point point{};
-        point.x = x_offset + 0.23f * static_cast<float>(x) + 0.017f * static_cast<float>(y * y) + 0.031f * static_cast<float>(z);
-        point.y = 0.27f * static_cast<float>(y) + 0.013f * static_cast<float>(x * y) + 0.041f * static_cast<float>(z);
-        point.z = 0.31f * static_cast<float>(z) + 0.019f * static_cast<float>(x * x) + 0.023f * static_cast<float>((x + 2 * y) % 5);
-        point.data[3] = 1.0f;
-        cloud->points.push_back(point);
-      }
-    }
+  void publish() {
+    exchange.publish(std::make_unique<RevisitTarget>(RevisitTarget{std::move(map), 10., Isometry3d::Identity(), Isometry3d::Identity(), 1, 0, 0, 1}));
   }
-  cloud->width = cloud->points.size();
-  cloud->height = 1;
-  cloud->is_dense = true;
-  return cloud;
-}
-
-sapphire::PointCloud::Ptr transformCloud(const sapphire::PointCloud& cloud, const sapphire::Isometry3d& pose) {
-  auto out = std::make_shared<sapphire::PointCloud>();
-  out->points.reserve(cloud.size());
-  const sapphire::Isometry3f pose_f = pose.cast<float>();
-  for (const sapphire::Point& source : cloud.points) {
-    sapphire::Point point = source;
-    point.getVector3fMap() = pose_f * source.getVector3fMap();
-    point.data[3] = 1.0f;
-    out->points.push_back(point);
-  }
-  out->width = out->points.size();
-  out->height = 1;
-  out->is_dense = true;
-  return out;
-}
-
-sapphire::Isometry3d poseAt(double x, double yaw_rad) {
-  sapphire::Isometry3d pose = sapphire::Isometry3d::Identity();
-  pose.translation() = sapphire::Vector3d(x, 0.0, 0.0);
-  pose.linear() = Eigen::AngleAxisd(yaw_rad, sapphire::Vector3d::UnitZ()).toRotationMatrix();
-  return pose;
-}
-
-sapphire::RegistrationConfig makeConfig() {
-  sapphire::RegistrationConfig config;
-  config.k_correspondences = 10;
-  config.min_inliers = 50;
-  return config;
-}
-
-void testAlignWithoutTargetIsRejected() {
-  sapphire::Registration registration(makeConfig());
-  registration.setSource(makeCloud());
-  const auto result = registration.align(sapphire::Isometry3d::Identity());
-  expect(!result.accepted, "registration without target must not be accepted");
-}
-
-void testTranslationIsRecovered() {
-  sapphire::Registration registration(makeConfig());
-  registration.setTarget(makeCloud());
-  registration.setSource(makeCloud(-0.2f));
-  const auto result = registration.align(sapphire::Isometry3d::Identity());
-
-  expect(result.accepted, "structured translated clouds must align");
-  expect(std::abs(result.T_world_lidar.translation().x() - 0.2) < 1e-3, "GICP must recover source-to-target translation");
-  expect(result.source_points == 100, "registration must report the source point count");
-  expect(result.num_inliers > 0, "accepted registration must report positive inliers");
-  expect(result.inlier_ratio > 0.0 && result.inlier_ratio <= 1.0, "accepted registration must report a valid inlier ratio");
-  expect(result.iterations > 0, "registration must report solver iterations");
-  expect(std::isfinite(result.solver_error) && result.solver_error >= 0.0, "registration must report a finite non-negative solver error");
-  expect(result.hessian_valid, "accepted registration must expose a finite Hessian");
-  expect(result.conditioning_valid, "accepted registration must expose blockwise conditioning");
-  expect(result.rotation_min_eigenvalue > 0.0 && result.translation_min_eigenvalue > 0.0, "blockwise Hessian minima must be positive");
-  expect(result.rotation_condition >= 1.0 && result.translation_condition >= 1.0, "blockwise Hessian condition numbers must be at least one");
-}
-
-void testVgicpTranslationIsRecovered() {
-  auto config = makeConfig();
-  config.min_inliers = 30;
-  sapphire::Registration registration(config, "VGICP", 0.5);
-  registration.setTarget(makeAsymmetricCloud());
-  registration.setSource(makeAsymmetricCloud(-0.2f));
-  const auto result = registration.align(sapphire::Isometry3d::Identity());
-
-  expect(result.accepted, "structured translated clouds must align with VGICP");
-  expect(std::abs(result.T_world_lidar.translation().x() - 0.2) < 5e-3,
-         "VGICP must recover source-to-target translation, actual x=" + std::to_string(result.T_world_lidar.translation().x()));
-}
-
-void testExcessiveCorrectionIsRejected() {
-  auto config = makeConfig();
-  config.max_correspondence_dist = 2.0;
-  config.max_correction_trans = 0.1;
-  sapphire::Registration registration(config);
-  registration.setTarget(makeCloud());
-  registration.setSource(makeCloud(-0.2f));
-  const auto result = registration.align(sapphire::Isometry3d::Identity());
-
-  expect(result.converged, "GICP should converge before correction gate is applied");
-  expect(!result.accepted, "correction beyond configured translation gate must be rejected");
-  expect(result.T_correction.matrix().isApprox(Eigen::Matrix4d::Identity(), 1e-12), "rejected registration must expose identity correction");
-}
-
-void testSensorYawFarFromOriginIsAccepted() {
-  auto config = makeConfig();
-  config.min_inliers = 30;
-  config.max_correspondence_dist = 1.0;
-  config.max_correction_trans = 1.0;
-  config.max_correction_rot_deg = 20.0;
-
-  const sapphire::Isometry3d T_true = poseAt(100.0, 0.0);
-  const double yaw = 1.0 * M_PI / 180.0;
-  const sapphire::Isometry3d T_prior = poseAt(100.0, yaw);
-  const auto local = makeAsymmetricCloud();
-
-  sapphire::Registration registration(config, "VGICP", 0.5);
-  registration.setTarget(transformCloud(*local, T_true));
-  registration.setSource(transformCloud(*local, T_prior));
-  const auto result = registration.align(T_prior);
-
-  expect(result.converged, "VGICP should converge on a 1 degree sensor yaw");
-  expect(result.attempted_trans_m > 1.0, "lever arm at 100 m must exceed 1 m, actual " + std::to_string(result.attempted_trans_m));
-  expect(result.attempted_sensor_trans_m < 0.2,
-         "sensor displacement of a pure yaw must stay under the gate, actual " + std::to_string(result.attempted_sensor_trans_m));
-  expect(result.accepted, "a 1 degree yaw about the sensor at 100 m must be accepted");
-  expect((result.T_world_lidar.translation() - T_true.translation()).norm() < 0.05, "accepted yaw correction must recover the sensor position");
-}
-
-void testSensorTranslationFarFromOriginIsRejected() {
-  auto config = makeConfig();
-  config.max_correspondence_dist = 2.0;
-  config.max_correction_trans = 0.1;
-
-  const sapphire::Isometry3d T_true = poseAt(100.0, 0.0);
-  sapphire::Isometry3d T_prior = poseAt(100.0, 0.0);
-  T_prior.translation().x() += 0.2;
-  const auto local = makeCloud();
-
-  sapphire::Registration registration(config);
-  registration.setTarget(transformCloud(*local, T_true));
-  registration.setSource(transformCloud(*local, T_prior));
-  const auto result = registration.align(T_prior);
-
-  expect(result.converged, "GICP should converge before the sensor translation gate");
-  expect(result.attempted_sensor_trans_m > 0.1,
-         "sensor displacement must exceed the gate, actual " + std::to_string(result.attempted_sensor_trans_m));
-  expect(!result.accepted, "a sensor translation beyond the gate far from the origin must be rejected");
-  expect(result.T_correction.matrix().isApprox(Eigen::Matrix4d::Identity(), 1e-12), "rejected registration must expose identity correction");
-}
+};
 
 }  // namespace
 
 int main() {
-  testAlignWithoutTargetIsRejected();
-  testTranslationIsRecovered();
-  testVgicpTranslationIsRecovered();
-  testExcessiveCorrectionIsRejected();
-  testSensorYawFarFromOriginIsAccepted();
-  testSensorTranslationFarFromOriginIsRejected();
-  std::cout << "All registration tests passed\n";
-  return EXIT_SUCCESS;
+  const auto identity = sapphire::Isometry3d::Identity();
+  RevisitFixture immediate;
+  immediate.publish();
+  if (!sapphire::RegistrationTestAccess::update(immediate.tracking, 10.1, identity, immediate.scanner)) {
+    throw std::runtime_error("first independent scan should verify the map");
+  }
+
+  RevisitFixture delayed;
+  sapphire::RegistrationTestAccess::update(delayed.tracking, 10.1, identity, delayed.scanner);
+  delayed.publish();
+  auto moved = identity;
+  moved.translation().x() = 2.;
+  if (!sapphire::RegistrationTestAccess::update(delayed.tracking, 11., moved, {})) {
+    throw std::runtime_error("late delivery must use the recorded scan");
+  }
+  if (!immediate.tracking.globalFromOdom().matrix().isApprox(delayed.tracking.globalFromOdom().matrix(), 1e-12)) {
+    throw std::runtime_error("delivery time changed the alignment");
+  }
+
+  RevisitFixture expired;
+  sapphire::RegistrationTestAccess::update(expired.tracking, 10.1, identity, expired.scanner);
+  expired.publish();
+  if (sapphire::RegistrationTestAccess::update(expired.tracking, 41., identity, expired.scanner)) {
+    throw std::runtime_error("expired scan must not activate historical geometry");
+  }
 }

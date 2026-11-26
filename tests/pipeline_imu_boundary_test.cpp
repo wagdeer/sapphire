@@ -7,7 +7,7 @@ namespace {
 
 struct TemporaryMap {
   std::filesystem::path path = std::filesystem::temp_directory_path() /
-                               ("sapphire-pipeline2-imu-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                               ("sapphire-pipeline-imu-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   ~TemporaryMap() {
     std::error_code error;
     std::filesystem::remove_all(path, error);
@@ -39,7 +39,6 @@ int main() {
   TemporaryMap map;
   sapphire::Config config;
   config.pgo.enabled = true;
-  config.methodB.enabled = true;
   config.methodB.map_directory = map.path.string();
   config.imu.init.gravity_mag = 9.8;
   sapphire::OdometryPipeline pipeline(config);
@@ -64,6 +63,6 @@ int main() {
       throw std::runtime_error("the raw IMU sample after the scan must still reach the IMU-rate state");
     }
   }
-  if (tracked < 10) throw std::runtime_error("pipeline2 failed to start tracking");
+  if (tracked < 10) throw std::runtime_error("pipeline failed to start tracking");
   pipeline.finishMapping();
 }

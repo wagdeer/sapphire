@@ -237,17 +237,12 @@ enum class NumberRule {
   UnitInterval,
 };
 
-enum class IntRule {
-  None,
-  Positive,
-};
-
 enum class Gate {
   Always,
   Occupancy,
 };
 
-enum class Required { Never, Always, Main };
+enum class Required { Never, Always };
 
 struct NumberField {
   const char* path;
@@ -256,13 +251,6 @@ struct NumberField {
   Required required;
   NumberRule rule;
   Gate gate;
-};
-
-struct IntField {
-  const char* path;
-  void (*set)(Config&, int);
-  int (*get)(const Config&);
-  IntRule rule;
 };
 
 struct BoolField {
@@ -275,7 +263,6 @@ struct StringField {
   void (*set)(Config&, const std::string&);
   const std::string& (*get)(const Config&);
   const char* const* choices;
-  const char* reject_message;
 };
 
 #define FIELD(path, member, required, rule, gate)                                                                                               \
@@ -285,42 +272,21 @@ struct StringField {
 
 #define OPT(path, member, rule) FIELD(path, member, Required::Never, rule, Gate::Always)
 #define REQ(path, member, rule) FIELD(path, member, Required::Always, rule, Gate::Always)
-#define REQ_MAIN(path, member, rule) FIELD(path, member, Required::Main, rule, Gate::Always)
 #define WHEN_OCC(path, member, rule) FIELD(path, member, Required::Never, rule, Gate::Occupancy)
-
-#define INT(path, member, rule)                                                                                              \
-  IntField {                                                                                                                 \
-    path, [](Config& config, int value) { config.member = value; }, [](const Config& config) { return config.member; }, rule \
-  }
 
 #define BOOL_FIELD(path, member)                                    \
   BoolField {                                                       \
     path, [](Config& config, bool value) { config.member = value; } \
   }
 
-#define STR(path, member, choices, reject_message)                                                        \
-  StringField {                                                                                           \
-    path, [](Config& config, const std::string& value) { config.member = value; },                        \
-        [](const Config& config) -> const std::string& { return config.member; }, choices, reject_message \
+#define STR(path, member, choices)                                                        \
+  StringField {                                                                           \
+    path, [](Config& config, const std::string& value) { config.member = value; },        \
+        [](const Config& config) -> const std::string& { return config.member; }, choices \
   }
-
-constexpr const char* const kFusionChoices[] = {"observer", "eskf", nullptr};
-constexpr const char* const kRegistrationChoices[] = {"GICP", "VGICP", nullptr};
-constexpr const char* const kAccelUnitChoices[] = {"auto", "g", "m_s2", nullptr};
 
 const NumberField kNumbers[] = {
     REQ("imu.gravity", imu.init.gravity_mag, NumberRule::Positive),
-    OPT("imu.init.convergence_gyro_std", imu.init.convergence_gyro_std, NumberRule::Positive),
-    OPT("imu.init.convergence_accel_std", imu.init.convergence_accel_std, NumberRule::Positive),
-    OPT("imu.init.timeout_sec", imu.init.timeout_sec, NumberRule::Positive),
-    OPT("imu.init.check_interval_sec", imu.init.check_interval_sec, NumberRule::Positive),
-    REQ_MAIN("imu.noise.accel_noise_density", imu.noise.accel_noise_density, NumberRule::Positive),
-    REQ_MAIN("imu.noise.gyro_noise_density", imu.noise.gyro_noise_density, NumberRule::Positive),
-    REQ_MAIN("imu.noise.accel_random_walk", imu.noise.accel_random_walk, NumberRule::Positive),
-    REQ_MAIN("imu.noise.gyro_random_walk", imu.noise.gyro_random_walk, NumberRule::Positive),
-    // Zero is the stationary-bias default. Negative values stay legal.
-    OPT("imu.noise.accel_bias_rw_sigma", imu.noise.accel_bias_rw_sigma, NumberRule::None),
-    OPT("imu.noise.gyro_bias_rw_sigma", imu.noise.gyro_bias_rw_sigma, NumberRule::None),
 
     OPT("odometry.voxel_size", odometry.voxel_size, NumberRule::Positive),
     // Finite and ordered as a group in validateConfig.
@@ -330,59 +296,7 @@ const NumberField kNumbers[] = {
     OPT("odometry.crop_box.max_x", odometry.crop_box.max_x, NumberRule::None),
     OPT("odometry.crop_box.max_y", odometry.crop_box.max_y, NumberRule::None),
     OPT("odometry.crop_box.max_z", odometry.crop_box.max_z, NumberRule::None),
-    OPT("odometry.submap.splitting_distance", odometry.submap.splitting_distance, NumberRule::Positive),
-    OPT("odometry.submap.splitting_rotation", odometry.submap.splitting_rotation, NumberRule::Positive),
-    OPT("odometry.submap.voxel_size", odometry.submap.voxel_size, NumberRule::Positive),
-    OPT("odometry.observer.position_gain", odometry.observer.position_gain, NumberRule::Nonnegative),
-    OPT("odometry.observer.velocity_gain", odometry.observer.velocity_gain, NumberRule::Nonnegative),
-    OPT("odometry.observer.orientation_gain", odometry.observer.orientation_gain, NumberRule::Nonnegative),
-    OPT("odometry.observer.accel_bias_gain", odometry.observer.accel_bias_gain, NumberRule::Nonnegative),
-    OPT("odometry.observer.gyro_bias_gain", odometry.observer.gyro_bias_gain, NumberRule::Nonnegative),
-    OPT("odometry.observer.accel_bias_max", odometry.observer.accel_bias_max, NumberRule::Nonnegative),
-    OPT("odometry.observer.gyro_bias_max", odometry.observer.gyro_bias_max, NumberRule::Nonnegative),
-    OPT("odometry.eskf.sigma_rotation", odometry.eskf.sigma_rotation, NumberRule::Positive),
-    OPT("odometry.eskf.sigma_translation", odometry.eskf.sigma_translation, NumberRule::Positive),
-    OPT("odometry.eskf.icp_covariance_scale", odometry.eskf.icp_covariance_scale, NumberRule::Positive),
-    OPT("odometry.eskf.hessian_min_information", odometry.eskf.hessian_min_information, NumberRule::Positive),
-    OPT("odometry.eskf.hessian_max_condition", odometry.eskf.hessian_max_condition, NumberRule::Positive),
-    OPT("odometry.eskf.hessian_degenerate_sigma", odometry.eskf.hessian_degenerate_sigma, NumberRule::Positive),
-    OPT("odometry.eskf.hessian_max_sigma", odometry.eskf.hessian_max_sigma, NumberRule::Positive),
-    // Finite, including negatives, which disable the gate.
-    OPT("odometry.eskf.mahalanobis_threshold", odometry.eskf.mahalanobis_threshold, NumberRule::None),
-    OPT("odometry.eskf.bias_update_scale", odometry.eskf.bias_update_scale, NumberRule::Nonnegative),
-    OPT("odometry.eskf.velocity_correction_gain", odometry.eskf.velocity_correction_gain, NumberRule::Nonnegative),
-    OPT("odometry.eskf.accel_bias_max", odometry.eskf.accel_bias_max, NumberRule::Nonnegative),
-    OPT("odometry.eskf.gyro_bias_max", odometry.eskf.gyro_bias_max, NumberRule::Nonnegative),
-    OPT("odometry.eskf.init_sigma_theta", odometry.eskf.init_sigma_theta, NumberRule::Positive),
-    OPT("odometry.eskf.init_sigma_velocity", odometry.eskf.init_sigma_velocity, NumberRule::Positive),
-    OPT("odometry.eskf.init_sigma_position", odometry.eskf.init_sigma_position, NumberRule::Positive),
-    OPT("odometry.eskf.specific_force_model_density", odometry.eskf.specific_force_model_density, NumberRule::Nonnegative),
-    OPT("odometry.eskf.position_model_diffusion", odometry.eskf.position_model_diffusion, NumberRule::Nonnegative),
 
-    OPT("registration.gicp.transformation_epsilon", registration.gicp.transformation_epsilon, NumberRule::Positive),
-    OPT("registration.gicp.rotation_epsilon", registration.gicp.rotation_epsilon, NumberRule::Positive),
-    OPT("registration.gicp.max_correspondence_dist", registration.gicp.max_correspondence_dist, NumberRule::Positive),
-    OPT("registration.gicp.max_correction_trans", registration.gicp.max_correction_trans, NumberRule::Positive),
-    OPT("registration.gicp.max_correction_rot_deg", registration.gicp.max_correction_rot_deg, NumberRule::Positive),
-    OPT("registration.vgicp.voxel_resolution", registration.vgicp.voxel_resolution, NumberRule::Positive),
-
-    OPT("pgo.keyframe_distance", pgo.keyframe_distance, NumberRule::Positive),
-    OPT("pgo.keyframe_rotation", pgo.keyframe_rotation, NumberRule::Positive),
-    OPT("pgo.loop_min_time_separation", pgo.loop_min_time_separation, NumberRule::Nonnegative),
-    OPT("pgo.loop_min_travel_distance", pgo.loop_min_travel_distance, NumberRule::Nonnegative),
-    OPT("pgo.loop_max_rotation", pgo.loop_max_rotation, NumberRule::Positive),
-    OPT("pgo.loop_search_radius", pgo.loop_search_radius, NumberRule::Positive),
-    OPT("pgo.source_voxel_size", pgo.source_voxel_size, NumberRule::Positive),
-    OPT("pgo.target_voxel_size", pgo.target_voxel_size, NumberRule::Positive),
-    OPT("pgo.source_travel_radius_m", pgo.source_travel_radius_m, NumberRule::Nonnegative),
-    OPT("pgo.source_max_range_m", pgo.source_max_range_m, NumberRule::Positive),
-    OPT("pgo.lidar_max_correspondence_m", pgo.lidar_max_correspondence_m, NumberRule::Positive),
-    OPT("pgo.lidar_min_overlap", pgo.lidar_min_overlap, NumberRule::UnitInterval),
-    OPT("pgo.lidar_max_fitness_m2", pgo.lidar_max_fitness_m2, NumberRule::Positive),
-    OPT("pgo.lidar_translation_sigma_m", pgo.lidar_translation_sigma_m, NumberRule::Positive),
-    OPT("pgo.lidar_rotation_sigma_rad", pgo.lidar_rotation_sigma_rad, NumberRule::Positive),
-    OPT("pgo.max_constraint_error_sigma", pgo.max_constraint_error_sigma, NumberRule::Positive),
-    OPT("pgo.update_period_sec", pgo.update_period_sec, NumberRule::Positive),
     OPT("pgo.map_voxel_size", pgo.map_voxel_size, NumberRule::Positive),
     WHEN_OCC("pgo.occupancy.resolution", pgo.occupancy.resolution, NumberRule::Positive),
     WHEN_OCC("pgo.occupancy.h_clearance", pgo.occupancy.h_clearance, NumberRule::Nonnegative),
@@ -401,66 +315,28 @@ const NumberField kNumbers[] = {
     OPT("sensor.lidar.header_tolerance", sensor.lidar.header_tolerance, NumberRule::Nonnegative),
 };
 
-const IntField kInts[] = {
-    INT("methodB.voxel_capacity", methodB.voxel_capacity, IntRule::Positive),
-    INT("imu.init.min_samples", imu.init.min_samples, IntRule::Positive),
-    INT("odometry.submap.max_keyframes", odometry.submap.max_keyframes, IntRule::Positive),
-    INT("odometry.submap.recovery_after_rejections", odometry.submap.recovery_after_rejections, IntRule::None),
-    // None: one message covers the whole integer group.
-    INT("registration.gicp.max_iterations", registration.gicp.max_iterations, IntRule::None),
-    INT("registration.gicp.k_correspondences", registration.gicp.k_correspondences, IntRule::None),
-    INT("registration.gicp.min_preprocessed_points", registration.gicp.min_preprocessed_points, IntRule::None),
-    INT("registration.gicp.min_source_points", registration.gicp.min_source_points, IntRule::None),
-    INT("registration.gicp.min_inliers", registration.gicp.min_inliers, IntRule::None),
-    INT("pgo.loop_search_stride", pgo.loop_search_stride, IntRule::None),
-    INT("pgo.target_frame_count", pgo.target_frame_count, IntRule::None),
-    INT("pgo.source_max_frames", pgo.source_max_frames, IntRule::Positive),
-    INT("pgo.lidar_min_inliers", pgo.lidar_min_inliers, IntRule::None),
-    INT("pgo.lidar_max_iterations", pgo.lidar_max_iterations, IntRule::None),
-    INT("pgo.map_frame_stride", pgo.map_frame_stride, IntRule::Positive),
-};
-
 const BoolField kBools[] = {
-    BOOL_FIELD("methodB.enabled", methodB.enabled),
     BOOL_FIELD("methodB.local_feedback", methodB.local_feedback),
     BOOL_FIELD("methodB.local_feedback_ba", methodB.local_feedback_ba),
     BOOL_FIELD("methodB.gravity_aligned_output", methodB.gravity_aligned_output),
-    BOOL_FIELD("odometry.eskf.use_hessian", odometry.eskf.use_hessian),
-    BOOL_FIELD("odometry.eskf.inject_full_pose", odometry.eskf.inject_full_pose),
-    BOOL_FIELD("odometry.eskf.inject_directional_pose", odometry.eskf.inject_directional_pose),
     BOOL_FIELD("pgo.enabled", pgo.enabled),
     BOOL_FIELD("pgo.occupancy.enabled", pgo.occupancy.enabled),
     BOOL_FIELD("sensor.lidar.require_point_time", sensor.lidar.require_point_time),
 };
 
-EskfChart eskfChartFromString(const std::string& chart) {
-  if (chart == "euclidean") {
-    return EskfChart::Euclidean;
-  }
-  if (chart == "gal3_right") {
-    return EskfChart::Gal3Right;
-  }
-  throw std::invalid_argument("odometry.eskf.chart must be \"euclidean\" or \"gal3_right\"");
-}
-
 const StringField kStrings[] = {
-    STR("methodB.map_directory", methodB.map_directory, nullptr, nullptr),
-    STR("odometry.fusion", odometry.fusion, kFusionChoices, "odometry.fusion must be \"observer\" or \"eskf\""),
-    STR("registration.type", registration.type, kRegistrationChoices, "registration.type must be GICP or VGICP"),
-    STR("sensor.lidar.time_field", sensor.lidar.time_field, sensor::timeFieldChoices(), nullptr),
-    STR("sensor.lidar.time_unit", sensor.lidar.time_unit, sensor::timeUnitChoices(), nullptr),
-    STR("sensor.lidar.time_ref", sensor.lidar.time_ref, sensor::timeRefChoices(), nullptr),
-    STR("sensor.imu.accel_unit", sensor.imu.accel_unit, kAccelUnitChoices, nullptr),
-    STR("output.trajectory_dir", output.trajectory_dir, nullptr, nullptr),
-    STR("output.trajectory_file", output.trajectory_file, nullptr, nullptr),
+    STR("methodB.map_directory", methodB.map_directory, nullptr),
+    STR("sensor.lidar.time_field", sensor.lidar.time_field, sensor::timeFieldChoices()),
+    STR("sensor.lidar.time_unit", sensor.lidar.time_unit, sensor::timeUnitChoices()),
+    STR("sensor.lidar.time_ref", sensor.lidar.time_ref, sensor::timeRefChoices()),
+    STR("output.trajectory_dir", output.trajectory_dir, nullptr),
+    STR("output.trajectory_file", output.trajectory_file, nullptr),
 };
 
 #undef FIELD
 #undef OPT
 #undef REQ
-#undef REQ_MAIN
 #undef WHEN_OCC
-#undef INT
 #undef BOOL_FIELD
 #undef STR
 
@@ -491,17 +367,15 @@ void loadSchema(ParseContext& ctx, toml::table& root, Config& config) {
   }
   for (const NumberField& field : kNumbers) {
     const NodeView node = root.at_path(field.path);
-    if (field.required == Required::Always || (field.required == Required::Main && !config.methodB.enabled)) {
+    if (field.required == Required::Always) {
       field.set(config, requiredNumber(ctx, node, field.path));
     } else if (const auto value = optionalNumber(ctx, node, field.path)) {
       field.set(config, *value);
     }
   }
-  for (const IntField& field : kInts) {
-    const NodeView node = root.at_path(field.path);
-    if (const auto value = optionalInt(ctx, node, field.path)) {
-      field.set(config, *value);
-    }
+  constexpr auto path = "methodB.voxel_capacity";
+  if (const auto value = optionalInt(ctx, root.at_path(path), path)) {
+    config.methodB.voxel_capacity = *value;
   }
   for (const StringField& field : kStrings) {
     const NodeView node = root.at_path(field.path);
@@ -509,11 +383,6 @@ void loadSchema(ParseContext& ctx, toml::table& root, Config& config) {
       field.set(config, *value);
     }
   }
-  const NodeView chart = root.at_path("odometry.eskf.chart");
-  if (const auto value = optionalString(ctx, chart, "odometry.eskf.chart")) {
-    config.odometry.eskf.chart = eskfChartFromString(*value);
-  }
-
   const NodeView extrinsics = root.at_path("extrinsics.T_imu_lidar");
   const Eigen::Vector3d translation = requiredVector3(ctx, extrinsics["translation"], "extrinsics.T_imu_lidar.translation");
   const Eigen::Quaterniond rotation = requiredQuaternionXyzw(ctx, extrinsics["rotation_xyzw"], "extrinsics.T_imu_lidar.rotation_xyzw");
@@ -530,17 +399,9 @@ void validateSchema(const Config& config) {
     }
     applyNumberRule(field, field.get(config));
   }
-  for (const IntField& field : kInts) {
-    if (field.rule == IntRule::Positive && field.get(config) <= 0) {
-      throw std::invalid_argument(std::string(field.path) + " must be positive");
-    }
-  }
   for (const StringField& field : kStrings) {
     if (field.choices == nullptr || isAllowedChoice(field.get(config), field.choices)) {
       continue;
-    }
-    if (field.reject_message != nullptr) {
-      throw std::invalid_argument(field.reject_message);
     }
     throwChoice(field.path, field.choices);
   }
@@ -569,40 +430,12 @@ Config loadConfig(const std::filesystem::path& path) {
 void validateConfig(const Config& config) {
   validateSchema(config);
 
-  if (config.odometry.eskf.hessian_degenerate_sigma > config.odometry.eskf.hessian_max_sigma) {
-    throw std::invalid_argument(
-        "odometry.eskf.hessian_degenerate_sigma must not exceed "
-        "hessian_max_sigma");
-  }
-  if (!std::isfinite(config.odometry.eskf.mahalanobis_threshold)) {
-    throw std::invalid_argument(
-        "odometry.eskf.mahalanobis_threshold must be finite "
-        "(use <=0 to disable)");
-  }
   const auto& crop = config.odometry.crop_box;
   if (!std::isfinite(crop.min_x) || !std::isfinite(crop.min_y) || !std::isfinite(crop.min_z) || !std::isfinite(crop.max_x) ||
       !std::isfinite(crop.max_y) || !std::isfinite(crop.max_z) || crop.min_x >= crop.max_x || crop.min_y >= crop.max_y || crop.min_z >= crop.max_z) {
     throw std::invalid_argument("odometry.crop_box bounds must be finite and ordered");
   }
 
-  const auto& gicp = config.registration.gicp;
-  if (config.odometry.submap.recovery_after_rejections < 0) {
-    throw std::invalid_argument("odometry.submap.recovery_after_rejections must be nonnegative");
-  }
-  if (gicp.max_iterations <= 0 || gicp.k_correspondences <= 0 || gicp.min_preprocessed_points <= 0 || gicp.min_source_points <= 0 ||
-      gicp.min_inliers <= 0) {
-    throw std::invalid_argument("registration.gicp integer limits must be positive");
-  }
-  if (config.pgo.loop_search_stride <= 0 || config.pgo.target_frame_count < 0) {
-    throw std::invalid_argument(
-        "pgo loop_search_stride must be positive and "
-        "target_frame_count must be nonnegative");
-  }
-  if (config.pgo.lidar_min_inliers < 6 || config.pgo.lidar_max_iterations < 1) {
-    throw std::invalid_argument(
-        "pgo.lidar_min_inliers must be >= 6 and "
-        "lidar_max_iterations must be positive");
-  }
   if (config.pgo.occupancy.enabled) {
     if (config.pgo.occupancy.ground_margin >= config.pgo.occupancy.h_clearance && config.pgo.occupancy.h_clearance > 0.0) {
       throw std::invalid_argument("pgo.occupancy.ground_margin must be < h_clearance");
@@ -613,14 +446,11 @@ void validateConfig(const Config& config) {
   }
 
   requireRelativeTrajectoryFile(config.output.trajectory_file);
-  if (config.methodB.enabled && (!config.pgo.enabled || config.methodB.map_directory.empty() || config.methodB.voxel_capacity < 2)) {
-    throw std::invalid_argument("methodB requires pgo.enabled, a map directory, and at least two voxels");
+  if (!config.pgo.enabled) {
+    throw std::invalid_argument("pgo.enabled must be true for Method B");
   }
-  if (!config.pgo.enabled && !trajectoryOutputPath(config).empty()) {
-    throw std::invalid_argument(
-        "output.trajectory_dir is set but pgo.enabled is false; "
-        "the TUM dump is the pose-graph map trajectory and stays empty "
-        "unless PGO is enabled");
+  if (config.methodB.map_directory.empty() || config.methodB.voxel_capacity < 2) {
+    throw std::invalid_argument("methodB requires a non-empty map directory and capacity for at least two voxels");
   }
 
   const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cmath>
 #include <cstddef>
 #include <memory>
 #include <sapphire/mapping/occupancy_grid.hpp>
@@ -9,50 +8,6 @@
 
 namespace sapphire {
 
-/// Loop GICP translation (m) and rotation (rad) convergence.
-/// Not registration.gicp.transformation_epsilon or rotation_epsilon.
-inline constexpr double kLoopConvergenceEpsilon = 0.01;
-
-/// Numbers the loop registrar already computed. This is not the frontend
-/// Registration::align gate.
-struct LoopRegistrationGate {
-  bool converged = false;
-  bool finite = false;
-  size_t inliers = 0;
-  size_t min_inliers = 0;
-  double overlap = 0.0;
-  double min_overlap = 0.0;
-  double fitness = 0.0;
-  double max_fitness = 0.0;
-  bool curvature_ok = false;
-  double min_eigenvalue = 0.0;
-};
-
-/// Nullptr when the loop registration is accepted. The covariance floor is
-/// applied by the caller after this returns.
-inline const char* rejectLoopRegistration(const LoopRegistrationGate& gate) {
-  if (!gate.converged) {
-    return "not converged";
-  }
-  if (!gate.finite) {
-    return "non-finite result";
-  }
-  if (gate.inliers < gate.min_inliers) {
-    return "too few inliers";
-  }
-  if (gate.overlap < gate.min_overlap) {
-    return "overlap below minimum";
-  }
-  if (!std::isfinite(gate.fitness) || gate.fitness > gate.max_fitness) {
-    return "fitness above maximum";
-  }
-  if (!gate.curvature_ok || gate.min_eigenvalue <= 0.0) {
-    return "singular Hessian";
-  }
-  return nullptr;
-}
-
-class Pipeline2;
 class RevisitExchange;
 class LocalPlaneExchange;
 struct InertialFrame;
@@ -62,14 +17,7 @@ struct PoseGraphStats {
   size_t optimized_poses = 0;
   size_t loop_candidates = 0;
   size_t loop_registration_failures = 0;
-  /// Loop factors dropped because a trial optimization tore a binary edge
-  /// past max_constraint_error_sigma, or the trial itself diverged.
-  size_t loop_residual_rejections = 0;
   size_t loop_edges = 0;
-  double last_loop_fitness = -1.0;
-  /// Source points of the latest GICP attempt, after the query window,
-  /// body-frame range gate, and source voxel. Zero before any attempt.
-  size_t last_loop_source_points = 0;
   double correction_translation = 0.0;
   double correction_rotation = 0.0;
   size_t revision = 0;
@@ -120,7 +68,7 @@ struct MapTrajectory {
 /// are replayed from the keyframe that owned each stamp.
 class PoseGraphBackend {
  public:
-  explicit PoseGraphBackend(const Config::Pgo& config);
+  explicit PoseGraphBackend(const Config& config);
   ~PoseGraphBackend();
 
   PoseGraphBackend(const PoseGraphBackend&) = delete;
@@ -130,14 +78,7 @@ class PoseGraphBackend {
   /// After the last sensor callback, seal the open submap and join the worker.
   void finish();
 
-  /// Submit an accepted frontend frame. Keyframe selection is independent
-  /// from the frontend submap policy.
-  void addFrame(const PointCloudConstPtr& cloud_odom, const Isometry3d& T_odom_lidar, double stamp);
-
-  /// Remember an accepted lidar pose in the odom frame. Call after
-  /// addFrame() so the sample anchors to the keyframe that owns it,
-  /// including a keyframe this pose just created. Non-keyframes stay on
-  /// the previous keyframe. IMU propagation is not recorded.
+  /// Remember an accepted lidar pose in the odom frame.
   void recordOdometrySample(const OdomFrameSample& odom_frame_sample);
 
   /// Replay recorded samples with each owning keyframe's optimized pose.
@@ -172,8 +113,6 @@ class PoseGraphBackend {
 
  private:
   friend class OdometryPipeline;
-  friend class Pipeline2;
-  explicit PoseGraphBackend(const Config& config);
   bool addInertialFrame(InertialFrame frame);
   void setLiveCorrection(const Isometry3d& transform, double stamp, const Eigen::Vector3d& gravity_odom);
   RevisitExchange& revisitExchange();
