@@ -17,6 +17,7 @@
 #include <deque>
 #include <iomanip>
 #include <iostream>
+#include <memory_resource>
 #include <optional>
 #include <sapphire/odometry/voxel_filter.hpp>
 #include <small_gicp/ann/kdtree.hpp>
@@ -57,7 +58,7 @@ struct Geometry {
   std::unique_ptr<GaussianVoxelMap> map;
   double score = 0.;
 };
-using VoxelMoments = std::unordered_map<VoxelKey, Moments, VoxelKeyHash>;
+using VoxelMoments = std::pmr::unordered_map<VoxelKey, Moments, VoxelKeyHash>;
 
 void accumulate(VoxelMoments& voxels, const MappingFrame& frame, const Eigen::Matrix4f& local, size_t id, double range_squared) {
   for (const auto& point : *frame.cloud) {
@@ -421,7 +422,8 @@ class Submap::Impl {
   }
 
   void resetGeometry() {
-    voxels_.clear();
+    // A new block starts with the same hash layout as a standalone block.
+    VoxelMoments{voxels_.get_allocator()}.swap(voxels_);
     observed_ = 0;
     seal_ready_ = false;
     retains_raw_ = true;
@@ -816,7 +818,9 @@ class Submap::Impl {
   PoseGraphStats stats_;
   std::vector<PoseGraphEdge> loop_edges_;
   std::deque<InertialFrame> pending_;
-  VoxelMoments voxels_;
+  // Reuse small node allocations. Large bucket arrays go directly upstream.
+  std::pmr::unsynchronized_pool_resource voxel_pool_{std::pmr::pool_options{256, 256}};
+  VoxelMoments voxels_{&voxel_pool_};
   size_t observed_ = 0;
   bool seal_ready_ = false, retains_raw_ = true;
   std::vector<SealedSubmap> submaps_;

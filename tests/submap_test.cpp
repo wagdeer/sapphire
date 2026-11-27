@@ -51,9 +51,46 @@ InertialFrame frame(size_t stamp, const PointCloudConstPtr& cloud) {
           {}};
 }
 
+void testBlockOrderIsIndependentOfPreviousBlock() {
+  Config config;
+  config.submap.min_frames = 4;
+  config.submap.min_voxel_num = 20;
+  config.pgo.loop_closure.enabled = false;
+
+  ScratchDirectory reuse_directory, fresh_directory;
+  SubmapArxiv reuse_archive(reuse_directory.path, config.pgo.loop_closure);
+  SubmapArxiv fresh_archive(fresh_directory.path, config.pgo.loop_closure);
+  Submap reused(reuse_archive, config.odometry, config.submap, config.pgo);
+  Submap fresh(fresh_archive, config.odometry, config.submap, config.pgo);
+
+  const auto large = planes(200);
+  const auto small = planes(25);
+  for (size_t i = 1; i <= 4; ++i) {
+    expect(!reused.update(frame(i, large)), "the first block is still collecting frames");
+  }
+  expect(reused.update(frame(5, small)), "the first block must be ready");
+  reused.seal();
+  expect(!fresh.update(frame(5, small)), "the fresh block starts at the same anchor");
+
+  for (size_t i = 6; i <= 9; ++i) {
+    const bool ready = i == 9;
+    expect(reused.update(frame(i, small)) == ready, "reused block should seal at the same time");
+    expect(fresh.update(frame(i, small)) == ready, "fresh block should seal at the same time");
+  }
+  reused.seal();
+  fresh.seal();
+  const auto a = reuse_archive.read(1);
+  const auto b = fresh_archive.read(0);
+  expect(a->size() == b->size() && a->size() == 25, "both blocks must have the same geometry");
+  for (size_t i = 0; i < a->size(); ++i) {
+    expect(a->cell(i) == b->cell(i), "a previous block's hash capacity must not change the packed voxel order");
+  }
+}
+
 }  // namespace
 
 int main() {
+  testBlockOrderIsIndependentOfPreviousBlock();
   ScratchDirectory scratch;
   Config config;
   config.pgo.loop_closure.enabled = false;
