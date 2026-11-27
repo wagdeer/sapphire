@@ -234,6 +234,7 @@ enum class NumberRule {
   None,
   Positive,
   Nonnegative,
+  NonnegativeFloat,
   UnitInterval,
 };
 
@@ -251,6 +252,13 @@ struct NumberField {
   Required required;
   NumberRule rule;
   Gate gate;
+};
+
+struct IntField {
+  const char* path;
+  void (*set)(Config&, int);
+  int (*get)(const Config&);
+  int minimum;
 };
 
 struct BoolField {
@@ -286,7 +294,11 @@ struct StringField {
   }
 
 const NumberField kNumbers[] = {
-    REQ("imu.gravity", imu.init.gravity_mag, NumberRule::Positive),
+    REQ("sensor.imu.gravity", sensor.imu.init.gravity_mag, NumberRule::Positive),
+    OPT("sensor.imu.gyro_var", sensor.imu.noise.gyro_var, NumberRule::NonnegativeFloat),
+    OPT("sensor.imu.accel_var", sensor.imu.noise.accel_var, NumberRule::NonnegativeFloat),
+    OPT("sensor.imu.gyro_bias_var", sensor.imu.noise.gyro_bias_var, NumberRule::NonnegativeFloat),
+    OPT("sensor.imu.accel_bias_var", sensor.imu.noise.accel_bias_var, NumberRule::NonnegativeFloat),
 
     OPT("odometry.voxel_size", odometry.voxel_size, NumberRule::Positive),
     // Finite and ordered as a group in validateConfig.
@@ -297,7 +309,22 @@ const NumberField kNumbers[] = {
     OPT("odometry.crop_box.max_y", odometry.crop_box.max_y, NumberRule::None),
     OPT("odometry.crop_box.max_z", odometry.crop_box.max_z, NumberRule::None),
 
-    OPT("pgo.map_voxel_size", pgo.map_voxel_size, NumberRule::Positive),
+    OPT("io.global_map_voxel_size", io.global_map_voxel_size, NumberRule::Positive),
+    OPT("pgo.relinearize_threshold", pgo.relinearize_threshold, NumberRule::Nonnegative),
+    OPT("submap.max_range_m", submap.max_range_m, NumberRule::Positive),
+    OPT("submap.max_deformation_m", submap.max_deformation_m, NumberRule::Nonnegative),
+    OPT("submap.ba.relative_cost_tolerance", submap.ba.relative_cost_tolerance, NumberRule::Nonnegative),
+    OPT("pgo.loop_closure.local_search_radius_m", pgo.loop_closure.local_search_radius_m, NumberRule::Positive),
+    OPT("pgo.loop_closure.local_departure_radius_m", pgo.loop_closure.local_departure_radius_m, NumberRule::Positive),
+    OPT("pgo.loop_closure.local_min_overlap", pgo.loop_closure.local_min_overlap, NumberRule::UnitInterval),
+    OPT("pgo.loop_closure.global_search_radius_min_m", pgo.loop_closure.global_search_radius_min_m, NumberRule::Positive),
+    OPT("pgo.loop_closure.global_search_radius_max_m", pgo.loop_closure.global_search_radius_max_m, NumberRule::Positive),
+    OPT("pgo.loop_closure.global_search_radius_growth", pgo.loop_closure.global_search_radius_growth, NumberRule::Nonnegative),
+    OPT("pgo.loop_closure.global_departure_radius_m", pgo.loop_closure.global_departure_radius_m, NumberRule::Positive),
+    OPT("pgo.loop_closure.fft_min_score", pgo.loop_closure.fft_min_score, NumberRule::UnitInterval),
+    OPT("pgo.loop_closure.fft_min_ambiguity", pgo.loop_closure.fft_min_ambiguity, NumberRule::Positive),
+    OPT("pgo.loop_closure.global_min_overlap", pgo.loop_closure.global_min_overlap, NumberRule::UnitInterval),
+    OPT("pgo.loop_closure.global_max_rms_m", pgo.loop_closure.global_max_rms_m, NumberRule::Positive),
     WHEN_OCC("pgo.occupancy.resolution", pgo.occupancy.resolution, NumberRule::Positive),
     WHEN_OCC("pgo.occupancy.h_clearance", pgo.occupancy.h_clearance, NumberRule::Nonnegative),
     WHEN_OCC("pgo.occupancy.ground_margin", pgo.occupancy.ground_margin, NumberRule::Nonnegative),
@@ -309,23 +336,38 @@ const NumberField kNumbers[] = {
     WHEN_OCC("pgo.occupancy.cloud_voxel_size", pgo.occupancy.cloud_voxel_size, NumberRule::Nonnegative),
     WHEN_OCC("pgo.occupancy.margin", pgo.occupancy.margin, NumberRule::Positive),
 
-    OPT("methodB.max_range_m", methodB.max_range_m, NumberRule::Nonnegative),
-    OPT("methodB.map_range_m", methodB.map_range_m, NumberRule::Positive),
+    OPT("sensor.lidar.max_range_m", sensor.lidar.max_range_m, NumberRule::Nonnegative),
     OPT("sensor.lidar.max_scan_duration", sensor.lidar.max_scan_duration, NumberRule::Positive),
     OPT("sensor.lidar.header_tolerance", sensor.lidar.header_tolerance, NumberRule::Nonnegative),
 };
 
+#define INT_FIELD(path, member, minimum) \
+  IntField { path, [](Config& config, int value) { config.member = value; }, [](const Config& config) { return config.member; }, minimum }
+
+const IntField kInts[] = {
+    INT_FIELD("odometry.voxel_capacity", odometry.voxel_capacity, 2),
+    INT_FIELD("pgo.relinearize_skip", pgo.relinearize_skip, 1),
+    INT_FIELD("submap.min_voxel_num", submap.min_voxel_num, 1),
+    INT_FIELD("submap.min_frames", submap.min_frames, 1),
+    INT_FIELD("submap.ba.min_frames", submap.ba.min_frames, 3),
+    INT_FIELD("submap.ba.min_planes", submap.ba.min_planes, 1),
+    INT_FIELD("submap.ba.max_iterations", submap.ba.max_iterations, 1),
+    INT_FIELD("pgo.loop_closure.local_max_candidates", pgo.loop_closure.local_max_candidates, 1),
+    INT_FIELD("pgo.loop_closure.global_max_candidates", pgo.loop_closure.global_max_candidates, 1),
+    INT_FIELD("pgo.loop_closure.global_refine_updates", pgo.loop_closure.global_refine_updates, 0),
+};
+
 const BoolField kBools[] = {
-    BOOL_FIELD("methodB.local_feedback", methodB.local_feedback),
-    BOOL_FIELD("methodB.local_feedback_ba", methodB.local_feedback_ba),
-    BOOL_FIELD("methodB.gravity_aligned_output", methodB.gravity_aligned_output),
+    BOOL_FIELD("odometry.enable_map_feedback", odometry.enable_map_feedback),
+    BOOL_FIELD("odometry.map_feedback_ba", odometry.map_feedback_ba),
     BOOL_FIELD("pgo.enabled", pgo.enabled),
+    BOOL_FIELD("pgo.loop_closure.enabled", pgo.loop_closure.enabled),
     BOOL_FIELD("pgo.occupancy.enabled", pgo.occupancy.enabled),
     BOOL_FIELD("sensor.lidar.require_point_time", sensor.lidar.require_point_time),
 };
 
 const StringField kStrings[] = {
-    STR("methodB.map_directory", methodB.map_directory, nullptr),
+    STR("io.map_directory", io.map_directory, nullptr),
     STR("sensor.lidar.time_field", sensor.lidar.time_field, sensor::timeFieldChoices()),
     STR("sensor.lidar.time_unit", sensor.lidar.time_unit, sensor::timeUnitChoices()),
     STR("sensor.lidar.time_ref", sensor.lidar.time_ref, sensor::timeRefChoices()),
@@ -333,6 +375,7 @@ const StringField kStrings[] = {
     STR("output.trajectory_file", output.trajectory_file, nullptr),
 };
 
+#undef INT_FIELD
 #undef FIELD
 #undef OPT
 #undef REQ
@@ -349,6 +392,12 @@ void applyNumberRule(const NumberField& field, double value) {
       break;
     case NumberRule::Nonnegative:
       requireFiniteNonnegative(value, field.path);
+      break;
+    case NumberRule::NonnegativeFloat:
+      requireFiniteNonnegative(value, field.path);
+      if (value > std::numeric_limits<float>::max()) {
+        throw std::invalid_argument(std::string(field.path) + " is outside the float range");
+      }
       break;
     case NumberRule::UnitInterval:
       if (!std::isfinite(value) || value <= 0.0 || value > 1.0) {
@@ -373,9 +422,10 @@ void loadSchema(ParseContext& ctx, toml::table& root, Config& config) {
       field.set(config, *value);
     }
   }
-  constexpr auto path = "methodB.voxel_capacity";
-  if (const auto value = optionalInt(ctx, root.at_path(path), path)) {
-    config.methodB.voxel_capacity = *value;
+  for (const IntField& field : kInts) {
+    if (const auto value = optionalInt(ctx, root.at_path(field.path), field.path)) {
+      field.set(config, *value);
+    }
   }
   for (const StringField& field : kStrings) {
     const NodeView node = root.at_path(field.path);
@@ -398,6 +448,11 @@ void validateSchema(const Config& config) {
       continue;
     }
     applyNumberRule(field, field.get(config));
+  }
+  for (const IntField& field : kInts) {
+    if (field.get(config) < field.minimum) {
+      throw std::invalid_argument(std::string(field.path) + " must be at least " + std::to_string(field.minimum));
+    }
   }
   for (const StringField& field : kStrings) {
     if (field.choices == nullptr || isAllowedChoice(field.get(config), field.choices)) {
@@ -449,8 +504,15 @@ void validateConfig(const Config& config) {
   if (!config.pgo.enabled) {
     throw std::invalid_argument("pgo.enabled must be true for Method B");
   }
-  if (config.methodB.map_directory.empty() || config.methodB.voxel_capacity < 2) {
-    throw std::invalid_argument("methodB requires a non-empty map directory and capacity for at least two voxels");
+  if (config.io.map_directory.empty()) {
+    throw std::invalid_argument("io.map_directory must not be empty");
+  }
+  const auto& loop = config.pgo.loop_closure;
+  if (loop.local_departure_radius_m < loop.local_search_radius_m) {
+    throw std::invalid_argument("pgo.loop_closure.local_departure_radius_m must be >= local_search_radius_m");
+  }
+  if (loop.global_search_radius_min_m > loop.global_search_radius_max_m) {
+    throw std::invalid_argument("pgo.loop_closure.global_search_radius_max_m must be >= global_search_radius_min_m");
   }
 
   const Isometry3d& extrinsic = config.extrinsics.T_imu_lidar;

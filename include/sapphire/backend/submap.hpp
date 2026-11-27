@@ -13,10 +13,10 @@ class LocalPlaneExchange;
 // Owned and called exclusively by the pose graph worker.
 class Submap {
  public:
-  Submap(SubmapArxiv& arxiv, const Config::MethodB& config);
+  Submap(SubmapArxiv& arxiv, const Config::Odometry& odometry, const Config::Submap& submap, const Config::Pgo& pgo);
   ~Submap();
   void build(InertialFrame frame);
-  // Return true when enough keyframes and the next anchor are available.
+  // Return true when the keyframe and geometry thresholds are met and the next anchor is available.
   bool update(InertialFrame frame);
   // With a lookahead frame, keep that frame for the next window.
   // Without lookahead, seal the remaining frames at shutdown.

@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
     const std::filesystem::path output(argv[4]);
     if (!std::filesystem::create_directory(output)) throw std::runtime_error("the output directory must be new");
     std::ofstream(output / "memory.csv") << "phase,rss_kib,peak_kib\n";
-    config.methodB.map_directory = (output / "submaps").string();
+    config.io.map_directory = (output / "submaps").string();
     config.output.trajectory_dir.clear();
     spdlog::set_default_logger(std::make_shared<spdlog::logger>("benchmark", std::make_shared<ExportLog>(output)));
     spdlog::set_level(spdlog::level::debug);

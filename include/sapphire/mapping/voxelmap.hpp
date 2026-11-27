@@ -132,6 +132,6 @@ struct InertialFrame {
 Mat_66<double> relativeOdometryCovariance(const std::vector<Isometry3d>& poses, std::size_t first, std::size_t end);
 
 BaStats adjustInertial(const std::vector<InertialFrame>& frames, const std::vector<MappingFrame>& fixed, std::vector<Isometry3d>& poses,
-                       std::vector<InertialEstimate>& nav, BoundarySummary* boundary = nullptr);
+                       std::vector<InertialEstimate>& nav, const Config::Submap::Ba& options = {}, BoundarySummary* boundary = nullptr);
 
 }  // namespace sapphire

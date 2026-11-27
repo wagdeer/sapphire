@@ -87,6 +87,13 @@ struct ImuConfig {
   struct Init {
     double gravity_mag = 9.80665;
   } init;
+  struct Noise {
+    // Diagonal coefficients of the odometry iESKF process noise.
+    double gyro_var = 0.01;
+    double accel_var = 0.01;
+    double gyro_bias_var = 0.0001;
+    double accel_bias_var = 0.0001;
+  } noise;
 };
 
 /// Top-level configuration — will be loaded from TOML
@@ -96,9 +103,17 @@ struct Config {
     Isometry3d T_imu_lidar = Isometry3d::Identity();
   } extrinsics;
 
+  struct Io {
+    std::string map_directory;
+    double global_map_voxel_size = 0.8;
+  } io;
+
   struct Odometry {
     /// Leaf size used to sample each deskewed scan for registration.
     double voxel_size = 0.25;
+    int voxel_capacity = 350000;
+    bool enable_map_feedback = false;
+    bool map_feedback_ba = false;
     /// Axis-aligned box in LiDAR frame; points inside are removed (robot body).
     struct CropBox {
       double min_x = -1.0;
@@ -114,9 +129,42 @@ struct Config {
     } crop_box;
   } odometry;
 
+  struct Submap {
+    int min_voxel_num = 72;  // Minimum fitted voxels to seal an online block.
+    int min_frames = 20;
+    double max_range_m = 30.0;
+    double max_deformation_m = 0.10;
+
+    struct Ba {
+      int min_frames = 8;
+      int min_planes = 16;
+      int max_iterations = 3;
+      double relative_cost_tolerance = 1e-6;
+    } ba;
+  } submap;
+
   struct Pgo {
     bool enabled = true;
-    double map_voxel_size = 0.8;
+    double relinearize_threshold = 0.1;
+    int relinearize_skip = 10;
+
+    struct LoopClosure {
+      bool enabled = true;
+      double local_search_radius_m = 18.0;
+      double local_departure_radius_m = 22.0;
+      int local_max_candidates = 3;
+      double local_min_overlap = 0.45;
+      double global_search_radius_min_m = 20.0;
+      double global_search_radius_max_m = 90.0;
+      double global_search_radius_growth = 0.014;
+      double global_departure_radius_m = 25.0;
+      int global_max_candidates = 15;
+      double fft_min_score = 0.10;
+      double fft_min_ambiguity = 1.18;
+      double global_min_overlap = 0.53;
+      double global_max_rms_m = 0.085;
+      int global_refine_updates = 8;
+    } loop_closure;
 
     /// 2.5D occupancy grid built from PGO keyframes.
     ///
@@ -152,18 +200,6 @@ struct Config {
     } occupancy;
   } pgo;
 
-  struct MethodB {
-    std::string map_directory;
-    int voxel_capacity = 350000;
-    double max_range_m = 0.0;  // Zero disables the optional frontend far-range cutoff.
-    double map_range_m = 30.0;  // Per-keyframe range for sealed mapping geometry.
-    bool local_feedback = false;  // Use recent planes in scan matching.
-    bool local_feedback_ba = true;  // Adjust the recent poses before fitting feedback planes.
-    bool gravity_aligned_output = false;  // Use the estimated gravity for the public map's vertical axis.
-  } methodB;
-
-  ImuConfig imu;
-
   /// Optional LiDAR time classification. Omitted TOML keys stay automatic.
   /// time_field, time_unit, time_ref, max_scan_duration, and header_tolerance
   /// match sensor::IngestConfig. makeLidarTimeSession copies those fields
@@ -176,8 +212,9 @@ struct Config {
       double max_scan_duration = 0.5;
       double header_tolerance = 0.5;
       bool require_point_time = false;
+      double max_range_m = 0.0;  // Zero disables the input far-range cutoff.
     } lidar;
-
+    ImuConfig imu;
   } sensor;
 
   /// Optional TUM dump written once when the ROS node exits.

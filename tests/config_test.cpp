@@ -36,12 +36,11 @@ std::filesystem::path writeConfig(const std::string& filename, const std::string
   return path;
 }
 
-std::string validConfig(double gravity, const std::string& quaternion) {
-  return "[imu]\n"
+std::string validConfig(double gravity, const std::string& quaternion, const std::string& imu_noise = {}) {
+  return "[sensor.imu]\n"
          "gravity = " +
-         std::to_string(gravity) +
-         "\n"
-         "[methodB]\n"
+         std::to_string(gravity) + "\n" + imu_noise +
+         "[io]\n"
          "map_directory = \"method-b-test-map\"\n"
          "[extrinsics.T_imu_lidar]\n"
          "translation = [0.1, -0.2, 0.3]\n"
@@ -68,6 +67,32 @@ void testInvalidGravityRejected() {
   }
   std::filesystem::remove(path);
   expect(threw, "negative gravity must be rejected");
+}
+
+void testImuProcessNoise() {
+  const auto check = [&](const std::string& noise, double gyro, double accel, double gyro_bias, double accel_bias) {
+    const auto path = writeConfig("sapphire_config_imu_noise.toml", validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]", noise));
+    const auto config = sapphire::loadConfig(path);
+    std::filesystem::remove(path);
+    expectNear(config.sensor.imu.noise.gyro_var, gyro, "gyro process noise");
+    expectNear(config.sensor.imu.noise.accel_var, accel, "accel process noise");
+    expectNear(config.sensor.imu.noise.gyro_bias_var, gyro_bias, "gyro bias process noise");
+    expectNear(config.sensor.imu.noise.accel_bias_var, accel_bias, "accel bias process noise");
+  };
+  check("", 0.01, 0.01, 0.0001, 0.0001);
+  check("gyro_var = 0.02\naccel_var = 0.03\ngyro_bias_var = 0.0004\naccel_bias_var = 0.0\n",
+        0.02, 0.03, 0.0004, 0.0);
+  for (const char* invalid : {"-0.01", "nan", "inf", "1e100"}) {
+    const auto path = writeConfig("sapphire_config_bad_imu_noise.toml", validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]", std::string("accel_var = ") + invalid + "\n"));
+    std::string error;
+    try {
+      (void)sapphire::loadConfig(path);
+    } catch (const std::exception& e) {
+      error = e.what();
+    }
+    std::filesystem::remove(path);
+    expect(error.find("sensor.imu.accel_var") != std::string::npos, "invalid IMU process noise must be rejected by key");
+  }
 }
 
 void testSensorLidarDefaultsWithoutSection() {
@@ -119,6 +144,46 @@ void testPgoIsRequired() {
          "the rejection must name pgo.enabled");
 }
 
+void testPgoParameters() {
+  const auto base = validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]");
+  const auto path = writeConfig("sapphire_config_pgo_parameters.toml", base + R"(
+[submap]
+min_voxel_num = 64
+min_frames = 16
+max_range_m = 42.0
+
+[submap.ba]
+min_frames = 6
+min_planes = 18
+max_iterations = 2
+
+[pgo]
+relinearize_threshold = 0.2
+relinearize_skip = 2
+
+[pgo.loop_closure]
+enabled = false
+local_max_candidates = 4
+global_max_candidates = 11
+fft_min_ambiguity = 1.3
+global_min_overlap = 0.60
+global_refine_updates = 0
+)");
+  const auto config = sapphire::loadConfig(path);
+  std::filesystem::remove(path);
+  expectNear(config.pgo.relinearize_threshold, 0.2, "iSAM2 relinearization threshold");
+  expect(config.pgo.relinearize_skip == 2, "iSAM2 relinearization interval");
+  expectNear(config.submap.max_range_m, 42.0, "sealed submap range");
+  expect(config.submap.min_voxel_num == 64 && config.submap.min_frames == 16, "submap overrides");
+  const auto& ba = config.submap.ba;
+  expect(ba.min_frames == 6 && ba.min_planes == 18 && ba.max_iterations == 2, "submap BA overrides");
+  const auto& loop = config.pgo.loop_closure;
+  expect(!loop.enabled && loop.local_max_candidates == 4 && loop.global_max_candidates == 11 && loop.global_refine_updates == 0,
+         "loop closure overrides");
+  expectNear(loop.fft_min_ambiguity, 1.3, "FFT ambiguity threshold");
+  expectNear(loop.global_min_overlap, 0.60, "global geometry overlap threshold");
+}
+
 void testShippedProfilesLoad() {
   const auto cfg = std::filesystem::path(SAPPHIRE_SOURCE_DIR) / "cfg" / "cfg_b";
   int count = 0;
@@ -126,7 +191,7 @@ void testShippedProfilesLoad() {
     if (entry.path().extension() != ".toml") continue;
     const auto config = sapphire::loadConfig(entry.path());
     expect(config.pgo.enabled, "Method B needs PGO");
-    expect(!config.methodB.map_directory.empty(), "Method B needs a map directory");
+    expect(!config.io.map_directory.empty(), "Method B needs a map directory");
     expectNear(config.odometry.voxel_size, 0.25, "registration voxel size");
     ++count;
   }
@@ -181,6 +246,25 @@ void testWrongOptionalTypeRejected() {
   expectSchemaError(contents, "sapphire_config_pgo_enabled_string.toml", "enabled = \"true\"", "pgo.enabled", "boolean");
 }
 
+void testInvalidPgoParameters() {
+  const auto base = validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]");
+  const auto reject = [&](const char* section, const char* key) {
+    const auto path = writeConfig("sapphire_config_invalid_pgo.toml", base + section);
+    std::string error;
+    try {
+      (void)sapphire::loadConfig(path);
+    } catch (const std::invalid_argument& e) {
+      error = e.what();
+    }
+    std::filesystem::remove(path);
+    expect(error.find(key) != std::string::npos, std::string(key) + " must be rejected");
+  };
+  reject("[pgo]\nrelinearize_skip = 0\n", "pgo.relinearize_skip");
+  reject("[submap.ba]\nmax_iterations = 0\n", "submap.ba.max_iterations");
+  reject("[submap]\nmin_frames = 0\n", "submap.min_frames");
+  reject("[pgo.loop_closure]\nlocal_search_radius_m = 30.0\n", "pgo.loop_closure.local_departure_radius_m");
+}
+
 void testUnknownKeyRejected() {
   const std::string contents = validConfig(9.80665, "[0.0, 0.0, 0.0, 1.0]") +
                                "[pgo]\n"
@@ -216,7 +300,7 @@ void testLidarTimeSessionCopiesSchema() {
 }
 
 void testMissingFieldRejected() {
-  const auto path = writeConfig("sapphire_config_missing_field.toml", "[imu]\ngravity = 9.80665\n");
+  const auto path = writeConfig("sapphire_config_missing_field.toml", "[sensor.imu]\ngravity = 9.80665\n");
   bool threw = false;
   try {
     (void)sapphire::loadConfig(path);
@@ -233,10 +317,13 @@ int main() {
   testSensorLidarDefaultsWithoutSection();
   testTrajectoryOutputPath();
   testPgoIsRequired();
+  testPgoParameters();
+  testInvalidPgoParameters();
   testShippedProfilesLoad();
   testTrajectoryFileMustStayRelative();
   testQuaternionNormalization();
   testInvalidGravityRejected();
+  testImuProcessNoise();
   testWrongOptionalTypeRejected();
   testUnknownKeyRejected();
   testLidarTimeSessionCopiesSchema();

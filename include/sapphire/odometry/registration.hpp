@@ -91,6 +91,7 @@ class Registration {
   FilterPose lidar_to_imu_;
   MeasureGroup measures_;
   double gravity_;
+  ImuConfig::Noise imu_noise_;
   int imu_count_ = 0;
   double accel_variation_ = 0.;
   V3 mean_gyro_ = V3::Zero();

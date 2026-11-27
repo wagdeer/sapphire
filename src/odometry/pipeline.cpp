@@ -65,7 +65,7 @@ class OdometryPipeline::Impl {
     if (!points || points->empty()) return;
     std::lock_guard scan_lock(scan_mutex_);
     MeasureGroup scan;
-    scan.lidar = preprocessLidar(*points, config_.odometry.crop_box, config_.methodB.max_range_m);
+    scan.lidar = preprocessLidar(*points, config_.odometry.crop_box, config_.sensor.lidar.max_range_m);
     const double end = scan.lidar.end_time;
     if (scan.lidar.pc->empty() || (last_scan_stamp_ && end <= *last_scan_stamp_)) return;
     {

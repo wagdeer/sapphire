@@ -6,7 +6,9 @@ LiDAR-inertial SLAM with point-to-plane odometry, a rolling voxel map, and async
 
 ## Method B
 
-Load the sensor profile from `cfg/cfg_b/` and pass it to `sapphire::OdometryPipeline`. Set `methodB.map_directory` to a fresh directory when starting from an empty map. The frontend uses `odometry.crop_box` to crop the robot body and the optional `methodB.max_range_m` to cap range. The submap packer uses `methodB.map_range_m`. Request the map or pose graph snapshot before calling `finishMapping()`. The backend seals the last submap and completes the requested exports.
+[Method B change notes (Chinese)](docs/METHOD_B_CHANGES.md)
+
+Load the sensor profile from `cfg/cfg_b/` and pass it to `sapphire::OdometryPipeline`. Set `io.map_directory` to a fresh directory when starting from an empty map. The frontend uses `odometry.crop_box` to crop the robot body and the optional `sensor.lidar.max_range_m` to cap range. The submap packer uses `submap.max_range_m`. Request the map or pose graph snapshot before calling `finishMapping()`. The backend seals the last submap and completes the requested exports.
 
 Build the `main` and `method_b` checkouts separately and replay the same input in each for [A/B comparisons](benchmarks/README.md).
 

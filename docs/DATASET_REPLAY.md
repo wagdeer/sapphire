@@ -10,4 +10,4 @@ Method B uses the `sapphire::OdometryPipeline` sensor and map interfaces. Use th
 
 Use the [NCLT replay instructions](../benchmarks/README.md) for a standalone run. When feeding sensor messages through a ROS wrapper, pass the matching profile as `config_file` and remap the LiDAR and IMU topics to the recording. Check that timestamps are expressed on the same sensor clock.
 
-Set `methodB.map_directory` to a fresh destination for an empty-map run. After the final sensor callback, request the needed map or snapshot, then call `finishMapping()` before reading the final exports.
+Set `io.map_directory` to a fresh destination for an empty-map run. After the final sensor callback, request the needed map or snapshot, then call `finishMapping()` before reading the final exports.

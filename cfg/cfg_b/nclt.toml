@@ -1,18 +1,13 @@
-# NCLT LiDAR and IMU profile for Method B.
+# NCLT cfg
 
-[methodB]
-local_feedback = true
-local_feedback_ba = false
-gravity_aligned_output = true
+[io]
 map_directory = "nclt-method-b-map"
-voxel_capacity = 350000
-max_range_m = 40.0
-
-[imu]
-gravity = 9.8
+global_map_voxel_size = 0.8
 
 [odometry]
 voxel_size = 0.25
+voxel_capacity = 350000
+enable_map_feedback = true
 
 [odometry.crop_box]
 min_x = -0.5
@@ -22,9 +17,43 @@ max_x = 0.5
 max_y = 0.5
 max_z = 0.5
 
+[submap]
+min_voxel_num = 72
+min_frames = 20
+max_range_m = 30.0
+# glc compression tolerance.
+max_deformation_m = 0.10
+
+[submap.ba]
+min_frames = 8
+min_planes = 16
+max_iterations = 3
+relative_cost_tolerance = 1e-6
+
 [pgo]
 enabled = true
-map_voxel_size = 0.8
+relinearize_threshold = 0.1
+relinearize_skip = 10
+
+[pgo.loop_closure]
+enabled = true
+# Nearby graph nodes. The departure radius records whether we have left the area.
+local_search_radius_m = 18.0
+local_departure_radius_m = 22.0
+local_max_candidates = 3
+local_min_overlap = 0.45
+
+# Descriptor shortlist radius grows with traveled distance, up to the maximum.
+global_search_radius_min_m = 20.0
+global_search_radius_max_m = 90.0
+global_search_radius_growth = 0.014
+global_departure_radius_m = 25.0
+global_max_candidates = 15
+fft_min_score = 0.10
+fft_min_ambiguity = 1.18
+global_min_overlap = 0.53
+global_max_rms_m = 0.085
+global_refine_updates = 8
 
 [pgo.occupancy]
 enabled = false
@@ -36,6 +65,14 @@ time_ref = "relative"
 max_scan_duration = 0.2
 header_tolerance = 0.5
 require_point_time = true
+max_range_m = 40.0
+
+[sensor.imu]
+gravity = 9.8
+gyro_var = 0.01
+accel_var = 0.01
+gyro_bias_var = 0.0001
+accel_bias_var = 0.0001
 
 [extrinsics.T_imu_lidar]
 translation = [0.112, 0.176, -0.247]

@@ -13,10 +13,6 @@
 
 namespace sapphire {
 namespace {
-constexpr double kGyroNoise = .01;
-constexpr double kAccelNoise = .01;
-constexpr double kGyroBiasNoise = .0001;
-constexpr double kAccelBiasNoise = .0001;
 constexpr int kIterations = 4;
 constexpr double kStopStep = .001;
 
@@ -113,10 +109,11 @@ void Registration::VoxelSampler::filter(const PointCloud& input, PointCloud& out
 Registration::Registration(const Config& config, RevisitExchange& exchange, LocalPlaneExchange& local_planes)
     : exchange_(exchange),
       local_planes_(local_planes),
-      map_({.5f, static_cast<std::size_t>(config.methodB.voxel_capacity)}),
+      map_({.5f, static_cast<std::size_t>(config.odometry.voxel_capacity)}),
       sampler_(static_cast<float>(config.odometry.voxel_size)),
       lidar_to_imu_(config.extrinsics.T_imu_lidar.linear().cast<float>().eval(), config.extrinsics.T_imu_lidar.translation().cast<float>().eval()),
-      gravity_(config.imu.init.gravity_mag) {}
+      gravity_(config.sensor.imu.init.gravity_mag),
+      imu_noise_(config.sensor.imu.noise) {}
 
 bool Registration::process(MeasureGroup scan) {
   measures_ = std::move(scan);
@@ -156,10 +153,10 @@ bool Registration::initializeFilter() {
   M3 rot = R_yaw_inv * init_rot;
 
   iEskf::Options options;
-  options.gyro_var_ = kGyroNoise;
-  options.acce_var_ = kAccelNoise;
-  options.bias_gyro_var_ = kGyroBiasNoise;
-  options.bias_acce_var_ = kAccelBiasNoise;
+  options.gyro_var_ = imu_noise_.gyro_var;
+  options.acce_var_ = imu_noise_.accel_var;
+  options.bias_gyro_var_ = imu_noise_.gyro_bias_var;
+  options.bias_acce_var_ = imu_noise_.accel_bias_var;
   options.num_iterations_ = kIterations;
   options.quit_eps_ = kStopStep;
 

@@ -1,14 +1,12 @@
 # HILTI 2022 Hesai PandarXT-32 and Alphasense IMU.
 
-[methodB]
+[io]
 map_directory = "hilti_2022_handheld-method-b-map"
-voxel_capacity = 350000
-
-[imu]
-gravity = 9.80665
+global_map_voxel_size = 0.8
 
 [odometry]
 voxel_size = 0.25
+voxel_capacity = 350000
 
 [odometry.crop_box]
 min_x = -0.5
@@ -20,7 +18,6 @@ max_z = 0.5
 
 [pgo]
 enabled = true
-map_voxel_size = 0.8
 
 [pgo.occupancy]
 enabled = false
@@ -32,6 +29,14 @@ time_ref = "absolute"
 max_scan_duration = 0.2
 header_tolerance = 0.5
 require_point_time = true
+
+[sensor.imu]
+gravity = 9.80665
+# iESKF process noise variances
+gyro_var = 0.01
+accel_var = 0.01
+gyro_bias_var = 0.0001
+accel_bias_var = 0.0001
 
 [extrinsics.T_imu_lidar]
 translation = [-0.001, -0.00855, 0.055]

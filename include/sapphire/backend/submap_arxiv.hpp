@@ -69,7 +69,7 @@ struct PlaceProposal {
 // Correlation rasters are loaded only for shortlisted places.
 class SubmapArxiv {
  public:
-  explicit SubmapArxiv(std::filesystem::path directory);
+  explicit SubmapArxiv(std::filesystem::path directory, const Config::Pgo::LoopClosure& loop);
   ~SubmapArxiv();
   void write(std::size_t id, const GaussianVoxelMap& map);
   std::unique_ptr<GaussianVoxelMap> read(std::size_t id, std::size_t* bytes = nullptr) const;

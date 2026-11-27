@@ -1,10 +1,29 @@
 #include <sapphire/backend/submap_arxiv.hpp>
 #include <sapphire/odometry/registration.hpp>
 
+#include <cmath>
 #include <stdexcept>
 
 namespace sapphire {
 struct RegistrationTestAccess {
+  static iEskf::COV predictCovariance(Registration& registration) {
+    MeasureGroup scan;
+    FilterImuSample imu;
+    imu.acc.z() = 9.80665f;
+    for (int i = 0; i < 50; ++i) {
+      imu.secs = i * 0.01;
+      scan.imu.push_back(imu);
+    }
+    registration.process(std::move(scan));
+    registration.filter_.StartTracking(imu);
+    imu.secs += 0.01;
+    registration.filter_.SetObsTime(imu.secs);
+    if (!registration.filter_.Predict(imu)) {
+      throw std::runtime_error("expected IMU propagation after initialization");
+    }
+    return registration.filter_.GetCov();
+  }
+
   static const GaussianVoxelMap* update(Registration& registration, double stamp, const Isometry3d& pose, const VV3& scan) {
     return registration.updateRevisit(stamp, pose, scan);
   }
@@ -14,6 +33,27 @@ struct RegistrationTestAccess {
 namespace {
 
 using namespace sapphire;
+
+void testImuProcessNoise() {
+  RevisitExchange exchange;
+  LocalPlaneExchange local_planes;
+  Config config;
+  config.sensor.imu.noise = {0., 0., 0., 0.};
+  Registration baseline(config, exchange, local_planes);
+  config.sensor.imu.noise = {0.1, 0.2, 0.3, 0.4};
+  Registration tuned(config, exchange, local_planes);
+
+  const iEskf::COV difference = RegistrationTestAccess::predictCovariance(tuned) - RegistrationTestAccess::predictCovariance(baseline);
+  const double expected[] = {0.1, 0., 0.2, 0.3, 0.4, 0.};
+  for (int block = 0; block < 6; ++block) {
+    for (int axis = 0; axis < 3; ++axis) {
+      const auto index = block * 3 + axis;
+      if (std::abs(difference(index, index) - expected[block] * 0.01 * 0.01) > 1e-8) {
+        throw std::runtime_error("IMU process noise must change the corresponding covariance block");
+      }
+    }
+  }
+}
 
 struct RevisitFixture {
   RevisitExchange exchange;
@@ -49,6 +89,7 @@ struct RevisitFixture {
 }  // namespace
 
 int main() {
+  testImuProcessNoise();
   const auto identity = sapphire::Isometry3d::Identity();
   RevisitFixture immediate;
   immediate.publish();

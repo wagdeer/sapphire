@@ -100,8 +100,10 @@ ws/src/
 
 ## Method B
 
+[Method B 独立版变更说明](docs/METHOD_B_CHANGES.md)
+
 `methodB` 沿用 `sapphire::OdometryPipeline` 的 `pushImu`、`pushLidar` 和地图查询入口。点到平面关联使用前端的滚动八叉体素地图和迭代滤波。建图线程用激光惯性 BA 优化子图内部，压缩已通过边界检查的子图，并用 iSAM2 求解回环。重访时，前端可以读取后台发布的已验证历史平面，继续更新当前地图。
 
-用 `cfg/cfg_b/nclt.toml` 载入 NCLT 的传感器外参和 `methodB` 参数。每次从空图启动时使用一个新的 `methodB.map_directory`，该目录保存子图和检索数据。前端用 `odometry.crop_box` 裁剪车体，可用 `methodB.max_range_m` 设置远距上限。子图打包的取点范围由 `methodB.map_range_m` 设置。停止送入传感器数据后，先请求地图和图快照，再调用 `finishMapping()` 封存最后一组关键帧，随后读取已请求的结果及 `mapTrajectory()`。
+用 `cfg/cfg_b/nclt.toml` 载入 NCLT 的传感器外参和 Method B 参数。每次从空图启动时使用一个新的 `io.map_directory`，该目录保存子图和检索数据。前端用 `odometry.crop_box` 裁剪车体，可用 `sensor.lidar.max_range_m` 设置远距上限。子图打包的取点范围由 `submap.max_range_m` 设置。停止送入传感器数据后，先请求地图和图快照，再调用 `finishMapping()` 封存最后一组关键帧，随后读取已请求的结果及 `mapTrajectory()`。
 
 A/B 使用 `main` 和 `method_b` 各自编译的程序，回放同一组雷达和 IMU 输入。评分方法见[回放说明](benchmarks/README.md)，历史测试结果见[对比表](benchmarks/method_b.md)。

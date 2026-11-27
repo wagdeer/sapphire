@@ -24,9 +24,9 @@ namespace sapphire {
 
 class PoseGraphBackend::Impl {
  public:
-  explicit Impl(const Config& config) : config_(config), arxiv_(checkedMapDirectory(config)), submap_(arxiv_, config.methodB) {
+  explicit Impl(const Config& config) : config_(config), arxiv_(checkedMapDirectory(config), config.pgo.loop_closure), submap_(arxiv_, config.odometry, config.submap, config.pgo) {
     if (config_.pgo.occupancy.enabled) {
-      occupancy_directory_ = std::filesystem::path(config.methodB.map_directory) / "rays";
+      occupancy_directory_ = std::filesystem::path(config.io.map_directory) / "rays";
       if (!std::filesystem::create_directory(occupancy_directory_)) {
         throw std::runtime_error("map directory already contains ray scans");
       }
@@ -70,7 +70,7 @@ class PoseGraphBackend::Impl {
   void setCorrection(const Isometry3d& correction, double stamp, const Eigen::Vector3d& gravity_odom) {
     std::lock_guard lock(correction_mutex_);
     correction_.graph_from_odom = correction;
-    if (!config_.methodB.gravity_aligned_output || !gravity_odom.allFinite() || gravity_odom.squaredNorm() < 1.e-6) return;
+    if (!gravity_odom.allFinite() || gravity_odom.squaredNorm() < 1.e-6) return;
 
     constexpr double smoothing_seconds = 1.0;
     if (gravity_stamp_) {
@@ -148,7 +148,7 @@ class PoseGraphBackend::Impl {
  private:
   static const std::string& checkedMapDirectory(const Config& config) {
     validateConfig(config);
-    return config.methodB.map_directory;
+    return config.io.map_directory;
   }
 
   bool hasFrames() const { return head_.load(std::memory_order_relaxed) != tail_.load(std::memory_order_acquire); }
@@ -271,11 +271,9 @@ class PoseGraphBackend::Impl {
     }
     if (requests & Map) {
       spdlog::debug("[methodB] map_export_begin");
-      auto map = submap_.globalMap(config_.pgo.map_voxel_size);
-      if (config_.methodB.gravity_aligned_output) {
-        const auto rotation = map_from_graph.linear().cast<float>().eval();
-        for (auto& point : *map) point.getVector3fMap() = (rotation * point.getVector3fMap()).eval();
-      }
+      auto map = submap_.globalMap(config_.io.global_map_voxel_size);
+      const auto rotation = map_from_graph.linear().cast<float>().eval();
+      for (auto& point : *map) point.getVector3fMap() = (rotation * point.getVector3fMap()).eval();
       std::atomic_store(&map_, PointCloudConstPtr(std::move(map)));
       spdlog::debug("[methodB] map_export_end");
     }

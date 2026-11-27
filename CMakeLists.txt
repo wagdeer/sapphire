@@ -101,6 +101,11 @@ if(BUILD_TESTING)
     sapphire_enable_release_ipo(sapphire_voxelmap_io_test)
     add_test(NAME sapphire_voxelmap_io_test COMMAND sapphire_voxelmap_io_test)
 
+    add_executable(sapphire_submap_test tests/submap_test.cpp)
+    target_link_libraries(sapphire_submap_test PRIVATE sapphire)
+    sapphire_enable_release_ipo(sapphire_submap_test)
+    add_test(NAME sapphire_submap_test COMMAND sapphire_submap_test)
+
     add_executable(sapphire_registration_test tests/registration_test.cpp)
     target_link_libraries(sapphire_registration_test PRIVATE sapphire)
     sapphire_enable_release_ipo(sapphire_registration_test)

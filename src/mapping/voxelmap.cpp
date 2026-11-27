@@ -960,7 +960,7 @@ class VoxelBundleOptimizer {
   }
 
   double damping_iter(std::vector<BundleState> &x_stats, VoxelLidarFactors &voxhess, std::deque<BundlePreintegration *> &imus_factor,
-                      double accepted_cost) {
+                      double accepted_cost, const Config::Submap::Ba &options) {
     win_size = voxhess.win_size;
     jac_leng = win_size * 6;
     imu_leng = win_size * kInertialDimension;
@@ -974,7 +974,7 @@ class VoxelBundleOptimizer {
     bool residual_at_accepted_state = true;
     std::vector<BundleState> x_stats_temp = x_stats;
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < options.max_iterations; i++) {
       if (is_calc_hess) {
         residual1 = divide_thread(x_stats, voxhess, imus_factor, Hess, JacT);
       }
@@ -1025,7 +1025,7 @@ class VoxelBundleOptimizer {
         }
       }
 
-      if (fabs((residual1 - residual2) / residual1) < 1e-6) break;
+      if (fabs((residual1 - residual2) / residual1) < options.relative_cost_tolerance) break;
     }
     // Rebuild the cached voxel eigensystems only if the last trial was rejected.
     return residual_at_accepted_state ? accepted_cost : only_residual(x_stats, voxhess, imus_factor);
@@ -1129,9 +1129,9 @@ Mat_66<double> relativeOdometryCovariance(const std::vector<Isometry3d> &poses, 
 }
 
 BaStats adjustInertial(const std::vector<InertialFrame> &frames, const std::vector<MappingFrame> &fixed, std::vector<Isometry3d> &poses,
-                       std::vector<InertialEstimate> &nav, BoundarySummary *boundary) {
+                       std::vector<InertialEstimate> &nav, const Config::Submap::Ba &options, BoundarySummary *boundary) {
   BaStats result;
-  if (frames.size() < 3) return result;
+  if (frames.size() < static_cast<size_t>(options.min_frames)) return result;
 
   std::vector<BundleState> states;
   std::deque<BundlePreintegration> storage;
@@ -1158,13 +1158,13 @@ BaStats adjustInertial(const std::vector<InertialFrame> &frames, const std::vect
   VoxelLidarFactors factors(static_cast<int>(states.size()));
   addLidarFactors(frames, fixed, states, factors);
   result.planes = factors.plvec_voxels.size();
-  if (result.planes < 16) return result;
+  if (result.planes < static_cast<size_t>(options.min_planes)) return result;
 
   VoxelBundleOptimizer opt;
   opt.win_size = static_cast<int>(states.size());
   // The factor builder already evaluated these moments at the initial poses.
   result.cost_first = opt.only_residual(states, factors, imu, false);
-  result.cost_last = opt.damping_iter(states, factors, imu, result.cost_first);
+  result.cost_last = opt.damping_iter(states, factors, imu, result.cost_first, options);
   if (!std::isfinite(result.cost_last) || result.cost_last >= result.cost_first) return result;
 
   auto corrected = poses;

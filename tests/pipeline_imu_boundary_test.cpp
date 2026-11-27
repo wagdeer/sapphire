@@ -39,8 +39,8 @@ int main() {
   TemporaryMap map;
   sapphire::Config config;
   config.pgo.enabled = true;
-  config.methodB.map_directory = map.path.string();
-  config.imu.init.gravity_mag = 9.8;
+  config.io.map_directory = map.path.string();
+  config.sensor.imu.init.gravity_mag = 9.8;
   sapphire::OdometryPipeline pipeline(config);
   std::size_t tracked = 0;
   int imu_index = 0;

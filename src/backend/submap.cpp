@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 
 #include <sapphire/backend/submap_arxiv.hpp>
@@ -39,12 +40,9 @@ using Cloud = small_gicp::PointCloud;
 using Tree = small_gicp::KdTree<Cloud>;
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t min_frames = 8;
-constexpr size_t max_frames = 20;
 constexpr size_t cache_budget = 8 * 1024 * 1024;
-constexpr double match_radius = 18.;
-constexpr double departure_radius = 22.;
-constexpr double deformation_budget_m = .10;
+constexpr size_t max_ba_states = 64;  // Dense BA workspace grows quadratically.
+constexpr size_t max_open_voxels = 131072;
 
 double elapsed(Clock::time_point start) { return std::chrono::duration<double, std::milli>(Clock::now() - start).count(); }
 
@@ -55,24 +53,31 @@ Isometry3d fromGtsam(const gtsam::Pose3& pose) {
   out.translation() = pose.translation();
   return out;
 }
-gtsam::Key frameKey(size_t submap, size_t frame) { return gtsam::Symbol('r', submap * max_frames + frame); }
-
 struct Geometry {
   std::unique_ptr<GaussianVoxelMap> map;
   double score = 0.;
 };
-Geometry pack(const std::deque<InertialFrame>& frames, const std::vector<Isometry3d>& poses, size_t count, double range_squared) {
-  auto map = std::make_unique<GaussianVoxelMap>();
-  map->stamp = frames.front().frame.stamp;
-  std::unordered_map<sapphire::VoxelKey, sapphire::Moments, sapphire::VoxelKeyHash> voxels;
-  for (size_t i = 0; i < count; ++i) {
-    const auto local = (poses.front().inverse() * poses[i]).matrix().cast<float>().eval();
-    for (const auto& p : *frames[i].frame.cloud) {
-      if (!p.getVector3fMap().allFinite() || p.getVector3fMap().squaredNorm() > range_squared) continue;
-      const Eigen::Vector3f q = local.topLeftCorner<3, 3>() * p.getVector3fMap() + local.topRightCorner<3, 1>();
-      voxels[sapphire::key(q)].add(q, i);
-    }
+using VoxelMoments = std::unordered_map<VoxelKey, Moments, VoxelKeyHash>;
+
+void accumulate(VoxelMoments& voxels, const MappingFrame& frame, const Eigen::Matrix4f& local, size_t id, double range_squared) {
+  for (const auto& point : *frame.cloud) {
+    if (!point.getVector3fMap().allFinite() || point.getVector3fMap().squaredNorm() > range_squared) continue;
+    const Eigen::Vector3f q = local.topLeftCorner<3, 3>() * point.getVector3fMap() + local.topRightCorner<3, 1>();
+    voxels[key(q)].add(q, id);
   }
+}
+
+bool hasGeometry(const VoxelMoments& voxels, size_t minimum) {
+  size_t valid = 0;
+  for (const auto& [key, stats] : voxels) {
+    if (stats.frames >= 2 && stats.fit() && ++valid == minimum) return true;
+  }
+  return false;
+}
+
+Geometry pack(const VoxelMoments& voxels, double stamp) {
+  auto map = std::make_unique<GaussianVoxelMap>();
+  map->stamp = stamp;
   map->reserve(voxels.size() / 4);
   Mat_66<double> information = Mat_66<double>::Zero();
   for (const auto& [key, stats] : voxels) {
@@ -208,7 +213,7 @@ std::optional<double> floorLevel(const MatchCloud& map, const Eigen::Matrix3d& r
 }
 
 PlaneFit alignGravityPlanes(const MatchCloud& source, const MatchCloud& target, const Isometry3d& initial, const Isometry3d& source_anchor,
-                            const Isometry3d& target_anchor) {
+                            const Isometry3d& target_anchor, const Config::Pgo::LoopClosure& loop) {
   auto start = initial;
   const auto source_floor = floorLevel(source, source_anchor.linear());
   const auto target_floor = floorLevel(target, target_anchor.linear());
@@ -242,7 +247,7 @@ PlaneFit alignGravityPlanes(const MatchCloud& source, const MatchCloud& target, 
     fit.overlap = std::min(double(state.directional[0]) / source.cloud->size(), double(state.directional[1]) / target.cloud->size());
     fit.rms = std::max(std::sqrt(state.residual[0] / state.directional[0]), std::sqrt(state.residual[1] / state.directional[1]));
     const auto delta = toGtsam(start).between(toGtsam(value));
-    fit.converged = fit.overlap >= .53 && fit.rms <= .085 && delta.translation().norm() < 2.5 && gtsam::Rot3::Logmap(delta.rotation()).norm() < .18;
+    fit.converged = fit.overlap >= loop.global_min_overlap && fit.rms <= loop.global_max_rms_m && delta.translation().norm() < 2.5 && gtsam::Rot3::Logmap(delta.rotation()).norm() < .18;
     return fit;
   };
   auto fit = measure(fromGtsam(pose));
@@ -267,7 +272,6 @@ struct SealCandidate {
   Geometry geometry;
   BoundarySummary boundary;
   sapphire::BaStats ba;
-  size_t count = 0;
   bool certified = false;
 };
 
@@ -284,11 +288,16 @@ struct SealedSubmap {
 
 class Submap::Impl {
  public:
-  Impl(SubmapArxiv& arxiv, const Config::MethodB& config)
+  Impl(SubmapArxiv& arxiv, const Config::Odometry& odometry, const Config::Submap& submap, const Config::Pgo& pgo)
       : arxiv_(arxiv),
-        map_range_squared_(config.map_range_m * config.map_range_m),
-        local_feedback_(config.local_feedback),
-        local_feedback_ba_(config.local_feedback_ba) {}
+        config_(submap),
+        min_frames_(static_cast<size_t>(submap.min_frames)),
+        min_voxel_num_(static_cast<size_t>(submap.min_voxel_num)),
+        map_range_squared_(submap.max_range_m * submap.max_range_m),
+        local_feedback_(odometry.enable_map_feedback),
+        local_feedback_ba_(odometry.map_feedback_ba),
+        loop_(pgo.loop_closure),
+        solver_(gtsam::ISAM2Params(gtsam::ISAM2GaussNewtonParams(), pgo.relinearize_threshold, pgo.relinearize_skip)) {}
 
   void build(InertialFrame&& frame) {
     if (!pending_.empty()) throw std::logic_error("cannot build over an active submap");
@@ -300,22 +309,28 @@ class Submap::Impl {
       build(std::move(frame));
       return false;
     }
-    if (pending_.size() > max_frames) throw std::logic_error("seal the full submap before updating it");
+    if (seal_ready_) throw std::logic_error("seal the ready submap before updating it");
     append(std::move(frame));
-    return pending_.size() == max_frames + 1;
+    accumulateUntil(pending_.size() - 1);
+    seal_ready_ = observed_ >= min_frames_ && hasGeometry(voxels_, min_voxel_num_);
+    if (!seal_ready_) trimOpenVoxels();
+    return seal_ready_;
   }
 
   void seal() {
     if (pending_.empty()) return;
-    const bool has_next = pending_.size() == max_frames + 1;
-    sealWindow(has_next ? max_frames : pending_.size(), !has_next);
+    sealWindow(pending_.size() - (seal_ready_ ? 1 : 0), !seal_ready_);
   }
 
   void reset() {
     if (pending_.size() > 1) pending_.erase(pending_.begin(), pending_.end() - 1);
+    resetGeometry();
   }
 
-  void clear() { pending_.clear(); }
+  void clear() {
+    pending_.clear();
+    resetGeometry();
+  }
 
   PoseGraphStats stats() const { return stats_; }
   LocalPlaneExchange& localPlanes() { return local_planes_; }
@@ -337,7 +352,7 @@ class Submap::Impl {
       const auto global = fromGtsam(estimate.at<gtsam::Pose3>(id));
       for (std::size_t i = 0; i < submap.local.size(); ++i) {
         const auto& [stamp, local] = submap.local[i];
-        const Isometry3d pose = submap.retains_frames && i > 0 ? fromGtsam(estimate.at<gtsam::Pose3>(frameKey(id, i))) : global * local;
+        const Isometry3d pose = submap.retains_frames && i > 0 ? fromGtsam(estimate.at<gtsam::Pose3>(frameKey(submap.first_frame + i))) : global * local;
         result.emplace_back(stamp, pose);
       }
     }
@@ -363,6 +378,55 @@ class Submap::Impl {
   }
 
  private:
+  static gtsam::Key frameKey(size_t frame) { return gtsam::Symbol('r', frame); }
+
+  void accumulateUntil(size_t count) {
+    const auto origin = pending_.front().frame.odom.inverse();
+    const auto before = observed_;
+    for (; observed_ < count; ++observed_) {
+      const auto& frame = pending_[observed_].frame;
+      const auto local = (origin * frame.odom).matrix().cast<float>().eval();
+      accumulate(voxels_, frame, local, observed_, map_range_squared_);
+    }
+
+    // Once the block outgrows the BA workspace, keep its poses and moments.
+    // The lookahead scan stays intact for the next block.
+    if (pending_.size() > max_ba_states) {
+      for (size_t i = retains_raw_ ? 0 : before; i < observed_; ++i) {
+        pending_[i].frame.cloud.reset();
+        std::vector<ImuData>().swap(pending_[i].imu);
+      }
+      retains_raw_ = false;
+    }
+  }
+
+  void trimOpenVoxels() {
+    const size_t limit = std::max(max_open_voxels, min_voxel_num_);
+    if (voxels_.size() <= limit) return;
+    // Discard old single-view cells first. Retain enough room to meet the
+    // seal threshold without letting a sparse traverse grow the table forever.
+    using Entry = VoxelMoments::value_type;
+    std::vector<const Entry*> ranked;
+    ranked.reserve(voxels_.size());
+    for (const auto& entry : voxels_) ranked.push_back(&entry);
+    const size_t keep = std::max(min_voxel_num_, limit - limit / 4);
+    std::nth_element(ranked.begin(), ranked.begin() + keep, ranked.end(), [](const Entry* a, const Entry* b) {
+      const auto rank = [](const Entry* entry) {
+        const auto& [key, moments] = *entry;
+        return std::tuple(moments.frames >= 2, moments.last_frame, key.x, key.y, key.z);
+      };
+      return rank(a) > rank(b);
+    });
+    for (size_t i = keep; i < ranked.size(); ++i) voxels_.erase(ranked[i]->first);
+  }
+
+  void resetGeometry() {
+    voxels_.clear();
+    observed_ = 0;
+    seal_ready_ = false;
+    retains_raw_ = true;
+  }
+
   void append(InertialFrame&& frame) {
     checkFrame(frame);
     if (local_feedback_) updateLocalPlanes(frame);
@@ -441,27 +505,46 @@ class Submap::Impl {
   }
 
   SealCandidate evaluate(size_t count, bool final) {
-    const size_t states = count + (final ? 0 : 1);
-    std::vector<InertialFrame> frames(pending_.begin(), pending_.begin() + states);
+    accumulateUntil(count);
     SealCandidate candidate;
-    candidate.count = count;
-    for (const auto& frame : frames) {
-      candidate.poses.push_back(frame.frame.odom);
-      candidate.nav.push_back(frame.nav);
-    }
-    if (frames.size() >= min_frames) candidate.ba = sapphire::adjustInertial(frames, {}, candidate.poses, candidate.nav, &candidate.boundary);
-    const bool admits_compression = candidate.boundary.valid && candidate.boundary.interior_shift_m <= deformation_budget_m;
-    if (!admits_compression && candidate.ba.updates) {
-      // A failed boundary certificate falls back before packing. The
-      // individual poses and geometry then describe exactly the same scans.
-      for (std::size_t i = 0; i < frames.size(); ++i) {
-        candidate.poses[i] = frames[i].frame.odom;
-        candidate.nav[i] = frames[i].nav;
+    const auto readOdometry = [&] {
+      candidate.poses.clear();
+      candidate.nav.clear();
+      for (const auto& frame : pending_) {
+        candidate.poses.push_back(frame.frame.odom);
+        candidate.nav.push_back(frame.nav);
       }
-      candidate.ba.updates = 0;
+    };
+    readOdometry();
+
+    const auto stamp = pending_.front().frame.stamp;
+    if (retains_raw_) {
+      const std::vector<InertialFrame> frames(pending_.begin(), pending_.end());
+      candidate.ba = sapphire::adjustInertial(frames, {}, candidate.poses, candidate.nav, config_.ba, &candidate.boundary);
+      if (candidate.ba.updates && candidate.boundary.valid) {
+        spdlog::debug("[methodB] seal_deformation {} {:.9f} {:.9f}", submaps_.size(), candidate.boundary.interior_shift_m,
+                      config_.max_deformation_m);
+      }
+      if (candidate.ba.updates && candidate.boundary.valid && candidate.boundary.interior_shift_m <= config_.max_deformation_m) {
+        VoxelMoments adjusted;
+        const auto origin = candidate.poses.front().inverse();
+        for (size_t i = 0; i < count; ++i) {
+          const auto local = (origin * candidate.poses[i]).matrix().cast<float>().eval();
+          accumulate(adjusted, pending_[i].frame, local, i, map_range_squared_);
+        }
+        candidate.geometry = pack(adjusted, stamp);
+        if (final || candidate.geometry.map->size() >= min_voxel_num_) {
+          candidate.certified = candidate.geometry.score >= .008 && candidate.geometry.map->size() >= min_voxel_num_;
+          return candidate;
+        }
+      }
+      // Preserve the poses used to build the accepted online geometry.
+      if (candidate.ba.updates) {
+        readOdometry();
+        candidate.ba.updates = 0;
+      }
     }
-    candidate.geometry = pack(pending_, candidate.poses, count, map_range_squared_);
-    candidate.certified = admits_compression && candidate.geometry.score >= .008 && candidate.geometry.map->size() >= 160;
+    candidate.geometry = pack(voxels_, stamp);
     return candidate;
   }
 
@@ -475,6 +558,7 @@ class Submap::Impl {
     const size_t id = submaps_.size();
     const bool forced = !certified;
     geometry.map->version = id;
+    spdlog::debug("[methodB] seal {} {} {} {} {}", id, count, geometry.map->size(), certified, final);
     const auto start = poses.front();
     SealedSubmap map{start, {}, false, geometry.map->size(), forced, stats_.optimized_poses};
     for (size_t i = 0; i < count; ++i) map.local.emplace_back(pending_[i].frame.stamp, start.inverse() * poses[i]);
@@ -501,7 +585,7 @@ class Submap::Impl {
       const auto noise = gtsam::noiseModel::Gaussian::Covariance(relativeOdometryCovariance(poses, 0, 2));
       for (size_t i = 1; i < count; ++i) {
         const auto relative = toGtsam(poses[i - 1].inverse() * poses[i]);
-        const auto key = frameKey(id, i);
+        const auto key = frameKey(map.first_frame + i);
         odom.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(boundary_key, key, relative, noise);
         frame_seed = frame_seed.compose(relative);
         initial.insert(key, frame_seed);
@@ -516,9 +600,12 @@ class Submap::Impl {
     stats_.optimized_poses += count;
     stats_.glc_summaries += certified;
     ++stats_.revision;
-    if (geometry.map->size() >= 72) match(id, seed, *geometry.map);
-    const auto proposals = arxiv_.indexAndQuery(*geometry.map, start);
-    if (geometry.map->size() >= 72) globalMatch(id, *geometry.map, proposals, !final);
+    if (loop_.enabled) {
+      const bool enough_geometry = geometry.map->size() >= min_voxel_num_;
+      if (enough_geometry) match(id, seed, *geometry.map);
+      const auto proposals = arxiv_.indexAndQuery(*geometry.map, start);
+      if (enough_geometry) globalMatch(id, *geometry.map, proposals, !final);
+    }
     stats_.solver_poses = solver_.getLinearizationPoint().size();
     stats_.solver_factors = solver_.getFactorsUnsafe().size();
     if (!final) {
@@ -562,15 +649,18 @@ class Submap::Impl {
   void match(size_t id, const gtsam::Pose3& seed, const GaussianVoxelMap& source_map) {
     std::vector<std::pair<double, size_t>> ranked;
     const auto estimate = solver_.calculateEstimate();
+    const double departure_squared = loop_.local_departure_radius_m * loop_.local_departure_radius_m;
+    const double search_squared = loop_.local_search_radius_m * loop_.local_search_radius_m;
+    const auto max_candidates = static_cast<size_t>(loop_.local_max_candidates);
     for (size_t old = 0; old + 1 < id; ++old) {
       const auto pose = estimate.at<gtsam::Pose3>(old);
       const double squared = (seed.translation() - pose.translation()).squaredNorm();
-      if (squared > departure_radius * departure_radius) submaps_[old].departed = true;
-      if (submaps_[old].departed && squared <= match_radius * match_radius && submaps_[old].cells >= 72 && submaps_[old].cells <= cache_budget / 248)
+      if (squared > departure_squared) submaps_[old].departed = true;
+      if (submaps_[old].departed && squared <= search_squared && submaps_[old].cells >= min_voxel_num_ && submaps_[old].cells <= cache_budget / 248)
         ranked.emplace_back(squared, old);
     }
     std::sort(ranked.begin(), ranked.end());
-    if (ranked.size() > 3) ranked.resize(3);
+    if (ranked.size() > max_candidates) ranked.resize(max_candidates);
     if (ranked.empty()) return;
     const MatchCloud source(source_map);
     for (const auto& [distance, old] : ranked) {
@@ -581,7 +671,7 @@ class Submap::Impl {
       const double overlap = fit.overlap;
       bool accepted = false;
       double shift = 0., turn = 0.;
-      if (fit.converged && overlap >= .45 && fit.inliers >= 60 && fit.pose.matrix().allFinite()) {
+      if (fit.converged && overlap >= loop_.local_min_overlap && fit.inliers >= 60 && fit.pose.matrix().allFinite()) {
         const Eigen::SelfAdjointEigenSolver<Mat_66<double>> h((fit.info + fit.info.transpose()) * .5);
         const auto motion = toGtsam(fit.pose);
         const auto correction = guess.between(motion);
@@ -631,7 +721,7 @@ class Submap::Impl {
 
     const auto estimate = solver_.calculateEstimate();
     const std::size_t tail = submap.local.size() - 1;
-    const Isometry3d source_pose = submap.retains_frames && tail > 0 ? fromGtsam(estimate.at<gtsam::Pose3>(frameKey(source, tail)))
+    const Isometry3d source_pose = submap.retains_frames && tail > 0 ? fromGtsam(estimate.at<gtsam::Pose3>(frameKey(submap.first_frame + tail)))
                                                                      : fromGtsam(estimate.at<gtsam::Pose3>(source)) * relative;
 
     // Use the sealed tail as the center so the same loop selects the same
@@ -664,10 +754,10 @@ class Submap::Impl {
     const MatchCloud source(geometry);
     for (const auto& proposal : proposals) {
       const auto target_id = proposal.target;
-      if (submaps_[target_id].cells < 72 || submaps_[target_id].cells > cache_budget / 248) continue;
+      if (submaps_[target_id].cells < min_voxel_num_ || submaps_[target_id].cells > cache_budget / 248) continue;
       ++stats_.loop_candidates;
       const auto& target = hot(target_id);
-      const auto fit = alignGravityPlanes(source, target, proposal.relative, submaps_[id].anchor, submaps_[target_id].anchor);
+      const auto fit = alignGravityPlanes(source, target, proposal.relative, submaps_[id].anchor, submaps_[target_id].anchor, loop_);
       bool accepted = false;
       if (fit.converged) {
         const auto old = solver_.calculateEstimate();
@@ -681,7 +771,7 @@ class Submap::Impl {
           gtsam::ISAM2UpdateParams params;
           params.force_relinearize = true;
           trial.update(update, {}, params);
-          for (int k = 0; k < 8; ++k) trial.update({}, {}, params);
+          for (int k = 0; k < loop_.global_refine_updates; ++k) trial.update({}, {}, params);
           const auto result = trial.calculateEstimate();
           const double cost = trial.getFactorsUnsafe().error(result);
           if (std::isfinite(cost) && update.error(result) < 8. &&
@@ -714,8 +804,11 @@ class Submap::Impl {
   }
 
   SubmapArxiv& arxiv_;
+  const Config::Submap config_;
+  const size_t min_frames_, min_voxel_num_;
   const double map_range_squared_;
   const bool local_feedback_, local_feedback_ba_;
+  const Config::Pgo::LoopClosure loop_;
   LocalPlaneExchange local_planes_;
   std::deque<InertialFrame> local_frames_;
   std::deque<MappingFrame> local_fixed_;
@@ -723,6 +816,9 @@ class Submap::Impl {
   PoseGraphStats stats_;
   std::vector<PoseGraphEdge> loop_edges_;
   std::deque<InertialFrame> pending_;
+  VoxelMoments voxels_;
+  size_t observed_ = 0;
+  bool seal_ready_ = false, retains_raw_ = true;
   std::vector<SealedSubmap> submaps_;
   gtsam::Key last_boundary_key_ = 0;
   Isometry3d last_boundary_pose_ = Isometry3d::Identity();
@@ -732,7 +828,8 @@ class Submap::Impl {
   size_t cache_bytes_ = 0;
 };
 
-Submap::Submap(SubmapArxiv& arxiv, const Config::MethodB& config) : impl_(std::make_unique<Impl>(arxiv, config)) {}
+Submap::Submap(SubmapArxiv& arxiv, const Config::Odometry& odometry, const Config::Submap& submap, const Config::Pgo& pgo)
+    : impl_(std::make_unique<Impl>(arxiv, odometry, submap, pgo)) {}
 Submap::~Submap() = default;
 LocalPlaneExchange& Submap::localPlanes() { return impl_->localPlanes(); }
 void Submap::build(InertialFrame frame) { impl_->build(std::move(frame)); }

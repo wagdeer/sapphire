@@ -24,7 +24,6 @@ constexpr float spacing = .75f;
 constexpr int channels = 4;
 constexpr int area = width * width;
 static_assert(channels * area == std::numeric_limits<std::uint16_t>::max() + 1);
-constexpr std::size_t shortlist_size = 15;
 using Complex = std::complex<float>;
 using Spectrum = std::vector<Complex>;
 using Descriptor = Eigen::Matrix<float, 64, 1>;
@@ -88,8 +87,8 @@ int wrap(int cell) { return (cell + width + width / 2) % width - width / 2; }
 
 class SubmapArxiv::Impl {
  public:
-  explicit Impl(const std::filesystem::path& directory)
-      : blocks_(directory / "blocks"), places_(directory / "places") {
+  Impl(const std::filesystem::path& directory, const Config::Pgo::LoopClosure& loop)
+      : blocks_(directory / "blocks"), places_(directory / "places"), loop_(loop) {
     std::filesystem::create_directories(directory);
     if (!std::filesystem::create_directory(blocks_)) throw std::runtime_error("map directory already contains blocks");
     if (!std::filesystem::create_directory(places_)) throw std::runtime_error("submap place index already exists");
@@ -124,11 +123,12 @@ class SubmapArxiv::Impl {
     save(id, bins);
 
     std::vector<std::pair<float, std::size_t>> pool;
-    const double radius = std::min(90., 20. + .014 * travel_);
+    const double radius = std::min(loop_.global_search_radius_max_m, loop_.global_search_radius_min_m + loop_.global_search_radius_growth * travel_);
+    const auto shortlist_size = static_cast<std::size_t>(loop_.global_max_candidates);
     for (std::size_t old = 0; old + 4 < id; ++old) {
       auto& target = entries_[old];
       const double distance = (track.translation() - target.track.translation()).norm();
-      if (distance > 25.) target.departed = true;
+      if (distance > loop_.global_departure_radius_m) target.departed = true;
       if (target.departed && distance < radius && target.bins && !bins.empty()) pool.emplace_back(key.dot(target.key), old);
     }
     if (pool.size() > shortlist_size) {
@@ -143,7 +143,7 @@ class SubmapArxiv::Impl {
       for (const auto& [quality, old] : pool) {
         const auto& target = hot(old);
         auto peak = correlate(source, target, entries_[old].bins, bins.size());
-        if (peak.score < .10f || peak.ambiguity < 1.18f) continue;
+        if (peak.score < static_cast<float>(loop_.fft_min_score) || peak.ambiguity < static_cast<float>(loop_.fft_min_ambiguity)) continue;
         const Eigen::Vector2f correction = entries_[old].track.translation().head<2>().cast<float>() + peak.shift - position.head<2>();
         // Seek agreement with independently sealed query groups observed
         // earlier. Frames contributing to adjacent coarse rasters may overlap.
@@ -272,6 +272,7 @@ class SubmapArxiv::Impl {
   }
 
   std::filesystem::path blocks_, places_;
+  const Config::Pgo::LoopClosure loop_;
   std::vector<Entry> entries_;
   std::deque<RasterFrame> recent_;
   std::deque<std::pair<std::size_t, std::vector<Hint>>> recent_hints_;
@@ -280,7 +281,8 @@ class SubmapArxiv::Impl {
   double travel_ = 0.;
 };
 
-SubmapArxiv::SubmapArxiv(std::filesystem::path directory) : impl_(std::make_unique<Impl>(std::move(directory))) {}
+SubmapArxiv::SubmapArxiv(std::filesystem::path directory, const Config::Pgo::LoopClosure& loop)
+    : impl_(std::make_unique<Impl>(directory, loop)) {}
 SubmapArxiv::~SubmapArxiv() = default;
 void SubmapArxiv::write(std::size_t id, const GaussianVoxelMap& map) { impl_->write(id, map); }
 std::unique_ptr<GaussianVoxelMap> SubmapArxiv::read(std::size_t id, std::size_t* bytes) const { return impl_->read(id, bytes); }
