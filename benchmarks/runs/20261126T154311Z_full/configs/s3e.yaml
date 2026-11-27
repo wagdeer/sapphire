@@ -1,0 +1,207 @@
+schema_version: 1
+dataset_root: /datasets/s3e
+estimates_root: /workspace/results/ate_runs/20261126T154311Z_full
+output_dir: /workspace/results/ate_runs/20261126T154311Z_full/eval/s3e
+report:
+  title: S3E ATE
+  subtitle: SE(3)-aligned translation ATE
+  repository: https://github.com/wagdeer/sapphire
+defaults:
+  time_mode: absolute
+  max_time_diff_sec: 0.1
+  gt_gap_threshold_sec: 5.0
+  min_matched_poses: 20
+  min_coverage: 0.5
+  alignment: se3
+algorithms:
+  sapphire:
+    name: Sapphire
+    version: workspace
+    repository: https://github.com/wagdeer/sapphire
+    color: '#2563EB'
+datasets:
+  S3E_Campus_Road_3:
+    display_name: S3E_Campus_Road_3
+    metric: ate
+    pose_dof: full
+    ground_truth:
+      alpha: S3E_Campus_Road_3/alpha_gt.txt
+      bob: S3E_Campus_Road_3/bob_gt.txt
+      carol: S3E_Campus_Road_3/carol_gt.txt
+  S3E_Dormitory_1:
+    display_name: S3E_Dormitory_1
+    metric: ate
+    pose_dof: position_only
+    ground_truth:
+      alpha: S3E_Dormitory_1/gt/alpha_gt.txt
+      bob: S3E_Dormitory_1/gt/bob_gt.txt
+      carol: S3E_Dormitory_1/gt/carol_gt.txt
+  S3E_Library_1:
+    display_name: S3E_Library_1
+    metric: ate
+    pose_dof: position_only
+    ground_truth:
+      alpha: S3E_Library_1/gt/alpha_gt.txt
+      bob: S3E_Library_1/gt/bob_gt.txt
+      carol: S3E_Library_1/gt/carol_gt.txt
+  S3E_Library_2:
+    display_name: S3E_Library_2
+    metric: ate
+    pose_dof: full
+    ground_truth:
+      alpha: S3E_Library_2/gt/alpha_gt.txt
+      bob: S3E_Library_2/gt/bob_gt.txt
+      carol: S3E_Library_2/gt/carol_gt.txt
+  S3E_Square_1:
+    display_name: S3E_Square_1
+    metric: ate
+    pose_dof: position_only
+    ground_truth:
+      alpha: S3E_Square_1/gt/alpha_gt.txt
+      bob: S3E_Square_1/gt/bob_gt.txt
+      carol: S3E_Square_1/gt/carol_gt.txt
+  S3E_Square_3:
+    display_name: S3E_Square_3
+    metric: ate
+    pose_dof: full
+    ground_truth:
+      alpha: S3E_Square_3/gt/alpha_gt.txt
+      bob: S3E_Square_3/gt/bob_gt.txt
+      carol: S3E_Square_3/gt/carol_gt.txt
+  S3E_Teaching_Building_1:
+    display_name: S3E_Teaching_Building_1
+    metric: ate
+    pose_dof: position_only
+    ground_truth:
+      alpha: S3E_Teaching_Building_1/gt/alpha_gt.txt
+      bob: S3E_Teaching_Building_1/gt/bob_gt.txt
+      carol: S3E_Teaching_Building_1/gt/carol_gt.txt
+  S3E_Tunnel_1:
+    display_name: S3E_Tunnel_1
+    metric: ate
+    pose_dof: full
+    ground_truth:
+      alpha: S3E_Tunnel_1/gt/alpha_gt.txt
+      bob: S3E_Tunnel_1/gt/bob_gt.txt
+      carol: S3E_Tunnel_1/gt/carol_gt.txt
+runs:
+- id: sapphire__S3E_Campus_Road_3__alpha
+  algorithm: sapphire
+  dataset: S3E_Campus_Road_3
+  agent: alpha
+  trajectory: s3e/S3E_Campus_Road_3/Alpha/trajectory.tum
+- id: sapphire__S3E_Campus_Road_3__bob
+  algorithm: sapphire
+  dataset: S3E_Campus_Road_3
+  agent: bob
+  trajectory: s3e/S3E_Campus_Road_3/Bob/trajectory.tum
+- id: sapphire__S3E_Campus_Road_3__carol
+  algorithm: sapphire
+  dataset: S3E_Campus_Road_3
+  agent: carol
+  trajectory: s3e/S3E_Campus_Road_3/Carol/trajectory.tum
+- id: sapphire__S3E_Dormitory_1__alpha
+  algorithm: sapphire
+  dataset: S3E_Dormitory_1
+  agent: alpha
+  trajectory: s3e/S3E_Dormitory_1/Alpha/trajectory.tum
+- id: sapphire__S3E_Dormitory_1__bob
+  algorithm: sapphire
+  dataset: S3E_Dormitory_1
+  agent: bob
+  trajectory: s3e/S3E_Dormitory_1/Bob/trajectory.tum
+- id: sapphire__S3E_Dormitory_1__carol
+  algorithm: sapphire
+  dataset: S3E_Dormitory_1
+  agent: carol
+  trajectory: s3e/S3E_Dormitory_1/Carol/trajectory.tum
+- id: sapphire__S3E_Library_1__alpha
+  algorithm: sapphire
+  dataset: S3E_Library_1
+  agent: alpha
+  trajectory: s3e/S3E_Library_1/Alpha/trajectory.tum
+- id: sapphire__S3E_Library_1__bob
+  algorithm: sapphire
+  dataset: S3E_Library_1
+  agent: bob
+  trajectory: s3e/S3E_Library_1/Bob/trajectory.tum
+- id: sapphire__S3E_Library_1__carol
+  algorithm: sapphire
+  dataset: S3E_Library_1
+  agent: carol
+  trajectory: s3e/S3E_Library_1/Carol/trajectory.tum
+- id: sapphire__S3E_Library_2__alpha
+  algorithm: sapphire
+  dataset: S3E_Library_2
+  agent: alpha
+  trajectory: s3e/S3E_Library_2/Alpha/trajectory.tum
+- id: sapphire__S3E_Library_2__bob
+  algorithm: sapphire
+  dataset: S3E_Library_2
+  agent: bob
+  trajectory: s3e/S3E_Library_2/Bob/trajectory.tum
+- id: sapphire__S3E_Library_2__carol
+  algorithm: sapphire
+  dataset: S3E_Library_2
+  agent: carol
+  trajectory: s3e/S3E_Library_2/Carol/trajectory.tum
+- id: sapphire__S3E_Square_1__alpha
+  algorithm: sapphire
+  dataset: S3E_Square_1
+  agent: alpha
+  trajectory: s3e/S3E_Square_1/Alpha/trajectory.tum
+- id: sapphire__S3E_Square_1__bob
+  algorithm: sapphire
+  dataset: S3E_Square_1
+  agent: bob
+  trajectory: s3e/S3E_Square_1/Bob/trajectory.tum
+- id: sapphire__S3E_Square_1__carol
+  algorithm: sapphire
+  dataset: S3E_Square_1
+  agent: carol
+  trajectory: s3e/S3E_Square_1/Carol/trajectory.tum
+- id: sapphire__S3E_Square_3__alpha
+  algorithm: sapphire
+  dataset: S3E_Square_3
+  agent: alpha
+  trajectory: s3e/S3E_Square_3/Alpha/trajectory.tum
+- id: sapphire__S3E_Square_3__bob
+  algorithm: sapphire
+  dataset: S3E_Square_3
+  agent: bob
+  trajectory: s3e/S3E_Square_3/Bob/trajectory.tum
+- id: sapphire__S3E_Square_3__carol
+  algorithm: sapphire
+  dataset: S3E_Square_3
+  agent: carol
+  trajectory: s3e/S3E_Square_3/Carol/trajectory.tum
+- id: sapphire__S3E_Teaching_Building_1__alpha
+  algorithm: sapphire
+  dataset: S3E_Teaching_Building_1
+  agent: alpha
+  trajectory: s3e/S3E_Teaching_Building_1/Alpha/trajectory.tum
+- id: sapphire__S3E_Teaching_Building_1__bob
+  algorithm: sapphire
+  dataset: S3E_Teaching_Building_1
+  agent: bob
+  trajectory: s3e/S3E_Teaching_Building_1/Bob/trajectory.tum
+- id: sapphire__S3E_Teaching_Building_1__carol
+  algorithm: sapphire
+  dataset: S3E_Teaching_Building_1
+  agent: carol
+  trajectory: s3e/S3E_Teaching_Building_1/Carol/trajectory.tum
+- id: sapphire__S3E_Tunnel_1__alpha
+  algorithm: sapphire
+  dataset: S3E_Tunnel_1
+  agent: alpha
+  trajectory: s3e/S3E_Tunnel_1/Alpha/trajectory.tum
+- id: sapphire__S3E_Tunnel_1__bob
+  algorithm: sapphire
+  dataset: S3E_Tunnel_1
+  agent: bob
+  trajectory: s3e/S3E_Tunnel_1/Bob/trajectory.tum
+- id: sapphire__S3E_Tunnel_1__carol
+  algorithm: sapphire
+  dataset: S3E_Tunnel_1
+  agent: carol
+  trajectory: s3e/S3E_Tunnel_1/Carol/trajectory.tum

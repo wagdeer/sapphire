@@ -1,0 +1,300 @@
+{
+  "output_dir": "/workspace/results/ate_runs/20261126T154311Z_full/eval/s3e",
+  "summary_md": "/workspace/results/ate_runs/20261126T154311Z_full/eval/s3e/summary.md",
+  "summary_csv": "/workspace/results/ate_runs/20261126T154311Z_full/eval/s3e/summary.csv",
+  "summary_json": "/workspace/results/ate_runs/20261126T154311Z_full/eval/s3e/summary.json",
+  "runs": 24,
+  "ok": 15,
+  "warning": 9,
+  "invalid": 0,
+  "position_ate": 24,
+  "endpoint": 0
+}
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Campus_Road_3__alpha
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	2.046042
+      mean	0.815940
+    median	0.772083
+       min	0.183118
+      rmse	0.892040
+       sse	4349.492413
+       std	0.360525
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Campus_Road_3__bob
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	4.393256
+      mean	1.881310
+    median	1.571958
+       min	0.464754
+      rmse	2.176760
+       sse	18810.983810
+       std	1.094969
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Campus_Road_3__carol
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	4.165891
+      mean	0.813308
+    median	0.632146
+       min	0.096238
+      rmse	1.006937
+       sse	4146.940742
+       std	0.593676
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Dormitory_1__alpha
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	1.897567
+      mean	0.433385
+    median	0.418052
+       min	0.118243
+      rmse	0.473166
+       sse	105.002431
+       std	0.189903
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Dormitory_1__bob
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	2.562962
+      mean	1.197688
+    median	1.000935
+       min	0.239434
+      rmse	1.359392
+       sse	888.861765
+       std	0.643031
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Dormitory_1__carol
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	3.841767
+      mean	0.568290
+    median	0.462011
+       min	0.173035
+      rmse	0.727627
+       sse	202.246573
+       std	0.454409
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Library_1__alpha
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	2.890893
+      mean	0.836008
+    median	0.767688
+       min	0.076875
+      rmse	0.937615
+       sse	279.560621
+       std	0.424515
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Library_1__bob
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	6.881384
+      mean	1.400207
+    median	1.108057
+       min	0.143412
+      rmse	1.886682
+       sse	929.047216
+       std	1.264511
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Library_1__carol
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	2.968576
+      mean	1.215059
+    median	1.032848
+       min	0.565776
+      rmse	1.336544
+       sse	425.151510
+       std	0.556760
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Library_2__alpha
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	2.104910
+      mean	0.806045
+    median	0.633362
+       min	0.108782
+      rmse	0.914416
+       sse	2581.213041
+       std	0.431795
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Library_2__bob
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	2.076707
+      mean	0.751944
+    median	0.661572
+       min	0.034688
+      rmse	0.851406
+       sse	1685.372958
+       std	0.399339
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Library_2__carol
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	2.027334
+      mean	0.817458
+    median	0.748257
+       min	0.277532
+      rmse	0.906294
+       sse	1856.294480
+       std	0.391321
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Square_1__alpha
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	3.418701
+      mean	1.204556
+    median	0.998294
+       min	0.462973
+      rmse	1.313308
+       sse	424.295574
+       std	0.523282
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Square_1__bob
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	1.941370
+      mean	0.854082
+    median	0.798269
+       min	0.275970
+      rmse	0.940174
+       sse	319.098029
+       std	0.393029
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Square_1__carol
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	3.281028
+      mean	0.395845
+    median	0.320721
+       min	0.035876
+      rmse	0.591191
+       sse	96.813238
+       std	0.439105
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Square_3__alpha
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	5.169982
+      mean	1.639340
+    median	1.633322
+       min	0.046541
+      rmse	1.999322
+       sse	5544.241308
+       std	1.144489
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Square_3__bob
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	5.127662
+      mean	2.280861
+    median	1.965866
+       min	1.192578
+      rmse	2.468206
+       sse	9722.898340
+       std	0.943248
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Square_3__carol
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	4.362559
+      mean	1.635783
+    median	1.523980
+       min	0.077561
+      rmse	1.891275
+       sse	6216.687082
+       std	0.949281
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Teaching_Building_1__alpha
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	1.255832
+      mean	0.073180
+    median	0.031424
+       min	0.015511
+      rmse	0.159296
+       sse	3.146539
+       std	0.141492
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Teaching_Building_1__bob
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	5.439279
+      mean	0.688624
+    median	0.477384
+       min	0.299920
+      rmse	0.981489
+       sse	83.808877
+       std	0.699369
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Teaching_Building_1__carol
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	1.303269
+      mean	0.439675
+    median	0.395750
+       min	0.084600
+      rmse	0.524136
+       sse	35.438635
+       std	0.285314
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Tunnel_1__alpha
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	61.181957
+      mean	34.434692
+    median	27.300489
+       min	5.233957
+      rmse	37.856942
+       sse	2949418.642711
+       std	15.728955
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Tunnel_1__bob
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	103.028777
+      mean	55.548930
+    median	41.392016
+       min	14.096271
+      rmse	61.892560
+       sse	6879917.382685
+       std	27.294787
+
+INFO sapphire_eval.evaluation: evaluating sapphire__S3E_Tunnel_1__carol
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	7.276948
+      mean	2.941358
+    median	2.318372
+       min	0.219619
+      rmse	3.552856
+       sse	18542.870602
+       std	1.992787

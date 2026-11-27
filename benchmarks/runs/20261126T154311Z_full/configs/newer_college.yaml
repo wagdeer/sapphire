@@ -1,0 +1,78 @@
+schema_version: 1
+dataset_root: /workspace/results/ate_runs/20261126T154311Z_full/newer_college_eval
+estimates_root: /workspace/results/ate_runs/20261126T154311Z_full/newer_college_eval
+output_dir: /workspace/results/ate_runs/20261126T154311Z_full/eval/newer_college
+report:
+  title: Newer College 2020 Evaluation
+  subtitle: Ouster OS1-64 · continuous ground truth · SE(3)-aligned translation ATE
+  repository: https://github.com/wagdeer/sapphire
+defaults:
+  time_mode: absolute
+  max_time_diff_sec: 0.1
+  gt_gap_threshold_sec: 0.3
+  min_matched_poses: 20
+  min_coverage: 0.5
+  alignment: se3
+algorithms:
+  sapphire:
+    name: Sapphire
+    version: noetic-newer-college
+    repository: https://github.com/wagdeer/sapphire
+    color: '#2563EB'
+datasets:
+  01_short_experiment:
+    display_name: Short Experiment
+    metric: ate
+    pose_dof: full
+    ground_truth:
+      reference: ground_truth/01_short_experiment.tum
+  02_long_experiment:
+    display_name: Long Experiment
+    metric: ate
+    pose_dof: full
+    ground_truth:
+      reference: ground_truth/02_long_experiment.tum
+  05_quad_with_dynamics:
+    display_name: Quad with Dynamics
+    metric: ate
+    pose_dof: full
+    ground_truth:
+      reference: ground_truth/05_quad_with_dynamics.tum
+  06_dynamic_spinning:
+    display_name: Dynamic Spinning
+    metric: ate
+    pose_dof: full
+    ground_truth:
+      reference: ground_truth/06_dynamic_spinning.tum
+  07_parkland_mound:
+    display_name: Parkland Mound
+    metric: ate
+    pose_dof: full
+    ground_truth:
+      reference: ground_truth/07_parkland_mound.tum
+runs:
+- id: sapphire__01_short_experiment
+  algorithm: sapphire
+  dataset: 01_short_experiment
+  agent: reference
+  trajectory: 01_short_experiment/trajectory.tum
+- id: sapphire__02_long_experiment
+  algorithm: sapphire
+  dataset: 02_long_experiment
+  agent: reference
+  trajectory: 02_long_experiment/trajectory.tum
+- id: sapphire__05_quad_with_dynamics
+  algorithm: sapphire
+  dataset: 05_quad_with_dynamics
+  agent: reference
+  trajectory: 05_quad_with_dynamics/trajectory.tum
+- id: sapphire__06_dynamic_spinning
+  algorithm: sapphire
+  dataset: 06_dynamic_spinning
+  agent: reference
+  trajectory: 06_dynamic_spinning/trajectory.tum
+- id: sapphire__07_parkland_mound
+  algorithm: sapphire
+  dataset: 07_parkland_mound
+  agent: reference
+  trajectory: 07_parkland_mound/trajectory.tum

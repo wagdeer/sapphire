@@ -1,0 +1,72 @@
+{
+  "output_dir": "/workspace/results/ate_runs/20261126T154311Z_full/eval/newer_college",
+  "summary_md": "/workspace/results/ate_runs/20261126T154311Z_full/eval/newer_college/summary.md",
+  "summary_csv": "/workspace/results/ate_runs/20261126T154311Z_full/eval/newer_college/summary.csv",
+  "summary_json": "/workspace/results/ate_runs/20261126T154311Z_full/eval/newer_college/summary.json",
+  "runs": 5,
+  "ok": 5,
+  "warning": 0,
+  "invalid": 0,
+  "position_ate": 5,
+  "endpoint": 0
+}
+
+INFO sapphire_eval.evaluation: evaluating sapphire__01_short_experiment
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	0.797842
+      mean	0.388993
+    median	0.392634
+       min	0.022045
+      rmse	0.416957
+       sse	2612.495378
+       std	0.150126
+
+INFO sapphire_eval.evaluation: evaluating sapphire__02_long_experiment
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	0.909830
+      mean	0.385214
+    median	0.397016
+       min	0.006848
+      rmse	0.408919
+       sse	4273.838425
+       std	0.137202
+
+INFO sapphire_eval.evaluation: evaluating sapphire__05_quad_with_dynamics
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	0.345029
+      mean	0.113561
+    median	0.106083
+       min	0.015248
+      rmse	0.123806
+       sse	57.955173
+       std	0.049315
+
+INFO sapphire_eval.evaluation: evaluating sapphire__06_dynamic_spinning
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	0.248362
+      mean	0.081160
+    median	0.066312
+       min	0.005904
+      rmse	0.095122
+       sse	10.151998
+       std	0.049610
+
+INFO sapphire_eval.evaluation: evaluating sapphire__07_parkland_mound
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	1.539190
+      mean	0.427686
+    median	0.377214
+       min	0.019211
+      rmse	0.491976
+       sse	1156.709010
+       std	0.243155

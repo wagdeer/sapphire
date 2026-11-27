@@ -1,0 +1,158 @@
+schema_version: 1
+dataset_root: /datasets/hilti-2023
+estimates_root: /workspace/results/ate_runs/20261126T154311Z_full
+output_dir: /workspace/results/ate_runs/20261126T154311Z_full/eval/hilti_2023
+report:
+  title: HILTI SLAM Challenge 2023 Trajectory Evaluation
+  subtitle: Sparse control-point APE · SE(3) Umeyama alignment · no scale correction
+  repository: https://github.com/wagdeer/sapphire
+defaults:
+  time_mode: absolute
+  max_time_diff_sec: 2.0
+  gt_gap_threshold_sec: 120.0
+  min_matched_poses: 2
+  min_coverage: 1.0
+  alignment: se3
+algorithms:
+  sapphire:
+    name: Sapphire
+    version: noetic-383fbeb4+handheld-0b50c654+robot-1e23c465
+    repository: https://github.com/wagdeer/sapphire
+    color: '#2563EB'
+datasets:
+  site1_handheld_1:
+    display_name: Site 1 · Handheld 1
+    metric: sparse_ate
+    pose_dof: position_only
+    notes: HILTI handheld control points; estimate transformed from IMU to pole tip
+    ground_truth:
+      reference: ground_truth/site1_handheld_1.txt
+  site1_handheld_2:
+    display_name: Site 1 · Handheld 2
+    metric: sparse_ate
+    pose_dof: position_only
+    notes: HILTI handheld control points; estimate transformed from IMU to pole tip
+    ground_truth:
+      reference: ground_truth/site1_handheld_2.txt
+  site1_handheld_3:
+    display_name: Site 1 · Handheld 3
+    metric: sparse_ate
+    pose_dof: position_only
+    notes: HILTI handheld control points; estimate transformed from IMU to pole tip
+    ground_truth:
+      reference: ground_truth/site1_handheld_3.txt
+  site1_handheld_4:
+    display_name: Site 1 · Handheld 4
+    metric: sparse_ate
+    pose_dof: position_only
+    notes: HILTI handheld control points; estimate transformed from IMU to pole tip
+    ground_truth:
+      reference: ground_truth/site1_handheld_4.txt
+  site1_handheld_5:
+    display_name: Site 1 · Handheld 5
+    metric: sparse_ate
+    pose_dof: position_only
+    notes: HILTI handheld control points; estimate transformed from IMU to pole tip
+    ground_truth:
+      reference: ground_truth/site1_handheld_5.txt
+  site2_handheld_4:
+    display_name: Site 2 · Handheld 4
+    metric: sparse_ate
+    pose_dof: position_only
+    notes: HILTI handheld control points; estimate transformed from IMU to pole tip
+    ground_truth:
+      reference: ground_truth/site2_handheld_4.txt
+  site2_handheld_5:
+    display_name: Site 2 · Handheld 5
+    metric: sparse_ate
+    pose_dof: position_only
+    notes: HILTI handheld control points; estimate transformed from IMU to pole tip
+    ground_truth:
+      reference: ground_truth/site2_handheld_5.txt
+  site2_handheld_6:
+    display_name: Site 2 · Handheld 6
+    metric: sparse_ate
+    pose_dof: position_only
+    notes: HILTI handheld control points; estimate transformed from IMU to pole tip
+    ground_truth:
+      reference: ground_truth/site2_handheld_6.txt
+  site2_robot_2:
+    display_name: Site 2 · Robot 2
+    metric: sparse_ate
+    pose_dof: position_only
+    notes: Official robot lidar-control-point protocol using T_here_imu0
+    ground_truth:
+      reference: ground_truth/site2_robot_2.txt
+runs:
+- id: sapphire__site1_handheld_1
+  algorithm: sapphire
+  dataset: site1_handheld_1
+  agent: reference
+  trajectory: hilti_2023/prepared/site1_handheld_1.tum
+  tags:
+  - handheld
+  - site1
+- id: sapphire__site1_handheld_2
+  algorithm: sapphire
+  dataset: site1_handheld_2
+  agent: reference
+  trajectory: hilti_2023/prepared/site1_handheld_2.tum
+  tags:
+  - handheld
+  - site1
+- id: sapphire__site1_handheld_3
+  algorithm: sapphire
+  dataset: site1_handheld_3
+  agent: reference
+  trajectory: hilti_2023/prepared/site1_handheld_3.tum
+  tags:
+  - handheld
+  - site1
+- id: sapphire__site1_handheld_4
+  algorithm: sapphire
+  dataset: site1_handheld_4
+  agent: reference
+  trajectory: hilti_2023/prepared/site1_handheld_4.tum
+  tags:
+  - handheld
+  - site1
+- id: sapphire__site1_handheld_5
+  algorithm: sapphire
+  dataset: site1_handheld_5
+  agent: reference
+  trajectory: hilti_2023/prepared/site1_handheld_5.tum
+  tags:
+  - handheld
+  - site1
+- id: sapphire__site2_handheld_4
+  algorithm: sapphire
+  dataset: site2_handheld_4
+  agent: reference
+  trajectory: hilti_2023/prepared/site2_handheld_4.tum
+  tags:
+  - handheld
+  - site2
+- id: sapphire__site2_handheld_5
+  algorithm: sapphire
+  dataset: site2_handheld_5
+  agent: reference
+  trajectory: hilti_2023/prepared/site2_handheld_5.tum
+  tags:
+  - handheld
+  - site2
+- id: sapphire__site2_handheld_6
+  algorithm: sapphire
+  dataset: site2_handheld_6
+  agent: reference
+  trajectory: hilti_2023/prepared/site2_handheld_6.tum
+  tags:
+  - handheld
+  - site2
+- id: sapphire__site2_robot_2
+  algorithm: sapphire
+  dataset: site2_robot_2
+  agent: reference
+  trajectory: hilti_2023/prepared/site2_robot_2.tum
+  tags:
+  - robot
+  - site2

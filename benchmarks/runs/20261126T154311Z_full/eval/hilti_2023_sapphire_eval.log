@@ -1,0 +1,110 @@
+{
+  "output_dir": "/workspace/results/ate_runs/20261126T154311Z_full/eval/hilti_2023",
+  "summary_md": "/workspace/results/ate_runs/20261126T154311Z_full/eval/hilti_2023/summary.md",
+  "summary_csv": "/workspace/results/ate_runs/20261126T154311Z_full/eval/hilti_2023/summary.csv",
+  "summary_json": "/workspace/results/ate_runs/20261126T154311Z_full/eval/hilti_2023/summary.json",
+  "runs": 9,
+  "ok": 7,
+  "warning": 1,
+  "invalid": 1,
+  "position_ate": 8,
+  "endpoint": 0
+}
+
+INFO sapphire_eval.evaluation: evaluating sapphire__site1_handheld_1
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	0.188925
+      mean	0.098026
+    median	0.095517
+       min	0.012146
+      rmse	0.124448
+       sse	0.061950
+       std	0.076670
+
+INFO sapphire_eval.evaluation: evaluating sapphire__site1_handheld_2
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	0.067249
+      mean	0.038428
+    median	0.032652
+       min	0.021160
+      rmse	0.042152
+       sse	0.007107
+       std	0.017322
+
+INFO sapphire_eval.evaluation: evaluating sapphire__site1_handheld_3
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	0.109099
+      mean	0.070526
+    median	0.072301
+       min	0.028402
+      rmse	0.076133
+       sse	0.023185
+       std	0.028676
+
+INFO sapphire_eval.evaluation: evaluating sapphire__site1_handheld_4
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	0.030042
+      mean	0.020513
+    median	0.019283
+       min	0.012215
+      rmse	0.021784
+       sse	0.001424
+       std	0.007329
+
+INFO sapphire_eval.evaluation: evaluating sapphire__site1_handheld_5
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	0.354153
+      mean	0.248189
+    median	0.353459
+       min	0.036956
+      rmse	0.289668
+       sse	0.251723
+       std	0.149365
+
+INFO sapphire_eval.evaluation: evaluating sapphire__site2_handheld_4
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	1.308083
+      mean	1.308083
+    median	1.308083
+       min	1.308083
+      rmse	1.308083
+       sse	3.422165
+       std	0.000000
+
+INFO sapphire_eval.evaluation: evaluating sapphire__site2_handheld_5
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	22.622957
+      mean	13.533390
+    median	11.948905
+       min	7.612794
+      rmse	14.633085
+       sse	856.508709
+       std	5.565476
+
+INFO sapphire_eval.evaluation: evaluating sapphire__site2_handheld_6
+ERROR sapphire_eval.evaluation: run failed: sapphire__site2_handheld_6: evo APE calculation failed: Degenerate covariance rank, Umeyama alignment is not possible
+INFO sapphire_eval.evaluation: evaluating sapphire__site2_robot_2
+INFO evo.main_ape: APE w.r.t. translation part (m)
+(with SE(3) Umeyama alignment)
+
+       max	0.117730
+      mean	0.095820
+    median	0.107977
+       min	0.061754
+      rmse	0.098882
+       sse	0.029333
+       std	0.024416

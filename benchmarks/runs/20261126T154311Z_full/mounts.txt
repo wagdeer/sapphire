@@ -1,0 +1,10 @@
+sapphire_ros1_dev
+/mnt/e/dataset -> /datasets rw=false
+/home/bindeer/git/sapphire_ws -> /workspace rw=true
+/tmp/.X11-unix -> /tmp/.X11-unix rw=true
+
+sapphire_ros_dev
+/home/bindeer/git/sapphire_ws -> /workspace rw=true
+/mnt/e/dataset/hilti-2023 -> /datasets/hilti-2023 rw=false
+/mnt/e/dataset/s3e -> /datasets/s3e rw=false
+/tmp/.X11-unix -> /tmp/.X11-unix rw=true

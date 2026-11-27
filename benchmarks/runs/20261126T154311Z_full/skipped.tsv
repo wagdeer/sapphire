@@ -1,0 +1,20 @@
+family	sequence	reason
+hilti_2022	exp15_attic_to_upper_gallery	有真值文件，但没有对应 bag，不能回放
+hilti_2022	exp18_corridor_lower_gallery_2	有真值文件，但没有对应 bag，不能回放
+hilti_2022	exp21_outside_building	有真值文件，但没有对应 bag，不能回放
+hilti_2022	exp23_the_sheldonian_slam	有真值文件，但没有对应 bag，不能回放
+hilti_2023	site2_robot_1	有真值文件，但没有下载 bag，不能回放
+hilti_2023	site2_robot_3	有真值文件，但没有下载 bag，不能回放
+hilti_2023	site3_handheld_1	有真值文件，但没有下载 bag，不能回放
+hilti_2023	site3_handheld_2	有真值文件，但没有下载 bag，不能回放
+hilti_2023	site3_handheld_3	有真值文件，但没有下载 bag，不能回放
+hilti_2023	site3_handheld_4	有真值文件，但没有下载 bag，不能回放
+s3e	S3E_Campus_Road_1	有真值，但序列目录没有 db3，不能回放
+s3e	S3E_Campus_Road_2	有真值，但序列目录没有 db3，不能回放
+s3e	S3E_Laboratory_1	只有端点真值，不能算连续 ATE
+s3e	S3E_Laboratory_2	只有端点真值，不能算连续 ATE
+s3e	S3E_Laboratory_3	只有端点真值，不能算连续 ATE
+s3e	S3E_Laboratory_4	只有端点真值，不能算连续 ATE
+newer_college	03_new_college_prior_map	没有 rosbag，不能回放
+newer_college	04_calibration	没有 rosbag，不能回放
+kitti	odometry	只有标定包，没有可回放的 IMU bag
