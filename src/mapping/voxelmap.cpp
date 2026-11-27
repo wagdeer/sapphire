@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <functional>
 #include <iostream>
 #include <istream>
 #include <limits>
@@ -456,7 +457,7 @@ class BundlePreintegration {
   Eigen::Vector3d dbg, dba;
   Eigen::Vector3d dbg_buf, dba_buf;
 
-  Eigen::Matrix<double, kInertialDimension, kInertialDimension> cov;
+  Eigen::Matrix<double, kInertialDimension, kInertialDimension> cov, information;
 
   BundlePreintegration(const Eigen::Vector3d &bg1 = Eigen::Vector3d::Zero(), const Eigen::Vector3d &ba1 = Eigen::Vector3d::Zero()) {
     bg = bg1;
@@ -548,7 +549,7 @@ class BundlePreintegration {
     rr.block<3, 1>(9, 0) = res_bg * b_wei;
     rr.block<3, 1>(12, 0) = res_ba * b_wei;
 
-    Eigen::Matrix<double, 15, 15> cov_inv = cov.inverse();
+    const auto &cov_inv = information;
 
     if (jac_enable) {
       Eigen::Matrix3d JR_inv = inverseRightJacobian(res_r);
@@ -691,11 +692,16 @@ class BundlePreintegration {
   }
 };
 
+struct FrameMoments {
+  std::size_t frame;
+  PointCluster moment;
+};
+
 class VoxelLidarFactors {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   std::vector<PointCluster> sig_vecs;
-  std::vector<std::vector<PointCluster>> plvec_voxels;
+  std::vector<std::vector<FrameMoments>> plvec_voxels;
   std::vector<double> coeffs;
   PLV(3) eig_values;
   PLM(3) eig_vectors;
@@ -704,9 +710,9 @@ class VoxelLidarFactors {
 
   VoxelLidarFactors(int _w) : win_size(_w) {}
 
-  void push_voxel(std::vector<PointCluster> &vec_orig, PointCluster &fix, double coe, Eigen::Vector3d &eig_value, Eigen::Matrix3d &eig_vector,
+  void push_voxel(std::vector<FrameMoments> &&vec_orig, PointCluster &fix, double coe, Eigen::Vector3d &eig_value, Eigen::Matrix3d &eig_vector,
                   PointCluster &pcr_add) {
-    plvec_voxels.push_back(vec_orig);
+    plvec_voxels.push_back(std::move(vec_orig));
     sig_vecs.push_back(fix);
     coeffs.push_back(coe);
     eig_values.push_back(eig_value);
@@ -718,7 +724,6 @@ class VoxelLidarFactors {
     Hess.setZero();
     JacT.setZero();
     residual = 0;
-    std::vector<PointCluster> sig_tran(win_size);
     const int kk = 0;
 
     PLV(3) viRiTuk(win_size);
@@ -728,7 +733,7 @@ class VoxelLidarFactors {
     Eigen::Matrix3d umumT;
 
     for (int a = head; a < end; a++) {
-      std::vector<PointCluster> &sig_orig = plvec_voxels[a];
+      const auto &groups = plvec_voxels[a];
       double coe = coeffs[a];
 
       Eigen::Vector3d lmbd = eig_values[a];
@@ -743,67 +748,75 @@ class VoxelLidarFactors {
       for (int i = 0; i < 3; i++)
         if (i != kk) umumT += 2.0 / (lmbd[kk] - lmbd[i]) * u[i] * u[i].transpose();
 
-      for (int i = 0; i < win_size; i++)
-        if (sig_orig[i].N != 0) {
-          Eigen::Matrix3d Pi = sig_orig[i].P;
-          Eigen::Vector3d vi = sig_orig[i].v;
-          Eigen::Matrix3d Ri = xs[i].R;
-          double ni = sig_orig[i].N;
+      for (const auto &group : groups) {
+        const auto i = group.frame;
+        Eigen::Matrix3d Pi = group.moment.P;
+        Eigen::Vector3d vi = group.moment.v;
+        Eigen::Matrix3d Ri = xs[i].R;
+        double ni = group.moment.N;
 
-          Eigen::Matrix3d vihat;
-          vihat << SKEW_SYM_MATRX(vi);
-          Eigen::Vector3d RiTuk = Ri.transpose() * uk;
-          Eigen::Matrix3d RiTukhat;
-          RiTukhat << SKEW_SYM_MATRX(RiTuk);
+        Eigen::Matrix3d vihat;
+        vihat << SKEW_SYM_MATRX(vi);
+        Eigen::Vector3d RiTuk = Ri.transpose() * uk;
+        Eigen::Matrix3d RiTukhat;
+        RiTukhat << SKEW_SYM_MATRX(RiTuk);
 
-          Eigen::Vector3d PiRiTuk = Pi * RiTuk;
-          viRiTuk[i] = vihat * RiTuk;
-          viRiTukukT[i] = viRiTuk[i] * uk.transpose();
+        Eigen::Vector3d PiRiTuk = Pi * RiTuk;
+        viRiTuk[i] = vihat * RiTuk;
+        viRiTukukT[i] = viRiTuk[i] * uk.transpose();
 
-          Eigen::Vector3d ti_v = xs[i].p - vBar;
-          double ukTti_v = uk.dot(ti_v);
+        Eigen::Vector3d ti_v = xs[i].p - vBar;
+        double ukTti_v = uk.dot(ti_v);
 
-          Eigen::Matrix3d combo1 = skew(PiRiTuk) + vihat * ukTti_v;
-          Eigen::Vector3d combo2 = Ri * vi + ni * ti_v;
-          Auk[i].block<3, 3>(0, 0) = (Ri * Pi + ti_v * vi.transpose()) * RiTukhat - Ri * combo1;
-          Auk[i].block<3, 3>(0, 3) = combo2 * uk.transpose() + combo2.dot(uk) * I33;
-          Auk[i] /= NN;
+        Eigen::Matrix3d combo1 = skew(PiRiTuk) + vihat * ukTti_v;
+        Eigen::Vector3d combo2 = Ri * vi + ni * ti_v;
+        Auk[i].block<3, 3>(0, 0) = (Ri * Pi + ti_v * vi.transpose()) * RiTukhat - Ri * combo1;
+        Auk[i].block<3, 3>(0, 3) = combo2 * uk.transpose() + combo2.dot(uk) * I33;
+        Auk[i] /= NN;
 
-          const Mat_61<double> &jjt = Auk[i].transpose() * uk;
-          JacT.block<6, 1>(6 * i, 0) += coe * jjt;
+        const Mat_61<double> &jjt = Auk[i].transpose() * uk;
+        JacT.block<6, 1>(6 * i, 0) += coe * jjt;
 
-          const Eigen::Matrix3d &HRt = 2.0 / NN * (1.0 - ni / NN) * viRiTukukT[i];
-          Mat_66<double> Hb = Auk[i].transpose() * umumT * Auk[i];
-          Hb.block<3, 3>(0, 0) += 2.0 / NN * (combo1 - RiTukhat * Pi) * RiTukhat - 2.0 / NN / NN * viRiTuk[i] * viRiTuk[i].transpose() -
-                                  0.5 * skew(jjt.block<3, 1>(0, 0));
-          Hb.block<3, 3>(0, 3) += HRt;
-          Hb.block<3, 3>(3, 0) += HRt.transpose();
-          Hb.block<3, 3>(3, 3) += 2.0 / NN * (ni - ni * ni / NN) * ukukT;
+        const Eigen::Matrix3d &HRt = 2.0 / NN * (1.0 - ni / NN) * viRiTukukT[i];
+        Mat_66<double> Hb = Auk[i].transpose() * umumT * Auk[i];
+        Hb.block<3, 3>(0, 0) += 2.0 / NN * (combo1 - RiTukhat * Pi) * RiTukhat - 2.0 / NN / NN * viRiTuk[i] * viRiTuk[i].transpose() -
+                                0.5 * skew(jjt.block<3, 1>(0, 0));
+        Hb.block<3, 3>(0, 3) += HRt;
+        Hb.block<3, 3>(3, 0) += HRt.transpose();
+        Hb.block<3, 3>(3, 3) += 2.0 / NN * (ni - ni * ni / NN) * ukukT;
 
-          Hess.block<6, 6>(6 * i, 6 * i) += coe * Hb;
+        Hess.block<6, 6>(6 * i, 6 * i) += coe * Hb;
+      }
+
+      for (std::size_t begin = 0; begin + 1 < groups.size(); ++begin) {
+        const auto &first = groups[begin];
+        const auto i = first.frame;
+        double ni = first.moment.N;
+        for (std::size_t next = begin + 1; next < groups.size(); ++next) {
+          const auto &second = groups[next];
+          const auto j = second.frame;
+          double nj = second.moment.N;
+          Mat_66<double> Hb = Auk[i].transpose() * umumT * Auk[j];
+          Hb.block<3, 3>(0, 0) += -2.0 / NN / NN * viRiTuk[i] * viRiTuk[j].transpose();
+          Hb.block<3, 3>(0, 3) += -2.0 * nj / NN / NN * viRiTukukT[i];
+          Hb.block<3, 3>(3, 0) += -2.0 * ni / NN / NN * viRiTukukT[j].transpose();
+          Hb.block<3, 3>(3, 3) += -2.0 * ni * nj / NN / NN * ukukT;
+
+          Hess.block<6, 6>(6 * i, 6 * j) += coe * Hb;
         }
-
-      for (int i = 0; i < win_size - 1; i++)
-        if (sig_orig[i].N != 0) {
-          double ni = sig_orig[i].N;
-          for (int j = i + 1; j < win_size; j++)
-            if (sig_orig[j].N != 0) {
-              double nj = sig_orig[j].N;
-              Mat_66<double> Hb = Auk[i].transpose() * umumT * Auk[j];
-              Hb.block<3, 3>(0, 0) += -2.0 / NN / NN * viRiTuk[i] * viRiTuk[j].transpose();
-              Hb.block<3, 3>(0, 3) += -2.0 * nj / NN / NN * viRiTukukT[i];
-              Hb.block<3, 3>(3, 0) += -2.0 * ni / NN / NN * viRiTukukT[j].transpose();
-              Hb.block<3, 3>(3, 3) += -2.0 * ni * nj / NN / NN * ukukT;
-
-              Hess.block<6, 6>(6 * i, 6 * j) += coe * Hb;
-            }
-        }
+      }
 
       residual += coe * lmbd[kk];
     }
 
     for (int i = 1; i < win_size; i++)
       for (int j = 0; j < i; j++) Hess.block<6, 6>(6 * i, 6 * j) = Hess.block<6, 6>(6 * j, 6 * i).transpose();
+  }
+
+  double cached_residual(int head, int end) const {
+    double residual = 0.;
+    for (int i = head; i < end; ++i) residual += coeffs[i] * eig_values[i][0];
+    return residual;
   }
 
   void evaluate_only_residual(const std::vector<BundleState> &xs, int head, int end, double &residual) {
@@ -813,14 +826,11 @@ class VoxelLidarFactors {
     PointCluster pcr;
 
     for (int a = head; a < end; a++) {
-      const std::vector<PointCluster> &sig_orig = plvec_voxels[a];
       PointCluster sig = sig_vecs[a];
-
-      for (int i = 0; i < win_size; i++)
-        if (sig_orig[i].N != 0) {
-          pcr.transform(sig_orig[i], xs[i]);
-          sig += pcr;
-        }
+      for (const auto &group : plvec_voxels[a]) {
+        pcr.transform(group.moment, xs[group.frame]);
+        sig += pcr;
+      }
 
       Eigen::Vector3d vBar = sig.v / sig.N;
       Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(sig.P / sig.N - vBar * vBar.transpose());
@@ -881,7 +891,7 @@ class VoxelBundleOptimizer {
 
     std::vector<std::thread *> mthreads(tthd_num);
     for (int i = 1; i < tthd_num; i++)
-      mthreads[i] = new std::thread(&VoxelLidarFactors::acc_evaluate2, &voxhess, x_stats, part * i, part * (i + 1), std::ref(hessians[i]),
+      mthreads[i] = new std::thread(&VoxelLidarFactors::acc_evaluate2, &voxhess, std::cref(x_stats), part * i, part * (i + 1), std::ref(hessians[i]),
                                     std::ref(jacobins[i]), std::ref(resis[i]));
 
     Eigen::MatrixXd jtj(2 * kInertialDimension, 2 * kInertialDimension);
@@ -912,7 +922,8 @@ class VoxelBundleOptimizer {
     return residual;
   }
 
-  double only_residual(std::vector<BundleState> &x_stats, VoxelLidarFactors &voxhess, std::deque<BundlePreintegration *> &imus_factor) {
+  double only_residual(std::vector<BundleState> &x_stats, VoxelLidarFactors &voxhess, std::deque<BundlePreintegration *> &imus_factor,
+                       bool update_voxels = true) {
     double residual1 = 0, residual2 = 0;
     Eigen::MatrixXd jtj(2 * kInertialDimension, 2 * kInertialDimension);
     Eigen::VectorXd gg(2 * kInertialDimension);
@@ -925,14 +936,19 @@ class VoxelBundleOptimizer {
     }
     std::vector<std::thread *> mthreads(thd_num, nullptr);
     double part = 1.0 * g_size / thd_num;
-    for (int i = 1; i < thd_num; i++)
-      mthreads[i] = new std::thread(&VoxelLidarFactors::evaluate_only_residual, &voxhess, x_stats, part * i, part * (i + 1), std::ref(residuals[i]));
+    if (update_voxels) {
+      for (int i = 1; i < thd_num; i++)
+        mthreads[i] = new std::thread(&VoxelLidarFactors::evaluate_only_residual, &voxhess, std::cref(x_stats), part * i, part * (i + 1),
+                                      std::ref(residuals[i]));
+    }
 
     for (int i = 0; i < win_size - 1; i++) residual1 += imus_factor[i]->give_evaluate(x_stats[i], x_stats[i + 1], jtj, gg, false);
     residual1 *= (kImuFactorWeight * 0.5);
 
     for (int i = 0; i < thd_num; i++) {
-      if (i != 0) {
+      if (!update_voxels) {
+        residuals[i] = voxhess.cached_residual(part * i, part * (i + 1));
+      } else if (i != 0) {
         mthreads[i]->join();
         delete mthreads[i];
       } else
@@ -943,25 +959,24 @@ class VoxelBundleOptimizer {
     return (residual1 + residual2);
   }
 
-  void damping_iter(std::vector<BundleState> &x_stats, VoxelLidarFactors &voxhess, std::deque<BundlePreintegration *> &imus_factor,
-                    Eigen::MatrixXd *hess) {
+  double damping_iter(std::vector<BundleState> &x_stats, VoxelLidarFactors &voxhess, std::deque<BundlePreintegration *> &imus_factor,
+                      double accepted_cost) {
     win_size = voxhess.win_size;
     jac_leng = win_size * 6;
     imu_leng = win_size * kInertialDimension;
     double u = 0.01, v = 2;
     Eigen::MatrixXd D(imu_leng, imu_leng), Hess(imu_leng, imu_leng);
     Eigen::VectorXd JacT(imu_leng), dxi(imu_leng);
-    hess->resize(imu_leng, imu_leng);
 
     D.setIdentity();
     double residual1, residual2, q;
     bool is_calc_hess = true;
+    bool residual_at_accepted_state = true;
     std::vector<BundleState> x_stats_temp = x_stats;
 
     for (int i = 0; i < 3; i++) {
       if (is_calc_hess) {
         residual1 = divide_thread(x_stats, voxhess, imus_factor, Hess, JacT);
-        *hess = Hess;
       }
 
       Hess.topRows(kInertialDimension).setZero();
@@ -988,7 +1003,9 @@ class VoxelBundleOptimizer {
 
       q = (residual1 - residual2);
 
-      if (q > 0) {
+      residual_at_accepted_state = q > 0;
+      if (residual_at_accepted_state) {
+        accepted_cost = residual2;
         x_stats = x_stats_temp;
         double one_three = 1.0 / 3;
 
@@ -1010,6 +1027,8 @@ class VoxelBundleOptimizer {
 
       if (fabs((residual1 - residual2) / residual1) < 1e-6) break;
     }
+    // Rebuild the cached voxel eigensystems only if the last trial was rejected.
+    return residual_at_accepted_state ? accepted_cost : only_residual(x_stats, voxhess, imus_factor);
   }
 };
 
@@ -1039,24 +1058,29 @@ bool integrate(const InertialFrame &a, const InertialFrame &b, BundlePreintegrat
 }
 
 struct Cell {
-  struct Group {
-    std::size_t frame;
-    PointCluster moment;
-  };
-  std::vector<Group> live;
+  std::vector<FrameMoments> live;
   PointCluster fixed;
 };
 
 void addLidarFactors(const std::vector<InertialFrame> &frames, const std::vector<MappingFrame> &fixed, const std::vector<BundleState> &states,
                      VoxelLidarFactors &factor) {
   std::unordered_map<VoxelKey, Cell, VoxelKeyHash> cells;
+  struct CachedCell {
+    VoxelKey key{};
+    Cell *cell = nullptr;
+  };
+  // References to map entries stay valid across rehashes.
+  std::array<CachedCell, 256> recent{};
   auto within = [](const auto &p) { return p.squaredNorm() < 625.f; };
   for (std::size_t i = 0; i < frames.size(); ++i) {
     const auto &f = frames[i].frame;
     for (const auto &p : *f.cloud) {
       if (!within(p.getVector3fMap())) continue;
       const Eigen::Vector3d pt = p.getVector3fMap().cast<double>();
-      auto &groups = cells[key((f.odom * pt).cast<float>())].live;
+      const auto cell = key((f.odom * pt).cast<float>());
+      auto &cached = recent[VoxelKeyHash{}(cell) % recent.size()];
+      if (!cached.cell || !(cached.key == cell)) cached = {cell, &cells[cell]};
+      auto &groups = cached.cell->live;
       if (groups.empty() || groups.back().frame != i) groups.push_back({i, {}});
       groups.back().moment.push(pt);
     }
@@ -1073,9 +1097,7 @@ void addLidarFactors(const std::vector<InertialFrame> &frames, const std::vector
   for (auto &[k, cell] : cells) {
     if (cell.live.size() < 2 && cell.fixed.N < 6) continue;
     PointCluster total = cell.fixed;
-    std::vector<PointCluster> groups(states.size());
     for (const auto &group : cell.live) {
-      groups[group.frame] = group.moment;
       PointCluster transformed;
       transformed.transform(group.moment, states[group.frame]);
       total += transformed;
@@ -1086,7 +1108,7 @@ void addLidarFactors(const std::vector<InertialFrame> &frames, const std::vector
     Eigen::Vector3d values = solver.eigenvalues();
     if (values[1] < .012 || values[0] > .12 * values[1] || values[0] > .007) continue;
     Eigen::Matrix3d axes = solver.eigenvectors();
-    factor.push_voxel(groups, cell.fixed, 1., values, axes, total);
+    factor.push_voxel(std::move(cell.live), cell.fixed, 1., values, axes, total);
   }
 }
 }  // namespace
@@ -1129,6 +1151,8 @@ BaStats adjustInertial(const std::vector<InertialFrame> &frames, const std::vect
     const auto &prev = frames[i - 1];
     auto &pre = storage.emplace_back(prev.nav.gyro_bias, prev.nav.acc_bias);
     if (!integrate(prev, f, pre)) return result;
+    // Bias updates change the residual, while the integrated covariance stays fixed.
+    pre.information = pre.cov.inverse();
     imu.push_back(&pre);
   }
   VoxelLidarFactors factors(static_cast<int>(states.size()));
@@ -1138,10 +1162,9 @@ BaStats adjustInertial(const std::vector<InertialFrame> &frames, const std::vect
 
   VoxelBundleOptimizer opt;
   opt.win_size = static_cast<int>(states.size());
-  result.cost_first = opt.only_residual(states, factors, imu);
-  Eigen::MatrixXd hessian;
-  opt.damping_iter(states, factors, imu, &hessian);
-  result.cost_last = opt.only_residual(states, factors, imu);
+  // The factor builder already evaluated these moments at the initial poses.
+  result.cost_first = opt.only_residual(states, factors, imu, false);
+  result.cost_last = opt.damping_iter(states, factors, imu, result.cost_first);
   if (!std::isfinite(result.cost_last) || result.cost_last >= result.cost_first) return result;
 
   auto corrected = poses;
@@ -1209,14 +1232,15 @@ BaStats adjustInertial(const std::vector<InertialFrame> &frames, const std::vect
           for (std::size_t cell = 0; cell < factors.plvec_voxels.size(); ++cell) {
             const auto normal = factors.eig_vectors[cell].col(0);
             const auto &cluster = factors.plvec_voxels[cell];
-            for (std::size_t i = 1; i + 1 < states.size(); ++i) {
-              if (cluster[i].N == 0) continue;
+            for (const auto &group : cluster) {
+              const auto i = group.frame;
+              if (i == 0 || i + 1 == states.size()) continue;
+              const auto &xyz = group.moment;
               const Eigen::Vector3d direction = states[i].R.transpose() * normal;
-              points[i] += cluster[i].N;
+              points[i] += xyz.N;
               for (Eigen::Index axis = 0; axis < 6; ++axis) {
                 const Eigen::Vector3d gradient = direction.cross(motions[i].col(axis).head<3>());
                 const double translation = normal.dot(motions[i].col(axis).tail<3>());
-                const auto &xyz = cluster[i];
                 cost[i] += gradient.dot(xyz.P * gradient) + 2. * translation * gradient.dot(xyz.v) + xyz.N * translation * translation;
               }
             }
