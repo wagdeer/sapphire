@@ -55,6 +55,24 @@ void testImuProcessNoise() {
   }
 }
 
+void testPosteriorCovarianceIsSymmetric() {
+  iEskf filter;
+  filter.SetInitialConditions({}, V3::Zero(), V3::Zero(), 1.f, V3(0.f, 0.f, -9.8f));
+  auto prior = iEskf::COV::Identity().eval();
+  // Matrix inversion can leave slightly different upper and lower entries.
+  prior(0, 3) = .2f;
+  prior(3, 0) = .2001f;
+  filter.SetCov(prior);
+  filter.UpdateObserve([](const iEskf::KFState&, Mat_66<scalar>& h, Vec_6<scalar>& r) {
+    h.setIdentity();
+    r.setZero();
+  });
+  const auto covariance = filter.GetCov();
+  if (covariance != covariance.transpose()) {
+    throw std::runtime_error("the observation update must leave a symmetric covariance");
+  }
+}
+
 struct RevisitFixture {
   RevisitExchange exchange;
   LocalPlaneExchange local_planes;
@@ -90,6 +108,7 @@ struct RevisitFixture {
 
 int main() {
   testImuProcessNoise();
+  testPosteriorCovarianceIsSymmetric();
   const auto identity = sapphire::Isometry3d::Identity();
   RevisitFixture immediate;
   immediate.publish();

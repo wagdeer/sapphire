@@ -389,7 +389,8 @@ bool iEskf::UpdateObserve(iEskf::ObsFunc obs) {
 
   P_ = G_reset * P_ * G_reset.transpose();
 
-  P_ = 0.5 * (P_ + P_.transpose());
+  // Read both triangles before writing either one.
+  P_ = (0.5 * (P_ + P_.transpose())).eval();
 
   dx_.setZero();
 
